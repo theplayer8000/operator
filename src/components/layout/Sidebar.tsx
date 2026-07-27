@@ -18,7 +18,7 @@ import { useTheme } from "@/context/ThemeContext";
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
-  { to: "/projects", label: "Projects", icon: Swords },
+  { to: "/missions", label: "Mission Board", icon: Swords },
   { to: "/learning", label: "Learning", icon: GraduationCap },
   { to: "/gym", label: "Gym", icon: Dumbbell },
   { to: "/forex", label: "Forex", icon: LineChart },

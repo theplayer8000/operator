@@ -98,3 +98,69 @@ export interface DashboardData {
   activity: ActivityItem[];
   productivityHistory: { day: string; score: number }[];
 }
+
+// --- Mission Board --------------------------------------------------------
+// The heart of the app. Deliberately its own namespace ("missions.records"),
+// separate from the Dashboard's lightweight `Mission` summary type above —
+// the Dashboard's "Current Missions" / "Project Progress" widgets stay on
+// their own seeded data untouched. This is the rich, long-term record.
+
+export type MissionCategory =
+  | "server"
+  | "homelab"
+  | "darams"
+  | "ai"
+  | "learning"
+  | "career"
+  | "gym"
+  | "forex"
+  | "custom";
+
+export type MissionDifficulty = "easy" | "moderate" | "hard" | "epic";
+
+export type MissionStatus = "not_started" | "in_progress" | "blocked" | "complete";
+
+export type MilestoneStatus = "pending" | "in_progress" | "complete";
+
+export interface Milestone {
+  id: ID;
+  title: string;
+  description: string;
+  status: MilestoneStatus;
+  progress: number; // 0-100
+  estimatedDuration: string; // free text, e.g. "2 weeks"
+  completionDate?: string; // ISO date, set once complete
+  notes: string;
+}
+
+export interface MissionActivityEntry {
+  id: ID;
+  label: string;
+  timestamp: string;
+}
+
+export interface MissionRecord {
+  id: ID;
+  name: string;
+  description: string;
+  category: MissionCategory;
+  difficulty: MissionDifficulty;
+  status: MissionStatus;
+  progress: number; // 0-100
+  estimatedCompletion?: string; // ISO date
+  timeInvestedHours: number;
+  nextObjective: string;
+  objectivesNotes: string;
+  notes: string;
+  milestones: Milestone[];
+  dependsOn: ID[]; // ids of missions that must precede this one
+  relatedLearning: string; // free text — will link to Knowledge Vault once it exists
+  relatedJourneyMilestone: string; // free text — will link to Journey once it exists
+  whyItMatters: string;
+  unlocks: string;
+  knowledgeNeeded: string;
+  activity: MissionActivityEntry[];
+  archived: boolean;
+  createdAt: string;
+}
+

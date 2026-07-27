@@ -5,7 +5,7 @@ import { Search } from "lucide-react";
 const DESTINATIONS = [
   { to: "/", label: "Dashboard" },
   { to: "/routine", label: "Daily Routine" },
-  { to: "/projects", label: "Projects" },
+  { to: "/missions", label: "Mission Board" },
   { to: "/learning", label: "Learning" },
   { to: "/gym", label: "Gym" },
   { to: "/forex", label: "Forex Journal" },
