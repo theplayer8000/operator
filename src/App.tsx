@@ -8,6 +8,7 @@ import ActivityLog from "@/pages/ActivityLog";
 import Homelab from "@/pages/Homelab";
 import Settings from "@/pages/Settings";
 import Events from "@/pages/Events";
+import Updates from "@/pages/Updates";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/journey" element={<ComingSoon title="Journey" />} />
         <Route path="/statistics" element={<ComingSoon title="Statistics" />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/updates" element={<Updates />} />
       </Route>
     </Routes>
   );

@@ -7,6 +7,7 @@ import type {
   Streak,
   Task,
   CalendarEvent,
+  UpdateEntry,
   WeeklyGoal,
 } from "./types";
 import { toDateKey } from "./time";
@@ -121,6 +122,89 @@ export const seedRoutineSections: RoutineSection[] = [
       { id: "r15", title: "Screens off", done: false, estimatedMinutes: 0, repeatDaily: true },
       { id: "r16", title: "Lights out by target time", done: false, estimatedMinutes: 0, repeatDaily: true },
     ],
+  },
+];
+
+// First-run content only, same as everything else here. Written for the
+// owner, not for the next engineer — plain terms, not commit-message jargon.
+// Keep adding an entry here in spirit (i.e. via the Updates page, not this
+// file) whenever something real ships; this array only seeds a fresh store.
+export const seedUpdates: UpdateEntry[] = [
+  {
+    id: "u1",
+    title: "Events calendar synced into the Day Schedule",
+    detail:
+      "Timed events now show up on the routine timeline alongside your day, the clock on the Dashboard opens the calendar, and you can change an event's date instead of deleting and re-adding it.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u2",
+    title: "Fixed the daily reset rolling an hour late",
+    detail:
+      "It was comparing UTC time, not local — between midnight and 1am in summer it thought it was still yesterday. Also now catches up if a tab was left open overnight.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u3",
+    title: "Added the Events calendar",
+    detail: "Year view, add/edit/delete on any day, and a upcoming list.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u4",
+    title: "Dashboard now shows your real missions",
+    detail: "Current Missions, Mission Progress and the status chart all read the actual board instead of fixed demo numbers.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u5",
+    title: "Added Settings — backup and clear",
+    detail: "Export downloads everything as one file; import merges one back in. Clearing empties a feature without restoring the old demo data.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u6",
+    title: "Added the Homelab page",
+    detail: "A tile per service running on the box, with a live online/offline check.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u7",
+    title: "Edit and delete, everywhere",
+    detail: "Tasks, notes, routine steps and missions can all be renamed or removed now, not just added.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u8",
+    title: "Gym",
+    detail:
+      "Parked until you send over a real plan from ChatGPT — the import needs to be built against your actual format, not a guess.",
+    status: "pending",
+  },
+  {
+    id: "u9",
+    title: "Weekly Goals and Streaks still have no editor",
+    detail: "Same fix as the missions widgets, one size down — they're still fixed demo numbers on the Dashboard.",
+    status: "pending",
+  },
+  {
+    id: "u10",
+    title: "Automatic backups",
+    detail: "Export works, but nothing runs on a schedule yet — a copy job to the NAS over SSH is the plan.",
+    status: "pending",
+  },
+  {
+    id: "u11",
+    title: "Repeating events",
+    detail: "Your NHS shifts are weekly — entering them one at a time will get old. Needs a real recurrence design, not a loop that writes 52 copies.",
+    status: "pending",
   },
 ];
 
@@ -402,6 +486,12 @@ function pastDays(n: number): string {
 function nextDateKey(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() + n);
+  return toDateKey(d);
+}
+/** A local calendar day n days ago, as "YYYY-MM-DD" — not a timestamp. */
+function pastDateKey(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
   return toDateKey(d);
 }
 function hoursAgo(n: number): string {

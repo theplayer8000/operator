@@ -52,6 +52,14 @@ export interface CalendarEvent {
   date: string;
   /** Optional local wall-clock time, "HH:MM". Absent means all-day. */
   time?: string;
+  /**
+   * How long it runs, in minutes. Only meaningful alongside `time` — an
+   * all-day event has no slot to occupy. This is what lets a timed event sit
+   * on the Daily Routine's Day Schedule as a real block rather than a bare
+   * marker: see `RoutineTimeline`, which reads today's timed events and
+   * interleaves them with routine blocks, read-only.
+   */
+  durationMinutes?: number;
   notes: string;
   kind: EventKind;
 }
@@ -178,6 +186,29 @@ export interface ServiceStatus {
   id: ID;
   online: boolean;
   latencyMs: number | null;
+}
+
+// --- Updates ----------------------------------------------------------------
+// A running log of what's changed in Operator itself, and what's queued —
+// reviewable in the app, not just in git history or docs/handoffs. Distinct
+// from the Activity Log (`/log`), which aggregates the owner's own task and
+// mission activity; this one is about the app's own development. Own
+// namespace, own hook, own page — same recipe as everything else.
+
+export type UpdateStatus = "done" | "pending";
+
+export interface UpdateEntry {
+  id: ID;
+  title: string;
+  /** Optional longer note — may be empty. */
+  detail: string;
+  status: UpdateStatus;
+  /**
+   * Local calendar day it shipped, "YYYY-MM-DD". Absent for a pending entry —
+   * there's nothing to date until it's done. Set via toDateKey(), never
+   * toISOString() — see the note on CalendarEvent.date.
+   */
+  date?: string;
 }
 
 // --- Mission Board --------------------------------------------------------

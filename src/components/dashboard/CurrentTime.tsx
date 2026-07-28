@@ -30,13 +30,22 @@ export default function CurrentTime() {
   return (
     <Card title="Now" icon={<Clock size={15} />} span={1}>
       <div className="flex flex-col h-full">
-        <p className="font-mono text-3xl sm:text-4xl text-ink-100 leading-none tracking-tight">
-          {formatHHMM(nowMinutes)}
-          <span className="text-base sm:text-lg text-ink-700">
-            :{String(now.getSeconds()).padStart(2, "0")}
-          </span>
-        </p>
-        <p className="text-xs text-ink-500 mt-1.5">{dateLabel}</p>
+        {/* The clock and date open the calendar; the block below opens the routine. */}
+        <Link
+          to="/events"
+          className="group block -mx-1 px-1 rounded-badge hover:bg-base-700/40 transition-colors"
+          aria-label="Open the calendar"
+        >
+          <p className="font-mono text-3xl sm:text-4xl text-ink-100 leading-none tracking-tight">
+            {formatHHMM(nowMinutes)}
+            <span className="text-base sm:text-lg text-ink-700">
+              :{String(now.getSeconds()).padStart(2, "0")}
+            </span>
+          </p>
+          <p className="text-xs text-ink-500 mt-1.5 group-hover:text-ink-300 transition-colors">
+            {dateLabel}
+          </p>
+        </Link>
 
         <div className="mt-auto pt-3 border-t border-base-600">
           {current ? (

@@ -98,8 +98,19 @@ tiles beyond insertion order; no favicon or icon per service.
 
 The year on a calendar: twelve month grids, Monday-first, with coloured dots per
 day by kind (work / personal / admin / health / other). Pick a day to see what's
-on it and add, rename or delete. A "Next up" list runs alongside, and the
-Dashboard's Upcoming Events widget reads the same feature and links in.
+on it, add one, or edit any field of an existing one — including its **date**,
+which moves it off the day you're looking at and follows the selection there.
+A "Next up" list runs alongside. The Dashboard's Upcoming Events widget reads
+the same feature and links in, and the "Now" card's clock/date now opens the
+calendar directly.
+
+**Timed events sync onto the Daily Routine's Day Schedule, read-only.** Give an
+event a time (and optionally a duration, added in v11) and it shows up
+interleaved with today's routine blocks on `/routine` — a call at 14:00 sits
+between the Work and Gym blocks the way it actually happens in your day, rather
+than living only on a separate calendar page. Events still owns the data
+exclusively; the routine page only reads it, the same pattern
+`HomelabStatus` and `CurrentTime` already use.
 
 **Fully local — no external permissions.** This is ordinary data in
 `events.records`. What *would* need permissions is syncing a third-party
@@ -114,6 +125,8 @@ every event between midnight and 1am BST on the wrong day.
 
 Known gaps: no repeating events, no multi-day spans, no reminders. All three are
 real calendar features and none should be faked with a loop over single days.
+Repeating events is now logged as a pending item on `/updates`, since it's the
+most likely next ask (weekly shifts).
 
 ### Settings — `/settings`
 
@@ -137,6 +150,31 @@ store rather than modelling anything in it.
 Known gaps: backup is manual — nothing is scheduled (**OPS-017**). No accent
 picker, deliberately: the accent is ~95% inert (**OPS-007**) and shipping a
 control that does nothing is worse than not shipping one.
+
+### Updates — `/updates`
+
+A running log of what's changed in Operator, and what's queued, meant to be
+read here rather than dug out of git history or a handoff doc. Two sections:
+**Pending** (quick-captured, editable, mark-done) and **Shipped** (dated,
+newest first, reversible back to pending). A quick-capture box at the top adds
+a pending entry in one line.
+
+**Written for the owner, not the next engineer.** Entries are plain sentences
+— "Fixed the daily reset rolling an hour late" — not commit-message shorthand.
+This is deliberately a different register from `docs/handoffs/`, which stays
+the engineering-facing record for whoever picks this codebase up next; Updates
+is the same information, translated, and reviewable on a phone without opening
+a repo.
+
+Seeded on first run with the milestones through v11 and the currently-known
+pending work (Gym, Weekly Goals/Streaks editors, scheduled backups, repeating
+events) — after that it's whatever gets added. The convention going forward:
+whenever a real milestone ships, add an entry here in the same pass as the
+handoff, in the owner's terms.
+
+Architecturally this is a plain feature — own namespace (`updates.entries`),
+own hook, own page — not another read-only aggregator; it owns and writes its
+own data like Mission Board or Events do.
 
 ### Activity Log — `/log`
 

@@ -7,6 +7,7 @@
 // forgotten key is still backed up — it just can't be reset on its own.
 
 import { seedRoutineSections } from "./seed";
+import { toDateKey } from "./time";
 
 export interface FeatureSlice {
   /** Feature label, as it appears in the nav. */
@@ -39,7 +40,6 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "dashboard.tasks": [],
   "dashboard.weeklyGoals": [],
   "dashboard.streaks": [],
-  "events.records": [],
   "dashboard.notes": [],
   "dashboard.activity": [],
   "dashboard.productivityHistory": [],
@@ -48,9 +48,14 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "dashboard.missions": [], // v9
   "dashboard.events": [], // v10 — replaced by events.records
   "routine.sections": seedRoutineSections.map((s) => ({ ...s, tasks: [], notes: "" })),
-  "routine.lastReset": new Date().toISOString().slice(0, 10),
+  // Local date, not toISOString() — see the OPS-009 note on useRoutineData.
+  // This one had the same bug and would have set the wrong day for up to an
+  // hour after a clear, exactly the window OPS-009 fixed for the reset itself.
+  "routine.lastReset": toDateKey(new Date()),
   "missions.records": [],
   "homelab.services": [],
+  "events.records": [],
+  "updates.entries": [],
   "theme.accent": "gold",
 };
 
@@ -88,6 +93,11 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     label: "Homelab",
     description: "The service tiles. Clearing these never touches the services themselves.",
     keys: ["homelab.services"],
+  },
+  {
+    label: "Updates",
+    description: "The shipped/pending log itself — everything on this list.",
+    keys: ["updates.entries"],
   },
   {
     label: "Appearance",

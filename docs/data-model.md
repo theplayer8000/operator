@@ -64,6 +64,7 @@ store.
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
 | `events.records` | `CalendarEvent[]` | `useEvents` | Yes |
 | `homelab.services` | `HomelabService[]` | `useHomelab` | Yes — the server also reads this slice to know what to probe |
+| `updates.entries` | `UpdateEntry[]` | `useUpdates` | Yes |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
 
 Keys are created lazily — a slice only appears in the store once something
@@ -169,22 +170,37 @@ full field list. Structural notes:
 
 ### Events
 
-`CalendarEvent` is title, `date`, optional `time`, `notes`, and a `kind` used
-only for colour.
+`CalendarEvent` is title, `date`, optional `time`, optional `durationMinutes`,
+`notes`, and a `kind` used only for colour.
 
 **`date` is a local calendar day (`"YYYY-MM-DD"`), not a timestamp.** A birthday
 is the 3rd of March wherever you are. Build it with `toDateKey()` from
 `lib/time.ts` and never with `toISOString().slice(0, 10)` — that converts to UTC
 first, so every event created between midnight and 01:00 BST lands on the
 previous day. This is the same defect as **OPS-009** and the reason that helper
-exists.
+exists. (`routine.lastReset`'s blank value in `lib/storageKeys.ts` had this
+exact bug too — found and fixed alongside Updates, v11.)
 
-`time` is optional and absent means all-day. It is an **omitted key**, not an
-explicit `undefined` — see the spread trap in `architecture.md`.
+`time` is optional and absent means all-day. `durationMinutes` is only
+meaningful alongside `time` — an all-day event has no slot to occupy — and is
+dropped whenever `time` is cleared. Both are **omitted keys** when absent on
+create, but an **explicit `undefined`** when clearing an existing value on
+edit — see the spread trap in `architecture.md`; both directions are
+deliberate, not inconsistent.
 
 Everything else (the by-day index, upcoming, the year list) is derived in
 `useEvents` per render and never stored, so an event can't appear in two places
 that disagree.
+
+**A timed event reads onto the Daily Routine's Day Schedule, read-only.**
+`RoutineTimeline` calls `useEvents()` directly and interleaves today's timed
+events with routine blocks by start time — the same sanctioned cross-feature
+read `HomelabStatus` and `CurrentTime` already use (see `architecture.md`).
+Events remains the sole owner and sole writer of `events.records`; nothing
+about this merge is stored. An event overlapping a routine block is normal (a
+call during the Work block), so it's excluded from the `overlapsPrevious`
+conflict warning, which stays scoped to routine-block-on-routine-block
+overlaps only.
 
 Not modelled, deliberately: **repeating events, multi-day spans, reminders.**
 Each is a real calendar feature. Don't fake a repeat by writing N copies — that
@@ -216,12 +232,32 @@ persisted** — the same rule the Activity Log follows.
 current hostname when building a link, which is what makes one stored config
 open correctly from both the desk and the phone.
 
+### Updates
+
+`UpdateEntry` is title, `detail`, `status` (`"done" | "pending"`), and an
+optional `date` — present only once something is done, since there's nothing
+to date about a pending entry. `date` is a `toDateKey()` local calendar day,
+same rule as Events.
+
+This is a log **for the owner**, not an engineering handoff: entries are
+written in plain terms (see the seed content in `lib/seed.ts` for the register
+to match), not commit-message jargon. It is distinct from the Activity Log,
+which aggregates the owner's own task/mission activity — Updates is about
+Operator's own development, reviewable in the app instead of dug out of git.
+
+Marking an entry done sets `status` and stamps `date` in the same call;
+moving it back to pending clears `date` with an **explicit `undefined`** —
+the deliberate-overwrite direction of the spread trap, not the omitted-key one.
+
 ## Seed data
 
-`lib/seed.ts` holds one export per feature: `seedTasks`, `seedMissions`,
-`seedWeeklyGoals`, `seedStreaks`, `seedEvents`, `seedNotes`, `seedActivity`,
-`seedProductivityHistory`, `seedRoutineSections`, `seedMissionRecords`,
-`seedHomelabServices`.
+`lib/seed.ts` holds one export per feature: `seedTasks`, `seedWeeklyGoals`,
+`seedStreaks`, `seedEvents`, `seedNotes`, `seedActivity`,
+`seedRoutineSections`, `seedUpdates`, `seedHomelabServices`,
+`seedMissionRecords`. (`seedMissions` and `seedProductivityHistory` were
+retired in v9 along with the Dashboard's old fixed-data widgets — see
+[ADR 0008](decisions/0008-dashboard-reads-the-real-board.md) — and no longer
+exist; don't go looking for them.)
 
 Date helpers at the bottom of the file (`futureMonth`, `pastDays`, `nextDays`,
 `hoursAgo`, `lib/seed.ts:372-391`) keep seed content relative, so a fresh

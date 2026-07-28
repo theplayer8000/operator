@@ -83,6 +83,10 @@ export default function Events() {
               onAdd={addEvent}
               onUpdate={updateEvent}
               onDelete={deleteEvent}
+              onMoved={(newDate) => {
+                setYear(Number(newDate.slice(0, 4)));
+                setSelected(newDate);
+              }}
             />
           )}
 

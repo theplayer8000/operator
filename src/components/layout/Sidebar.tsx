@@ -15,6 +15,7 @@ import {
   ScrollText,
   Compass,
   Terminal,
+  ClipboardList,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -144,6 +145,10 @@ export default function Sidebar() {
           <NavLink to="/dev" className={navLinkClass}>
             <Terminal size={17} className="shrink-0" />
             <span className={sidebarCollapsed ? "lg:hidden" : ""}>Dev</span>
+          </NavLink>
+          <NavLink to="/updates" className={navLinkClass}>
+            <ClipboardList size={17} className="shrink-0" />
+            <span className={sidebarCollapsed ? "lg:hidden" : ""}>Updates</span>
           </NavLink>
           <NavLink to="/settings" className={navLinkClass}>
             <Settings size={17} className="shrink-0" />

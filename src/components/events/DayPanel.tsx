@@ -7,6 +7,8 @@ import type { CalendarEvent, EventKind } from "@/lib/types";
 
 const INPUT =
   "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
+const INPUT_SM =
+  "bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
 
 /** The selected day: what's on it, and the form to put something there. */
 export default function DayPanel({
@@ -15,18 +17,32 @@ export default function DayPanel({
   onAdd,
   onUpdate,
   onDelete,
+  onMoved,
 }: {
   dateKey: string;
   events: CalendarEvent[];
-  onAdd: (input: { title: string; date: string; time?: string; kind: EventKind }) => void;
+  onAdd: (input: {
+    title: string;
+    date: string;
+    time?: string;
+    durationMinutes?: number;
+    kind: EventKind;
+  }) => void;
   onUpdate: (id: string, patch: Partial<CalendarEvent>) => void;
   onDelete: (id: string) => void;
+  /** Called with the new date when an edit moves an event off this day. */
+  onMoved?: (newDate: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [time, setTime] = useState("");
   const [kind, setKind] = useState<EventKind>("work");
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editDuration, setEditDuration] = useState("");
+  const [editKind, setEditKind] = useState<EventKind>("other");
 
   const date = fromDateKey(dateKey);
   const longDate = date
@@ -40,9 +56,38 @@ export default function DayPanel({
     setTime("");
   }
 
-  function commitEdit(id: string) {
-    if (editTitle.trim()) onUpdate(id, { title: editTitle.trim() });
+  function startEdit(event: CalendarEvent) {
+    setEditingId(event.id);
+    setEditTitle(event.title);
+    setEditDate(event.date);
+    setEditTime(event.time ?? "");
+    setEditDuration(event.durationMinutes ? String(event.durationMinutes) : "");
+    setEditKind(event.kind);
+  }
+
+  function commitEdit(event: CalendarEvent) {
+    if (!editTitle.trim() || !editDate) {
+      setEditingId(null);
+      return;
+    }
+    const trimmedTime = editTime.trim();
+    const duration = Number(editDuration);
+
+    onUpdate(event.id, {
+      title: editTitle.trim(),
+      date: editDate,
+      kind: editKind,
+      // A cleared field is an explicit `undefined`, not an omitted key —
+      // here that's the intent: it overwrites the stored value and is
+      // dropped on serialisation. Duration only survives alongside a time.
+      time: trimmedTime || undefined,
+      durationMinutes:
+        trimmedTime && Number.isFinite(duration) && duration > 0
+          ? Math.round(duration)
+          : undefined,
+    });
     setEditingId(null);
+    if (editDate !== event.date) onMoved?.(editDate);
   }
 
   return (
@@ -62,40 +107,79 @@ export default function DayPanel({
           {events.map((event) => (
             <li
               key={event.id}
-              className="flex items-center gap-2 p-2 pl-3 rounded-badge border border-base-600 bg-base-700/30"
+              className="p-2 pl-3 rounded-badge border border-base-600 bg-base-700/30"
             >
               {editingId === event.id ? (
-                <>
+                <div className="space-y-2">
                   <input
                     autoFocus
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitEdit(event.id);
-                      if (e.key === "Escape") setEditingId(null);
-                    }}
+                    onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
                     aria-label="Event title"
-                    className="flex-1 min-w-0 bg-transparent text-base sm:text-sm text-ink-100 outline-none"
+                    placeholder="Title"
+                    className={INPUT}
                   />
-                  <button
-                    onClick={() => commitEdit(event.id)}
-                    aria-label="Save"
-                    title="Save"
-                    className="w-11 h-11 shrink-0 flex items-center justify-center rounded-badge text-xp hover:bg-base-700 transition-colors"
-                  >
-                    <Check size={15} />
-                  </button>
-                  <button
-                    onClick={() => setEditingId(null)}
-                    aria-label="Cancel"
-                    title="Cancel"
-                    className="w-11 h-11 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
-                  >
-                    <X size={15} />
-                  </button>
-                </>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      type="date"
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      aria-label="Date"
+                      title="Change the date to move this event"
+                      className={`${INPUT_SM} font-mono flex-1 min-w-[128px]`}
+                    />
+                    <input
+                      type="time"
+                      value={editTime}
+                      onChange={(e) => setEditTime(e.target.value)}
+                      aria-label="Time"
+                      title="Leave empty for an all-day event"
+                      className={`${INPUT_SM} font-mono w-28`}
+                    />
+                    {editTime && (
+                      <input
+                        type="number"
+                        min={0}
+                        step={5}
+                        value={editDuration}
+                        onChange={(e) => setEditDuration(e.target.value)}
+                        aria-label="Duration in minutes"
+                        title="Duration, in minutes"
+                        placeholder="min"
+                        className={`${INPUT_SM} font-mono w-20`}
+                      />
+                    )}
+                    <select
+                      value={editKind}
+                      onChange={(e) => setEditKind(e.target.value as EventKind)}
+                      aria-label="Kind"
+                      className={`${INPUT_SM} flex-1 min-w-[100px]`}
+                    >
+                      {EVENT_KINDS.map((k) => (
+                        <option key={k} value={k}>
+                          {EVENT_KIND_META[k].label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => commitEdit(event)}
+                      className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge bg-xp text-base-950 text-xs font-medium hover:bg-xp-bright transition-colors"
+                    >
+                      <Check size={14} /> Save
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 transition-colors"
+                    >
+                      <X size={14} /> Cancel
+                    </button>
+                  </div>
+                </div>
               ) : (
-                <>
+                <div className="flex items-center gap-2">
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${EVENT_KIND_META[event.kind].dot}`}
                     aria-hidden
@@ -103,16 +187,16 @@ export default function DayPanel({
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm text-ink-300 truncate">{event.title}</span>
                     <span className="block text-[11px] font-mono text-ink-700">
-                      {event.time ?? "All day"} · {EVENT_KIND_META[event.kind].label}
+                      {event.time ?? "All day"}
+                      {event.time && event.durationMinutes ? ` · ${event.durationMinutes}m` : ""}
+                      {" · "}
+                      {EVENT_KIND_META[event.kind].label}
                     </span>
                   </span>
                   <button
-                    onClick={() => {
-                      setEditingId(event.id);
-                      setEditTitle(event.title);
-                    }}
+                    onClick={() => startEdit(event)}
                     aria-label={`Edit "${event.title}"`}
-                    title="Edit"
+                    title="Edit — including its date"
                     className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
                   >
                     <Pencil size={13} />
@@ -122,7 +206,7 @@ export default function DayPanel({
                     onConfirm={() => onDelete(event.id)}
                     compact
                   />
-                </>
+                </div>
               )}
             </li>
           ))}
@@ -167,6 +251,10 @@ export default function DayPanel({
             <Plus size={16} />
           </button>
         </div>
+        <p className="text-[11px] text-ink-700">
+          Give it a duration after adding — edit lets you set how long it runs, so it can show up
+          on today's Day Schedule alongside your routine.
+        </p>
       </div>
     </div>
   );

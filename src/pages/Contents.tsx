@@ -12,6 +12,7 @@ import {
   Map as MapIcon,
   BarChart3,
   ScrollText,
+  ClipboardList,
   Settings,
   BookOpen,
   Scale,
@@ -119,6 +120,13 @@ const SECTIONS: Section[] = [
     icon: BarChart3,
     status: "planned",
     blurb: "Aggregate view across every feature.",
+  },
+  {
+    to: "/updates",
+    label: "Updates",
+    icon: ClipboardList,
+    status: "built",
+    blurb: "What's shipped in Operator, and what's still queued — reviewable here, not just in git.",
   },
   {
     to: "/settings",

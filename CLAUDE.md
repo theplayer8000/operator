@@ -133,6 +133,9 @@ src/
     useRoutineData.ts          — Daily Routine feature hook (+ daily reset logic)
     useMissionBoard.ts          — Mission Board feature hook
     useHomelab.ts                — Homelab feature hook (+ serviceUrl helper)
+    useEvents.ts                  — Events feature hook (by-day index, upcoming)
+    useSettings.ts                  — export/import/clear, acts on every namespace
+    useUpdates.ts                     — Updates feature hook (shipped/pending log)
     useNow.ts                     — ticking clock, re-syncs on tab focus
   components/
     layout/                — Sidebar, Topbar
@@ -150,7 +153,8 @@ src/
                                     NewMissionForm, ReservedSection
   pages/
     Dashboard.tsx, DailyRoutine.tsx, MissionBoard.tsx, MissionDetail.tsx,
-    Homelab.tsx, ActivityLog.tsx, Contents.tsx, Dev.tsx,
+    Homelab.tsx, Events.tsx, Settings.tsx, Updates.tsx, ActivityLog.tsx,
+    Contents.tsx, Dev.tsx,
     ComingSoon.tsx           — placeholder for any route not yet built
 ```
 
@@ -226,7 +230,8 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Dashboard | `/` | Built |
 | Daily Routine | `/routine` | Built |
 | Mission Board | `/missions`, `/missions/:id` | Built |
-| Events | `/events` | Built — year calendar, 12 month grids, day panel for add/edit/delete. Dashboard's Upcoming Events reads it |
+| Events | `/events` | Built — year calendar, 12 month grids, day panel for add/edit/delete, including moving an event's date. Timed events sync read-only onto Daily Routine's Day Schedule. Dashboard's Upcoming Events reads it, and the clock opens it |
+| Updates | `/updates` | Built — shipped/pending log of Operator's own development, reviewable in-app. Distinct from Activity Log |
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |

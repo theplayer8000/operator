@@ -1,8 +1,15 @@
-import { AlertTriangle } from "lucide-react";
-import { formatHHMM, formatDuration, minutesIntoDay } from "@/lib/time";
+import { useMemo } from "react";
+import { AlertTriangle, CalendarClock } from "lucide-react";
+import { formatHHMM, formatDuration, minutesIntoDay, parseHHMM } from "@/lib/time";
 import { useNow } from "@/hooks/useNow";
+import { useEvents } from "@/hooks/useEvents";
+import { EVENT_KIND_META } from "@/components/events/eventMeta";
 import { ROUTINE_META } from "./routineMeta";
-import type { ScheduleBlock } from "@/lib/types";
+import type { CalendarEvent, ScheduleBlock } from "@/lib/types";
+
+type Row =
+  | { kind: "routine"; block: ScheduleBlock; start: number; end: number }
+  | { kind: "event"; event: CalendarEvent; start: number; end: number };
 
 /**
  * The day on a clock rather than in a list.
@@ -17,14 +24,41 @@ import type { ScheduleBlock } from "@/lib/types";
  * day is legible at a glance. It is deliberately *not* proportional to the gap
  * between blocks — a literal 24h scale would render a 2-minute step as a
  * sub-pixel sliver and waste most of the height on the gap before work.
+ *
+ * Today's timed calendar events are interleaved in, read-only — the same
+ * sanctioned cross-feature read `HomelabStatus` and `CurrentTime` already use.
+ * Events own `events.records`; nothing here writes to it, and an event
+ * overlapping a routine block is normal (a call during the Work block, say),
+ * not the planning conflict the `overlapsPrevious` warning is for — that
+ * warning stays scoped to routine blocks only.
  */
 export default function RoutineTimeline({ schedule }: { schedule: ScheduleBlock[] }) {
   const now = useNow(30_000);
   const nowMinutes = minutesIntoDay(now);
+  const { byDay, todayKey } = useEvents();
 
-  if (schedule.length === 0) return null;
+  const todayEvents = useMemo(
+    () => (byDay.get(todayKey) ?? []).filter((e) => e.time),
+    [byDay, todayKey]
+  );
 
-  const longest = Math.max(...schedule.map((b) => b.durationMinutes), 1);
+  const rows = useMemo<Row[]>(() => {
+    const routineRows: Row[] = schedule.map((block) => ({
+      kind: "routine",
+      block,
+      start: block.start,
+      end: block.end,
+    }));
+    const eventRows: Row[] = todayEvents.map((event) => {
+      const start = parseHHMM(event.time!) ?? 0;
+      return { kind: "event", event, start, end: start + (event.durationMinutes ?? 0) };
+    });
+    return [...routineRows, ...eventRows].sort((a, b) => a.start - b.start);
+  }, [schedule, todayEvents]);
+
+  if (rows.length === 0) return null;
+
+  const longest = Math.max(...rows.map((r) => r.end - r.start), 1);
   const currentKey = schedule.find((b) => nowMinutes >= b.start && nowMinutes < b.end)?.key;
 
   // The next block that hasn't started yet — shown when nothing is active, so
@@ -48,7 +82,66 @@ export default function RoutineTimeline({ schedule }: { schedule: ScheduleBlock[
       </header>
 
       <ul className="space-y-1">
-        {schedule.map((block) => {
+        {rows.map((row) => {
+          if (row.kind === "event") {
+            const { event } = row;
+            const isPast = row.end <= nowMinutes;
+            const isNow = row.start <= nowMinutes && nowMinutes < Math.max(row.end, row.start + 1);
+            const width = Math.max(4, Math.round((row.end - row.start) / longest * 100));
+
+            return (
+              <li
+                key={event.id}
+                className={`flex items-center gap-3 px-2 py-2 rounded-badge transition-colors ${
+                  isNow ? "bg-rank/10 border border-rank/30" : "border border-transparent"
+                }`}
+              >
+                <span
+                  className={`font-mono text-xs shrink-0 w-11 ${
+                    isNow ? "text-rank" : isPast ? "text-ink-700" : "text-ink-500"
+                  }`}
+                >
+                  {event.time}
+                </span>
+                <span className={isNow ? "text-rank" : isPast ? "text-ink-700" : "text-ink-500"}>
+                  <CalendarClock size={14} />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${EVENT_KIND_META[event.kind].dot}`}
+                      aria-hidden
+                    />
+                    <span
+                      className={`text-sm truncate ${
+                        isPast && !isNow ? "text-ink-700" : "text-ink-300"
+                      }`}
+                    >
+                      {event.title}
+                    </span>
+                  </span>
+                  <span className="block h-1 bg-base-700 rounded-full overflow-hidden mt-1">
+                    <span
+                      className={`block h-full rounded-full transition-all duration-500 ${
+                        isNow ? "bg-rank" : isPast ? "bg-base-500" : "bg-rank/40"
+                      }`}
+                      style={{ width: `${width}%` }}
+                    />
+                  </span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="block font-mono text-[11px] text-ink-500">
+                    {formatDuration(event.durationMinutes ?? 0)}
+                  </span>
+                  <span className="block font-mono text-[11px] text-ink-700">
+                    {EVENT_KIND_META[event.kind].label}
+                  </span>
+                </span>
+              </li>
+            );
+          }
+
+          const { block } = row;
           const { icon: Icon } = ROUTINE_META[block.key];
           const isNow = block.key === currentKey;
           const isPast = block.end <= nowMinutes;
@@ -95,7 +188,7 @@ export default function RoutineTimeline({ schedule }: { schedule: ScheduleBlock[
                     </span>
                   )}
                 </span>
-                {/* duration bar — relative to the longest block of the day */}
+                {/* duration bar — relative to the longest block/event of the day */}
                 <span className="block h-1 bg-base-700 rounded-full overflow-hidden mt-1">
                   <span
                     className={`block h-full rounded-full transition-all duration-500 ${
@@ -124,6 +217,14 @@ export default function RoutineTimeline({ schedule }: { schedule: ScheduleBlock[
           <AlertTriangle size={12} className="text-vital-down shrink-0 mt-0.5" />
           One or more blocks start before the previous one is estimated to finish. Adjust a start
           time, or trim the steps in the earlier block.
+        </p>
+      )}
+
+      {todayEvents.length > 0 && (
+        <p className="text-[11px] text-ink-700 mt-3 pt-3 border-t border-base-600">
+          <CalendarClock size={11} className="inline mr-1 -mt-0.5" />
+          {todayEvents.length} timed event{todayEvents.length === 1 ? "" : "s"} from today's
+          calendar — edit them on the <span className="text-ink-500">Events</span> page.
         </p>
       )}
     </div>

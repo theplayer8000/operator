@@ -50,6 +50,7 @@ export function useEvents() {
     title: string;
     date: string;
     time?: string;
+    durationMinutes?: number;
     kind?: EventKind;
     notes?: string;
   }) {
@@ -60,9 +61,13 @@ export function useEvents() {
       date: input.date,
       notes: input.notes?.trim() ?? "",
       kind: input.kind ?? "other",
-      // An omitted key, not `undefined` — an explicit undefined in a spread
-      // overwrites, which is the trap called out in architecture.md.
+      // Omitted keys, not `undefined` — an explicit undefined in a spread
+      // overwrites, which is the trap called out in architecture.md. Duration
+      // only makes sense alongside a time, so it's dropped whenever time is.
       ...(input.time ? { time: input.time } : {}),
+      ...(input.time && input.durationMinutes && input.durationMinutes > 0
+        ? { durationMinutes: Math.round(input.durationMinutes) }
+        : {}),
     };
     setEvents((prev) => [...prev, record]);
   }
