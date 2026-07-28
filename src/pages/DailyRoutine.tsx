@@ -17,7 +17,7 @@ export default function DailyRoutine() {
   } = useRoutineData();
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto lg:mx-0">
       <RoutineSummary
         overallPercent={overallPercent}
         doneTasks={doneTasks}

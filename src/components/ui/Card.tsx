@@ -18,7 +18,7 @@ const SPAN_CLASS: Record<number, string> = {
 export default function Card({ title, icon, action, children, className = "", span = 1 }: CardProps) {
   return (
     <section
-      className={`card-base p-5 flex flex-col animate-fade-up ${SPAN_CLASS[span]} ${className}`}
+      className={`card-base p-4 sm:p-5 flex flex-col min-w-0 animate-fade-up ${SPAN_CLASS[span]} ${className}`}
     >
       {title && (
         <header className="flex items-center justify-between mb-4">

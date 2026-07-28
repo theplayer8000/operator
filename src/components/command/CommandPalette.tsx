@@ -15,6 +15,17 @@ const DESTINATIONS = [
   { to: "/settings", label: "Settings" },
 ];
 
+const OPEN_EVENT = "operator:open-palette";
+
+/**
+ * Opens the palette from anywhere. The Topbar button used to fake a
+ * Ctrl/Cmd+K KeyboardEvent, which worked but coupled the button to the
+ * palette's key handler — and meant nothing at all on a touch device.
+ */
+export function openCommandPalette() {
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT));
+}
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -22,15 +33,18 @@ export default function CommandPalette() {
   const navigate = useNavigate();
 
   const results = useMemo(
-    () =>
-      DESTINATIONS.filter((d) => d.label.toLowerCase().includes(query.toLowerCase())),
+    () => DESTINATIONS.filter((d) => d.label.toLowerCase().includes(query.toLowerCase())),
     [query]
   );
 
   useEffect(() => {
+    function show() {
+      setOpen(true);
+      setQuery("");
+      setActiveIndex(0);
+    }
     function onKeydown(e: KeyboardEvent) {
-      const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
-      if (isCmdK) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen((v) => !v);
         setQuery("");
@@ -39,7 +53,11 @@ export default function CommandPalette() {
       if (e.key === "Escape") setOpen(false);
     }
     window.addEventListener("keydown", onKeydown);
-    return () => window.removeEventListener("keydown", onKeydown);
+    window.addEventListener(OPEN_EVENT, show);
+    return () => {
+      window.removeEventListener("keydown", onKeydown);
+      window.removeEventListener(OPEN_EVENT, show);
+    };
   }, []);
 
   useEffect(() => setActiveIndex(0), [query]);
@@ -53,7 +71,7 @@ export default function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[14vh] bg-black/60 backdrop-blur-sm animate-fade-up"
+      className="fixed inset-0 z-[60] flex items-start justify-center pt-[10vh] sm:pt-[14vh] px-4 bg-black/60 backdrop-blur-sm animate-fade-up"
       onClick={() => setOpen(false)}
     >
       <div
@@ -61,7 +79,7 @@ export default function CommandPalette() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-base-600">
-          <Search size={16} className="text-ink-500" />
+          <Search size={16} className="text-ink-500 shrink-0" />
           <input
             autoFocus
             value={query}
@@ -71,14 +89,15 @@ export default function CommandPalette() {
               if (e.key === "ArrowUp") setActiveIndex((i) => Math.max(i - 1, 0));
               if (e.key === "Enter" && results[activeIndex]) go(results[activeIndex].to);
             }}
-            placeholder="Jump to a mission board..."
-            className="flex-1 bg-transparent outline-none text-sm text-ink-100 placeholder:text-ink-700"
+            placeholder="Jump to..."
+            // 16px minimum, or iOS Safari zooms the whole page on focus.
+            className="flex-1 min-w-0 bg-transparent outline-none text-base sm:text-sm text-ink-100 placeholder:text-ink-700"
           />
-          <kbd className="text-[10px] font-mono text-ink-700 border border-base-600 rounded px-1.5 py-0.5">
+          <kbd className="hidden sm:inline text-[10px] font-mono text-ink-700 border border-base-600 rounded px-1.5 py-0.5">
             esc
           </kbd>
         </div>
-        <div className="max-h-72 overflow-y-auto py-1.5 scrollbar-none">
+        <div className="max-h-[50vh] sm:max-h-72 overflow-y-auto py-1.5 scrollbar-none">
           {results.length === 0 && (
             <p className="px-4 py-6 text-center text-sm text-ink-700">No matches.</p>
           )}
@@ -87,7 +106,7 @@ export default function CommandPalette() {
               key={d.to}
               onClick={() => go(d.to)}
               onMouseEnter={() => setActiveIndex(i)}
-              className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+              className={`w-full text-left px-4 min-h-[44px] flex items-center text-sm transition-colors ${
                 i === activeIndex ? "bg-base-700 text-ink-100" : "text-ink-300"
               }`}
             >

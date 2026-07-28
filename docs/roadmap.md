@@ -30,8 +30,7 @@ per-section notes. Tasks marked `repeatDaily` reset once per calendar day.
 
 Known gaps: the reset is mount-only and UTC-based, so a tab left open across
 midnight doesn't reset, and the day rolls at 01:00 local during BST
-(**OPS-009**). The repeat-daily toggle is hover-only, so it is unreachable on
-a phone.
+(**OPS-009**).
 
 ### Mission Board — `/missions`, `/missions/:id`
 
@@ -44,8 +43,7 @@ invested, estimated completion, milestone CRUD, directional dependencies, and an
 activity log.
 
 Known gaps: no delete and no archive UI despite `archived` existing on the type
-(**OPS-012**); nothing prevents a dependency cycle (**OPS-013**). The ten detail
-tabs wrap awkwardly on a narrow screen.
+(**OPS-012**); nothing prevents a dependency cycle (**OPS-013**).
 
 ## Not built
 
@@ -92,11 +90,9 @@ retired:
 
 1. ~~`generateId()` fix (**OPS-001**)~~ — **done in v5.**
 2. ~~Storage off localStorage (**OPS-003**, **OPS-004**)~~ — **done in v5.**
-3. **Mobile / responsive pass** — required by `vision.md`; the app is used from
-   a phone today and the sidebar, touch targets, and hover-only controls are
-   desktop-assumed.
+3. ~~Mobile / responsive pass~~ — **done in v6.**
 4. **Settings** — smallest remaining feature, and the only route to a backup
-   (**OPS-017**).
+   (**OPS-017**). Mostly plumbing over the existing API.
 5. Then whichever feature the owner actually wants. Journey is the one the
    whole three-tier philosophy points at.
 

@@ -40,13 +40,14 @@ export default function QuickNotes({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="Jot something down..."
-          className="flex-1 bg-transparent text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
+          className="flex-1 min-w-0 bg-transparent text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
         />
         <button
           onClick={submit}
-          className="w-7 h-7 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors"
+          aria-label="Add note"
+          className="w-11 h-11 shrink-0 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors"
         >
-          <Plus size={14} />
+          <Plus size={16} />
         </button>
       </div>
     </Card>

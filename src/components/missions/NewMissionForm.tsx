@@ -46,7 +46,7 @@ export default function NewMissionForm({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-3.5 py-2 rounded-badge bg-xp/15 border border-xp/30 text-xp text-sm hover:bg-xp/25 transition-colors"
+        className="flex items-center gap-2 px-3.5 min-h-[44px] rounded-badge bg-xp/15 border border-xp/30 text-xp text-sm hover:bg-xp/25 transition-colors"
       >
         <Plus size={15} />
         New Mission
@@ -67,19 +67,19 @@ export default function NewMissionForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Mission name"
-          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 sm:col-span-2"
+          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 sm:col-span-2"
         />
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What is this mission, in one or two sentences?"
           rows={2}
-          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 sm:col-span-2 resize-none"
+          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 sm:col-span-2 resize-none"
         />
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value as MissionCategory)}
-          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-sm text-ink-300 outline-none focus:border-xp/50"
+          className="bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-300 outline-none focus:border-xp/50"
         >
           {CATEGORY_OPTIONS.map((c) => (
             <option key={c} value={c}>
@@ -90,7 +90,7 @@ export default function NewMissionForm({
         <select
           value={difficulty}
           onChange={(e) => setDifficulty(e.target.value as MissionDifficulty)}
-          className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-sm text-ink-300 outline-none focus:border-xp/50"
+          className="bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-300 outline-none focus:border-xp/50"
         >
           {DIFFICULTY_OPTIONS.map((d) => (
             <option key={d} value={d}>
@@ -101,7 +101,7 @@ export default function NewMissionForm({
       </div>
       <button
         onClick={submit}
-        className="px-4 py-2 rounded-badge bg-xp text-base-950 text-sm font-medium hover:bg-xp-bright transition-colors"
+        className="w-full sm:w-auto px-4 min-h-[44px] rounded-badge bg-xp text-base-950 text-sm font-medium hover:bg-xp-bright transition-colors"
       >
         Create mission
       </button>

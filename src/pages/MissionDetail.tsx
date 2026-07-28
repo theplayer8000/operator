@@ -76,7 +76,7 @@ export default function MissionDetail() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto lg:mx-0">
       <Link
         to="/missions"
         className="inline-flex items-center gap-1.5 text-sm text-ink-500 hover:text-ink-300 mb-4 transition-colors"
@@ -85,7 +85,7 @@ export default function MissionDetail() {
       </Link>
 
       {/* Header */}
-      <div className="card-base p-5 mb-5 animate-fade-up">
+      <div className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="min-w-0 flex-1">
             <EditableField
@@ -93,7 +93,7 @@ export default function MissionDetail() {
               onChange={(v) => updateMission(mission.id, { name: v })}
             />
           </div>
-          <span className="font-mono text-2xl text-ink-100 shrink-0 mt-1">{mission.progress}%</span>
+          <span className="font-mono text-xl sm:text-2xl text-ink-100 shrink-0 mt-1">{mission.progress}%</span>
         </div>
 
         <div className="h-1.5 bg-base-700 rounded-full overflow-hidden mb-4">
@@ -109,7 +109,7 @@ export default function MissionDetail() {
             <select
               value={mission.status}
               onChange={(e) => setStatus(mission.id, e.target.value as MissionStatus)}
-              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 py-1.5 text-ink-300 outline-none focus:border-xp/50"
+              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[40px] text-base sm:text-xs text-ink-300 outline-none focus:border-xp/50"
             >
               {STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s}>
@@ -123,7 +123,7 @@ export default function MissionDetail() {
             <select
               value={mission.difficulty}
               onChange={(e) => updateMission(mission.id, { difficulty: e.target.value as MissionDifficulty })}
-              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 py-1.5 text-ink-300 outline-none focus:border-xp/50"
+              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[40px] text-base sm:text-xs text-ink-300 outline-none focus:border-xp/50"
             >
               {DIFFICULTY_OPTIONS.map((d) => (
                 <option key={d} value={d}>
@@ -141,7 +141,7 @@ export default function MissionDetail() {
               min={0}
               value={mission.timeInvestedHours}
               onChange={(e) => updateMission(mission.id, { timeInvestedHours: Number(e.target.value) })}
-              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 py-1.5 text-ink-300 outline-none focus:border-xp/50 font-mono"
+              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[40px] text-base sm:text-xs text-ink-300 outline-none focus:border-xp/50 font-mono"
             />
           </div>
           <div>
@@ -156,7 +156,7 @@ export default function MissionDetail() {
                   estimatedCompletion: e.target.value ? new Date(e.target.value).toISOString() : undefined,
                 })
               }
-              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 py-1.5 text-ink-300 outline-none focus:border-xp/50 font-mono"
+              className="w-full bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[40px] text-base sm:text-xs text-ink-300 outline-none focus:border-xp/50 font-mono"
             />
           </div>
         </div>
@@ -168,18 +168,22 @@ export default function MissionDetail() {
             max={100}
             value={mission.progress}
             onChange={(e) => setProgress(mission.id, Number(e.target.value))}
-            className="w-full accent-[#E8B04D]"
+            className="w-full h-6 accent-xp cursor-pointer"
           />
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-1 mb-5 border-b border-base-600 pb-1">
+      {/*
+        Ten tabs wrap into a wall on a narrow screen. One scrollable strip
+        keeps the row a single line on a phone and unchanged on desktop.
+      */}
+      <div className="flex gap-1 mb-5 border-b border-base-600 pb-1 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${
+            className={`px-3 min-h-[44px] shrink-0 text-xs whitespace-nowrap border-b-2 transition-colors ${
               tab === t.id
                 ? "border-xp text-ink-100"
                 : "border-transparent text-ink-500 hover:text-ink-300"
@@ -190,7 +194,7 @@ export default function MissionDetail() {
         ))}
       </div>
 
-      <div className="card-base p-5 animate-fade-up">
+      <div className="card-base p-4 sm:p-5 animate-fade-up">
         {tab === "overview" && (
           <div className="space-y-5">
             <EditableField

@@ -48,7 +48,7 @@ export default function RoutineSectionCard({
       </div>
 
       {/* card */}
-      <div className="card-base p-5 flex-1 mb-4 animate-fade-up">
+      <div className="card-base p-4 sm:p-5 flex-1 min-w-0 mb-4 animate-fade-up">
         <header className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-display text-sm font-medium text-ink-100">{section.label}</h3>
@@ -63,7 +63,8 @@ export default function RoutineSectionCard({
             </span>
             <button
               onClick={() => setNotesOpen((v) => !v)}
-              className={`w-7 h-7 rounded-badge flex items-center justify-center border transition-colors ${
+              aria-label="Section notes"
+              className={`w-9 h-9 shrink-0 rounded-badge flex items-center justify-center border transition-colors ${
                 notesOpen
                   ? "border-xp/40 text-xp bg-xp/10"
                   : "border-base-600 text-ink-700 hover:text-ink-300"
@@ -82,36 +83,47 @@ export default function RoutineSectionCard({
             {section.tasks.map((t) => (
               <li
                 key={t.id}
-                className="group flex items-center gap-2.5 px-2 py-1.5 rounded-badge hover:bg-base-700/50 transition-colors"
+                className="group flex items-center gap-1 pl-2 rounded-badge hover:bg-base-700/50 transition-colors"
               >
                 <button
                   onClick={() => onToggleTask(section.key, t.id)}
-                  className={`w-4 h-4 rounded-[5px] border flex items-center justify-center shrink-0 transition-colors ${
-                    t.done ? "bg-xp border-xp" : "border-base-500 group-hover:border-ink-500"
-                  }`}
+                  className="flex flex-1 min-w-0 items-center gap-2.5 min-h-[44px] text-left"
                 >
-                  {t.done && <span className="w-1.5 h-1.5 bg-base-950 rounded-[2px]" />}
+                  <span
+                    className={`w-5 h-5 rounded-[6px] border flex items-center justify-center shrink-0 transition-colors ${
+                      t.done ? "bg-xp border-xp" : "border-base-500 group-hover:border-ink-500"
+                    }`}
+                  >
+                    {t.done && <span className="w-2 h-2 bg-base-950 rounded-[2px]" />}
+                  </span>
+                  <span
+                    className={`flex-1 text-sm truncate ${
+                      t.done ? "line-through text-ink-700" : "text-ink-300"
+                    }`}
+                  >
+                    {t.title}
+                  </span>
                 </button>
-                <span
-                  className={`flex-1 text-sm truncate ${
-                    t.done ? "line-through text-ink-700" : "text-ink-300"
-                  }`}
-                >
-                  {t.title}
-                </span>
                 {t.estimatedMinutes > 0 && (
                   <span className="text-[11px] font-mono text-ink-700 shrink-0">
                     {t.estimatedMinutes}m
                   </span>
                 )}
+                {/*
+                  Always rendered, never hover-gated. This used to be
+                  opacity-0 group-hover:opacity-100, which made it invisible
+                  and unreachable on touch — a core workflow that required a
+                  desktop, contradicting vision.md.
+                */}
                 <button
                   onClick={() => onToggleRepeat(section.key, t.id)}
-                  className={`shrink-0 transition-colors ${
-                    t.repeatDaily ? "text-rank" : "text-ink-700 opacity-0 group-hover:opacity-100"
+                  aria-pressed={t.repeatDaily}
+                  className={`shrink-0 w-11 h-11 flex items-center justify-center transition-colors ${
+                    t.repeatDaily ? "text-rank" : "text-ink-700 hover:text-ink-500"
                   }`}
                   title={t.repeatDaily ? "Repeats daily" : "One-off today"}
                 >
-                  <Repeat size={12} />
+                  <Repeat size={14} />
                 </button>
               </li>
             ))}
@@ -124,13 +136,14 @@ export default function RoutineSectionCard({
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             placeholder="Add a step..."
-            className="flex-1 bg-transparent text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
+            className="flex-1 min-w-0 bg-transparent text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
           />
           <button
             onClick={submit}
-            className="w-7 h-7 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors"
+            aria-label="Add step"
+            className="w-11 h-11 shrink-0 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors"
           >
-            <Plus size={14} />
+            <Plus size={16} />
           </button>
         </div>
 

@@ -12,7 +12,7 @@ export default function MissionCard({ mission }: { mission: MissionRecord }) {
   return (
     <Link
       to={`/missions/${mission.id}`}
-      className="card-base p-5 flex flex-col gap-4 hover:border-base-500 transition-colors animate-fade-up"
+      className="card-base p-4 sm:p-5 flex flex-col gap-4 min-w-0 hover:border-base-500 transition-colors animate-fade-up"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

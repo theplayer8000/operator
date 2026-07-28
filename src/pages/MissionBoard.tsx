@@ -42,12 +42,12 @@ export default function MissionBoard() {
         <NewMissionForm onCreate={addMission} />
       </div>
 
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 mb-5 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
         {FILTERS.map((f) => (
           <button
             key={f.key}
             onClick={() => setFilter(f.key)}
-            className={`px-3 py-1.5 rounded-badge text-xs border transition-colors ${
+            className={`px-3 min-h-[38px] shrink-0 rounded-badge text-xs border transition-colors ${
               filter === f.key
                 ? "bg-base-700 border-base-500 text-ink-100"
                 : "border-base-600 text-ink-500 hover:text-ink-300"

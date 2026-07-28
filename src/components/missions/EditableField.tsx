@@ -24,7 +24,7 @@ export default function EditableField({
   }
 
   const shared =
-    "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-sm text-ink-300 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
+    "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-300 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
 
   return (
     <div>

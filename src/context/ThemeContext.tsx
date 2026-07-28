@@ -14,8 +14,12 @@ interface ThemeContextValue {
   accent: AccentColor;
   setAccent: (a: AccentColor) => void;
   accentHex: string;
+  /** Desktop only — collapses the rail to icons. */
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  /** Mobile only — the nav drawer. */
+  mobileNavOpen: boolean;
+  setMobileNavOpen: (open: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -23,6 +27,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [accent, setAccent] = useRemoteStorage<AccentColor>("theme.accent", "gold");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--accent", ACCENT_HEX[accent]);
@@ -36,6 +41,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         accentHex: ACCENT_HEX[accent],
         sidebarCollapsed,
         toggleSidebar: () => setSidebarCollapsed((v) => !v),
+        mobileNavOpen,
+        setMobileNavOpen,
       }}
     >
       {children}

@@ -34,7 +34,7 @@ export default function TodayFocus({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && commit()}
-            className="flex-1 bg-base-700 border border-base-500 rounded-badge px-3 py-2 text-sm text-ink-100 outline-none focus:border-xp/60"
+            className="flex-1 min-w-0 bg-base-700 border border-base-500 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 outline-none focus:border-xp/60"
           />
           <button
             onClick={commit}
@@ -51,7 +51,7 @@ export default function TodayFocus({
           }}
           className="group w-full text-left flex items-start justify-between gap-3"
         >
-          <p className="font-display text-xl text-ink-100 leading-snug">{focus}</p>
+          <p className="font-display text-lg sm:text-xl text-ink-100 leading-snug">{focus}</p>
           <Pencil
             size={14}
             className="text-ink-700 group-hover:text-ink-500 shrink-0 mt-1.5 transition-colors"

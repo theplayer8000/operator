@@ -75,7 +75,7 @@ export default function MilestoneList({
                 <select
                   value={m.status}
                   onChange={(e) => setStatus(m.id, e.target.value as MilestoneStatus)}
-                  className="bg-base-800 border border-base-600 rounded-badge px-2 py-1 text-xs text-ink-300 outline-none focus:border-xp/50 shrink-0"
+                  className="bg-base-800 border border-base-600 rounded-badge px-2 min-h-[38px] text-base sm:text-xs text-ink-300 outline-none focus:border-xp/50 shrink-0"
                 >
                   {STATUS_OPTIONS.map((s) => (
                     <option key={s} value={s}>
@@ -107,20 +107,21 @@ export default function MilestoneList({
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="Milestone title"
-          className="flex-1 bg-transparent text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
+          className="flex-1 min-w-0 bg-transparent text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1"
         />
         <input
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
           placeholder="Est. duration"
-          className="w-28 bg-transparent text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1 border-l border-base-600 pl-2"
+          className="w-24 sm:w-28 shrink-0 bg-transparent text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none py-1 border-l border-base-600 pl-2"
         />
         <button
           onClick={submit}
-          className="w-7 h-7 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors shrink-0"
+          aria-label="Add milestone"
+          className="w-11 h-11 rounded-badge bg-base-700 hover:bg-base-600 flex items-center justify-center text-ink-500 transition-colors shrink-0"
         >
-          <Plus size={14} />
+          <Plus size={16} />
         </button>
       </div>
     </div>

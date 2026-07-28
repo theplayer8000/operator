@@ -181,6 +181,14 @@ own tone) which register it should sit in before building it — don't
 default to copying Mission Board's calm style or the Dashboard's playful
 style without thinking about which fits.
 
+### Responsive is not optional
+
+Operator is used from a phone. Every new surface must work there — see
+[`docs/design-system.md`](docs/design-system.md) for the rules. The four that
+get broken most: **44px touch targets**, **never hide a control behind
+`hover:`**, **`text-base sm:text-sm` on inputs** (or iOS zooms the page), and
+**scroll long rows instead of wrapping them**.
+
 ## Feature status
 
 | Feature | Route(s) | Status |

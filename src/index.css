@@ -11,6 +11,14 @@
   }
   body {
     @apply bg-base-900;
+    /* Notch / home-indicator insets — viewport-fit=cover is set in index.html. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  /* Nothing should be able to push the page sideways on a phone. */
+  html,
+  body {
+    overflow-x: hidden;
   }
   ::selection {
     @apply bg-xp/30 text-ink-100;

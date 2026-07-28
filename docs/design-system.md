@@ -95,15 +95,52 @@ composes `.card-base` directly, which is consistent with its register.
 Feature-specific components live in `components/<feature>/`. Promote something
 to `ui/` only when a second feature genuinely needs it — not in anticipation.
 
+## Responsive rules
+
+Operator is used from a phone today (`vision.md` — *"no core workflow should
+require a desktop computer"*). Desktop is still the primary experience, but
+nothing may be desktop-only.
+
+**Breakpoint:** the app uses one meaningful break, Tailwind's `lg` (1024px).
+Below it the sidebar becomes a drawer; above it, a persistent rail. `sm`
+(640px) is used for padding and type-size tweaks only.
+
+**The four rules that matter:**
+
+1. **44px minimum touch target.** Use `min-h-[44px]` on rows and `w-11 h-11`
+   on icon buttons. The old 28px (`w-7 h-7`) buttons were unusable on a phone.
+   Small *visual* elements are fine — put the padding on the hit area, not the
+   icon.
+2. **Never gate a control behind `hover:`.** Touch devices have no hover. An
+   `opacity-0 group-hover:opacity-100` control is invisible *and* unreachable —
+   that is what made the Daily Routine repeat toggle desktop-only. Hover may
+   enhance; it may never reveal.
+3. **Inputs are `text-base sm:text-sm`.** Anything under 16px makes iOS Safari
+   zoom the whole page on focus. The pattern is 16px on mobile, 14px from `sm`.
+4. **Long horizontal rows scroll, they don't wrap.** Mission Detail's ten tabs
+   and Mission Board's filter chips use
+   `overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0` — a single
+   scrollable strip that bleeds to the screen edge on mobile and is inert on
+   desktop.
+
+Also: `min-w-0` on flex children that contain truncating text, or the flexbox
+default (`min-width: auto`) makes them refuse to shrink and pushes the page
+sideways. `html, body { overflow-x: hidden }` in `index.css` is a backstop, not
+a licence to skip this.
+
+Safe-area insets are handled in `index.css` via `env(safe-area-inset-*)`, paired
+with `viewport-fit=cover` in `index.html`.
+
 ## Known inconsistencies
 
 Tracked properly in `known-issues.md`; summarised here so they aren't copied as
 precedent:
 
-- **Hardcoded hex** at `pages/MissionDetail.tsx:171` (`accent-[#E8B04D]`),
-  `components/ui/Confetti.tsx:3`, and `components/dashboard/ProductivityScore.tsx:24-42`.
-  The Recharts one is close to unavoidable (it takes props, not classes); the
-  other two are not (**OPS-008**).
+- **Hardcoded hex** in `components/ui/Confetti.tsx:3` and
+  `components/dashboard/ProductivityScore.tsx:24-42`. The Recharts one is close
+  to unavoidable (it takes props, not classes); the Confetti one is not
+  (**OPS-008**). The `accent-[#E8B04D]` in Mission Detail was replaced with
+  `accent-xp` in v6.
 - **The accent switcher is inert.** `ThemeContext` offers four accents and sets
   a `--accent` CSS variable, but `ShieldProgress.tsx:10` is its only consumer —
   everything else uses the fixed `xp` token, and no UI exists to change it

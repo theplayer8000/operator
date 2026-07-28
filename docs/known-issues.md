@@ -23,7 +23,7 @@ owner).
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
 | [OPS-008](#ops-008) | Hardcoded hex values in components | Low | Open |
 | [OPS-009](#ops-009) | Daily reset is mount-only and UTC-based | Low | Open |
-| [OPS-010](#ops-010) | Stale module-load date in Topbar | Low | Open |
+| [OPS-010](#ops-010) | Stale module-load date in Topbar | Low | **Fixed** (v6) |
 | [OPS-011](#ops-011) | Dead type surface | Low | Open |
 | [OPS-012](#ops-012) | No delete or archive path for missions | Low | Needs decision |
 | [OPS-013](#ops-013) | Dependency cycles are possible | Low | Open |
@@ -199,12 +199,13 @@ switcher in Settings) or drop it to gold-only and delete the machinery.
 
 Against `CLAUDE.md:102-103`.
 
-- `pages/MissionDetail.tsx:171` — `accent-[#E8B04D]`
+- ~~`pages/MissionDetail.tsx:171` — `accent-[#E8B04D]`~~ — fixed in v6
+  (`accent-xp`)
 - `components/ui/Confetti.tsx:3` — `COLORS` array
 - `components/dashboard/ProductivityScore.tsx:24-42` — Recharts colours
 
 The Recharts one is close to unavoidable (props, not classes) and is reasonable
-to leave with a comment. The other two are straightforwardly fixable.
+to leave with a comment. The Confetti one is straightforwardly fixable.
 
 ## OPS-009
 
@@ -222,14 +223,12 @@ or on visibility change rather than mount only.
 
 ## OPS-010
 
-**Stale module-load date in Topbar** · Low · Open
+**Stale module-load date in Topbar** · Low · **Fixed in v6**
 
-`components/layout/Topbar.tsx:3` computes the displayed date at module load, so
-it goes stale in a long-lived tab. Same class as OPS-009.
-
-Related, non-urgent: `Topbar.tsx:16-18` opens the command palette by dispatching
-a **synthetic** `KeyboardEvent` with `metaKey: true` rather than sharing state.
-It works, but it couples the button to the palette's key handler.
+> **Fixed 2026-07-28.** The date is component state refreshed on a 60s interval.
+> The synthetic-`KeyboardEvent` hack is also gone — `CommandPalette` now exports
+> `openCommandPalette()`, which matters because a faked Cmd+K meant nothing at
+> all on a touch device.
 
 ## OPS-011
 
