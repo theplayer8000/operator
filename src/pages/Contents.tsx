@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Repeat,
   Swords,
+  Server,
   GraduationCap,
   Dumbbell,
   LineChart,
@@ -54,6 +55,13 @@ const SECTIONS: Section[] = [
     icon: Swords,
     status: "built",
     blurb: "Long-running efforts with milestones, dependencies and their own history.",
+  },
+  {
+    to: "/homelab",
+    label: "Homelab",
+    icon: Server,
+    status: "built",
+    blurb: "Every service running on the box, with a live up/down check and a way in.",
   },
   {
     to: "/log",

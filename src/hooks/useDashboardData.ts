@@ -59,12 +59,30 @@ export function useDashboardData() {
     ]);
   }
 
+  function editTask(id: string, title: string) {
+    if (!title.trim()) return;
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, title: title.trim() } : t)));
+  }
+
+  function deleteTask(id: string) {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }
+
   function addNote(text: string) {
     if (!text.trim()) return;
     setNotes((prev) => [
       { id: generateId(), text: text.trim(), createdAt: new Date().toISOString() },
       ...prev,
     ]);
+  }
+
+  function editNote(id: string, text: string) {
+    if (!text.trim()) return;
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, text: text.trim() } : n)));
+  }
+
+  function deleteNote(id: string) {
+    setNotes((prev) => prev.filter((n) => n.id !== id));
   }
 
   const productivityScore = Math.round(
@@ -77,6 +95,8 @@ export function useDashboardData() {
     tasks,
     toggleTask,
     addTask,
+    editTask,
+    deleteTask,
     missions,
     setMissions,
     weeklyGoals,
@@ -84,6 +104,8 @@ export function useDashboardData() {
     events,
     notes,
     addNote,
+    editNote,
+    deleteNote,
     activity,
     productivityHistory,
     productivityScore,

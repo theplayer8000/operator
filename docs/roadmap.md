@@ -12,7 +12,8 @@ Keep both in sync when a feature ships.
 
 Ten widgets in a 3-column grid. The daily glance.
 
-**Editable:** focus, tasks (add/toggle), quick notes (add).
+**Editable:** focus, tasks (add/toggle/edit/delete), quick notes
+(add/edit/delete).
 **Display-only:** weekly goals, streaks, upcoming events, productivity score,
 current missions, project progress. The storage and hook plumbing exists for all
 of them; only the editors are missing.
@@ -27,6 +28,9 @@ these should read live Mission Board data is an open product question — see
 Seven fixed sections (`morning`, `work`, `gym`, `learning`, `forex`, `evening`,
 `sleep`) rendered as a vertical rail. Per-section tasks with minute estimates and
 per-section notes. Tasks marked `repeatDaily` reset once per calendar day.
+Steps can be renamed and re-estimated inline, or deleted — edit mode replaces
+the row rather than adding a fifth control to it, since the row already carries
+a checkbox, a minute estimate and the repeat toggle.
 
 Known gaps: the reset is mount-only and UTC-based, so a tab left open across
 midnight doesn't reset, and the day rolls at 01:00 local during BST
@@ -42,8 +46,36 @@ Supports: create, inline edit of every text field, status, progress, time
 invested, estimated completion, milestone CRUD, directional dependencies, and an
 activity log.
 
-Known gaps: no delete and no archive UI despite `archived` existing on the type
-(**OPS-012**); nothing prevents a dependency cycle (**OPS-013**).
+Delete and archive both landed in v7 (**OPS-012** closed) — archive from the
+detail page, an "Archived" filter on the board to get records back, and delete
+that sweeps the ID out of other missions' `dependsOn`.
+
+Known gaps: nothing prevents a dependency cycle (**OPS-013**); no undo on
+delete (**OPS-020**).
+
+### Homelab — `/homelab`
+
+One tile per service running on the box: name, description, `host:port`, stack,
+a live online/offline dot, and a link that opens it. Tiles are added, edited and
+removed from the page itself; the list is data (`homelab.services`), not code,
+so a new project is a form entry rather than a commit.
+
+This is what makes Operator the front door to the EPYC server rather than just
+one app on it. The Dashboard carries a compact read-only strip of the same
+tiles — the homepage-of-the-homelab job — while management stays on `/homelab`.
+
+Status is probed **server-side**, which is the whole design decision here: the
+browser is usually a phone over Tailscale, so a client-side probe of
+`localhost:5000` would probe the phone and report everything offline. See
+[ADR 0007](decisions/0007-homelab-server-side-probes.md).
+
+First tile is **Darams CRM** (`:5000`), which is a separate Flask project with
+its own database and its own repo. Operator links to it and shares nothing with
+it — deliberately, per that project's own handoff. Do not integrate them in
+code.
+
+Known gaps: port-open is not health (**OPS-019**); no grouping or ordering of
+tiles beyond insertion order; no favicon or icon per service.
 
 ### Activity Log — `/log`
 

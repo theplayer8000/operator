@@ -6,22 +6,32 @@ import NewMissionForm from "@/components/missions/NewMissionForm";
 import type { MissionStatus } from "@/lib/types";
 import { STATUS_META } from "@/components/missions/MissionBadges";
 
-const FILTERS: { key: MissionStatus | "all"; label: string }[] = [
+/**
+ * "Archived" sits in the same strip as the status filters rather than behind
+ * a separate route or toggle. Archiving is otherwise indistinguishable from
+ * deleting — if there is no way back to the record, the reversible option
+ * isn't actually reversible.
+ */
+type Filter = MissionStatus | "all" | "archived";
+
+const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "in_progress", label: STATUS_META.in_progress.label },
   { key: "blocked", label: STATUS_META.blocked.label },
   { key: "not_started", label: STATUS_META.not_started.label },
   { key: "complete", label: STATUS_META.complete.label },
+  { key: "archived", label: "Archived" },
 ];
 
 export default function MissionBoard() {
-  const { active, addMission } = useMissionBoard();
-  const [filter, setFilter] = useState<MissionStatus | "all">("all");
+  const { active, archived, addMission } = useMissionBoard();
+  const [filter, setFilter] = useState<Filter>("all");
 
-  const filtered = useMemo(
-    () => (filter === "all" ? active : active.filter((m) => m.status === filter)),
-    [active, filter]
-  );
+  const filtered = useMemo(() => {
+    if (filter === "archived") return archived;
+    if (filter === "all") return active;
+    return active.filter((m) => m.status === filter);
+  }, [active, archived, filter]);
 
   const inProgress = active.filter((m) => m.status === "in_progress").length;
 
@@ -36,6 +46,7 @@ export default function MissionBoard() {
             <h1 className="font-display text-lg text-ink-100 leading-tight">Mission Board</h1>
             <p className="text-xs text-ink-500">
               {active.length} missions · {inProgress} in progress
+              {archived.length > 0 && ` · ${archived.length} archived`}
             </p>
           </div>
         </div>
@@ -59,7 +70,11 @@ export default function MissionBoard() {
       </div>
 
       {filtered.length === 0 ? (
-        <p className="text-sm text-ink-700 py-10 text-center">No missions match this filter.</p>
+        <p className="text-sm text-ink-700 py-10 text-center">
+          {filter === "archived"
+            ? "Nothing archived."
+            : "No missions match this filter."}
+        </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((m) => (

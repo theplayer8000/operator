@@ -9,6 +9,7 @@ import UpcomingEvents from "@/components/dashboard/UpcomingEvents";
 import QuickNotes from "@/components/dashboard/QuickNotes";
 import RecentActivity from "@/components/dashboard/RecentActivity";
 import ProductivityScore from "@/components/dashboard/ProductivityScore";
+import HomelabStatus from "@/components/dashboard/HomelabStatus";
 
 export default function Dashboard() {
   const {
@@ -17,12 +18,16 @@ export default function Dashboard() {
     tasks,
     toggleTask,
     addTask,
+    editTask,
+    deleteTask,
     missions,
     weeklyGoals,
     streaks,
     events,
     notes,
     addNote,
+    editNote,
+    deleteNote,
     activity,
     productivityHistory,
     productivityScore,
@@ -30,8 +35,16 @@ export default function Dashboard() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <HomelabStatus />
+
       <TodayFocus focus={focus} onChange={setFocus} />
-      <TodayTasks tasks={tasks} onToggle={toggleTask} onAdd={addTask} />
+      <TodayTasks
+        tasks={tasks}
+        onToggle={toggleTask}
+        onAdd={addTask}
+        onEdit={editTask}
+        onDelete={deleteTask}
+      />
 
       <CurrentMissions missions={missions} />
       <WeeklyGoals goals={weeklyGoals} />
@@ -41,7 +54,7 @@ export default function Dashboard() {
       <ProductivityScore score={productivityScore} history={productivityHistory} />
 
       <UpcomingEvents events={events} />
-      <QuickNotes notes={notes} onAdd={addNote} />
+      <QuickNotes notes={notes} onAdd={addNote} onEdit={editNote} onDelete={deleteNote} />
       <RecentActivity activity={activity} />
     </div>
   );

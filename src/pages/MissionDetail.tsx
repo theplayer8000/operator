@@ -11,7 +11,10 @@ import {
   Map as MapIcon,
   Sparkles,
   Paperclip,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
+import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import type { MissionDifficulty, MissionStatus } from "@/lib/types";
 import { STATUS_OPTIONS, DIFFICULTY_OPTIONS, STATUS_META, DIFFICULTY_META } from "@/components/missions/MissionBadges";
@@ -49,7 +52,10 @@ export default function MissionDetail() {
     toggleDependency,
     addMilestone,
     updateMilestone,
+    deleteMilestone,
     setNotes,
+    setArchived,
+    deleteMission,
   } = useMissionBoard();
 
   const [tab, setTab] = useState<TabId>("overview");
@@ -271,6 +277,7 @@ export default function MissionDetail() {
             milestones={mission.milestones}
             onAdd={(m) => addMilestone(mission.id, m)}
             onUpdate={(msId, patch) => updateMilestone(mission.id, msId, patch)}
+            onDelete={(msId) => deleteMilestone(mission.id, msId)}
           />
         )}
 
@@ -353,6 +360,41 @@ export default function MissionDetail() {
             message="Reserved for a future AI-generated summary of this mission's progress and context."
           />
         )}
+      </div>
+
+      {/*
+        Below the tabs, not inside one. Archive and delete act on the whole
+        record, so they don't belong to Overview any more than to Notes —
+        and keeping them at the far bottom means you scroll past everything
+        you'd lose before you reach the control that loses it.
+      */}
+      <div className="card-base p-4 sm:p-5 mt-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm text-ink-300">
+            {mission.archived ? "This mission is archived" : "Archive this mission"}
+          </p>
+          <p className="text-xs text-ink-700">
+            {mission.archived
+              ? "Hidden from the board. Restoring puts it back with everything intact."
+              : "Hides it from the board without losing anything. Reversible."}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setArchived(mission.id, !mission.archived)}
+            className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-badge border border-base-600 text-sm text-ink-300 hover:text-ink-100 hover:border-base-500 transition-colors"
+          >
+            {mission.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+            {mission.archived ? "Restore" : "Archive"}
+          </button>
+          <ConfirmButton
+            label={`Delete "${mission.name}"`}
+            onConfirm={() => {
+              deleteMission(mission.id);
+              navigate("/missions");
+            }}
+          />
+        </div>
       </div>
     </div>
   );

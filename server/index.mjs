@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listTree, readTextFile, repoMeta } from "./dev.mjs";
+import { checkServices } from "./homelab.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OPERATOR_PORT ?? 5174);
@@ -180,6 +181,13 @@ const server = createServer(async (req, res) => {
       cache.state[key] = body?.value ?? null;
       await persist();
       return json(res, 200, { ok: true, key });
+    }
+
+    // --- Homelab status (probes only what the store already lists) ---
+
+    if (pathname === "/api/homelab/status" && req.method === "GET") {
+      const store = await load();
+      return json(res, 200, await checkServices(store.state["homelab.services"]));
     }
 
     // --- Dev browser (read-only, sandboxed to the repo — see dev.mjs) ---

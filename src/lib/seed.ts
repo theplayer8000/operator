@@ -1,5 +1,6 @@
 import type {
   ActivityItem,
+  HomelabService,
   Mission,
   MissionRecord,
   QuickNote,
@@ -130,6 +131,33 @@ export const seedRoutineSections: RoutineSection[] = [
       { id: "r15", title: "Screens off", done: false, estimatedMinutes: 0, repeatDaily: true },
       { id: "r16", title: "Lights out by target time", done: false, estimatedMinutes: 0, repeatDaily: true },
     ],
+  },
+];
+
+// Hosts are written as "localhost" because that is what they are from the box
+// running the storage server. The client rewrites it to whatever hostname the
+// browser used, so these same entries resolve correctly over Tailscale.
+export const seedHomelabServices: HomelabService[] = [
+  {
+    id: "svc-darams-crm",
+    name: "Darams CRM",
+    description:
+      "Lettings and sales CRM for the office — landlords, properties, tenants, tenancies, works.",
+    host: "localhost",
+    port: 5000,
+    path: "/",
+    protocol: "http",
+    stack: "Flask · SQLite",
+  },
+  {
+    id: "svc-operator-api",
+    name: "Operator Storage API",
+    description: "This dashboard's own JSON store. If this tile is down, you are reading a mirror.",
+    host: "localhost",
+    port: 5174,
+    path: "/api/health",
+    protocol: "http",
+    stack: "Node · JSON file",
   },
 ];
 

@@ -7,6 +7,8 @@ export default function DailyRoutine() {
     sections,
     toggleTask,
     addTask,
+    editTask,
+    deleteTask,
     toggleRepeat,
     setNotes,
     overallPercent,
@@ -34,6 +36,8 @@ export default function DailyRoutine() {
             isLast={i === sections.length - 1}
             onToggleTask={toggleTask}
             onAddTask={addTask}
+            onEditTask={editTask}
+            onDeleteTask={deleteTask}
             onToggleRepeat={toggleRepeat}
             onNotesChange={setNotes}
           />

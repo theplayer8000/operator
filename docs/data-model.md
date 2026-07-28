@@ -37,6 +37,7 @@ source of truth. Anything reading it directly is either `remoteStore` or a bug.
 | `GET /api/dev/meta` | Repo branch, commit, remote — read-only |
 | `GET /api/dev/tree?path=` | Directory listing, sandboxed to the repo |
 | `GET /api/dev/file?path=` | Text file contents, 400 KB cap |
+| `GET /api/homelab/status` | Reachability of the services in `homelab.services` — see [ADR 0007](decisions/0007-homelab-server-side-probes.md) |
 
 The `/api/dev/*` routes are read-only and never touch the store — see
 `server/dev.mjs` and **OPS-018**.
@@ -49,17 +50,18 @@ store.
 | Key (`os.` prefix implied) | Type | Owner | Mutable in UI |
 |---|---|---|---|
 | `dashboard.focus` | `string` | `useDashboardData` | Yes |
-| `dashboard.tasks` | `Task[]` | `useDashboardData` | Add, toggle |
+| `dashboard.tasks` | `Task[]` | `useDashboardData` | Add, toggle, edit, delete |
 | `dashboard.missions` | `Mission[]` | `useDashboardData` | **No** — `setMissions` is returned but unused (**OPS-005**) |
 | `dashboard.weeklyGoals` | `WeeklyGoal[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.streaks` | `Streak[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.events` | `UpcomingEvent[]` | `useDashboardData` | **No** — read-only display |
-| `dashboard.notes` | `QuickNote[]` | `useDashboardData` | Add only |
+| `dashboard.notes` | `QuickNote[]` | `useDashboardData` | Add, edit, delete |
 | `dashboard.activity` | `ActivityItem[]` | `useDashboardData` | Appended by mutators, capped at 20 |
 | `dashboard.productivityHistory` | `{day, score}[]` | `useDashboardData` | **No** — read-only display |
 | `routine.sections` | `RoutineSection[]` | `useRoutineData` | Yes |
 | `routine.lastReset` | `string` (`YYYY-MM-DD`) | `useRoutineData` | Internal marker |
-| `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes |
+| `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
+| `homelab.services` | `HomelabService[]` | `useHomelab` | Yes — the server also reads this slice to know what to probe |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
 
 Keys are created lazily — a slice only appears in the store once something
@@ -120,14 +122,47 @@ full field list. Structural notes:
 - `relatedLearning` and `relatedJourneyMilestone` are **free text standing in
   for future foreign keys** into Knowledge Vault and Journey. When those
   features exist, these become the migration point.
-- `archived: boolean` is filtered on (`hooks/useMissionBoard.ts:139`) but no UI
-  can set it.
+- `archived: boolean` is filtered on and now settable — `setArchived` in
+  `useMissionBoard`, surfaced at the bottom of `MissionDetail` with an
+  "Archived" filter on the board so a record can be got back.
+- **Deleting a mission sweeps its ID out of every other mission's `dependsOn`**
+  in the same write (`deleteMission`). Because successors are computed rather
+  than stored, a leftover ID is not a visibly broken link — it is an invisible
+  one that changes nothing until the ID is reused. The invariant lives in the
+  hook, not the caller.
+
+### Homelab
+
+`HomelabService` is a pointer and nothing more: name, description, host, port,
+path, protocol, stack. Operator never embeds, proxies, or shares data with the
+services it lists — deleting a tile removes the pointer, never the service.
+
+Two things about this slice are unlike every other one:
+
+- **The server reads it too.** `GET /api/homelab/status` probes exactly the
+  services in `homelab.services` and takes no host/port parameter, so it cannot
+  be used as a port scanner. See
+  [ADR 0007](decisions/0007-homelab-server-side-probes.md).
+- **Its seed is pushed to the server on first run.** Every other feature's seed
+  can live in the browser indefinitely, because only the browser reads it. Here
+  the server needs the list, so `useHomelab` writes the seed once — guarded on
+  a successful online load via `hasOnServer()`, since writing after a *failed*
+  load would overwrite real data with seed data.
+
+`ServiceStatus` (online, latency) is derived per request and **never
+persisted** — the same rule the Activity Log follows.
+
+`host` is stored as seen from the box running the storage server, so usually
+`localhost`. `serviceUrl()` in `useHomelab.ts` rewrites that to the browser's
+current hostname when building a link, which is what makes one stored config
+open correctly from both the desk and the phone.
 
 ## Seed data
 
 `lib/seed.ts` holds one export per feature: `seedTasks`, `seedMissions`,
 `seedWeeklyGoals`, `seedStreaks`, `seedEvents`, `seedNotes`, `seedActivity`,
-`seedProductivityHistory`, `seedRoutineSections`, `seedMissionRecords`.
+`seedProductivityHistory`, `seedRoutineSections`, `seedMissionRecords`,
+`seedHomelabServices`.
 
 Date helpers at the bottom of the file (`futureMonth`, `pastDays`, `nextDays`,
 `hoursAgo`, `lib/seed.ts:372-391`) keep seed content relative, so a fresh

@@ -18,6 +18,12 @@ type Listener = () => void;
 const API = "/api/state";
 
 const cache = new Map<string, unknown>();
+/**
+ * Keys the server has actually stored. Distinct from `cache`, which also holds
+ * mirror/seed fallbacks the moment anything reads a key — so cache membership
+ * cannot answer "does the server know about this yet".
+ */
+const serverKeys = new Set<string>();
 const listeners = new Map<string, Set<Listener>>();
 const statusListeners = new Set<Listener>();
 
@@ -90,7 +96,11 @@ export function load(): Promise<void> {
 
       const touched = new Set([...cache.keys(), ...Object.keys(state)]);
       cache.clear();
-      Object.entries(state).forEach(([k, v]) => cache.set(k, v));
+      serverKeys.clear();
+      Object.entries(state).forEach(([k, v]) => {
+        cache.set(k, v);
+        serverKeys.add(k);
+      });
       setStatus("online");
       await flushPending();
       touched.forEach(notify);
@@ -158,8 +168,22 @@ export function getSnapshot<T>(key: string, fallback: T): T {
   return mirrored;
 }
 
+/**
+ * True when the server holds this key, or we have already handed it a write
+ * for one — as opposed to a mirror or seed having merely been read into the
+ * cache. Only meaningful once load() has resolved.
+ *
+ * Homelab is the one feature that needs this: the server probes the services
+ * listed in its own copy of the slice, so a seed that only ever existed in the
+ * browser would leave every tile unprobed.
+ */
+export function hasOnServer(key: string): boolean {
+  return serverKeys.has(key);
+}
+
 export function set<T>(key: string, value: T): void {
   cache.set(key, value);
+  serverKeys.add(key);
   writeStorage(key, value); // keep the offline mirror current
   notify(key);
   void push(key, value);

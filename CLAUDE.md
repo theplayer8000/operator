@@ -99,6 +99,8 @@ objects in localStorage — keep doing that.
 ```
 server/
   index.mjs             — JSON storage API (no deps). GET/PUT/DELETE /api/state
+  dev.mjs               — read-only repo browser for the Dev page
+  homelab.mjs           — TCP reachability probes for the Homelab tiles
 scripts/
   dev.mjs               — starts the API and Vite together
 data/
@@ -122,11 +124,13 @@ src/
     useDashboardData.ts       — Dashboard feature hook
     useRoutineData.ts          — Daily Routine feature hook (+ daily reset logic)
     useMissionBoard.ts          — Mission Board feature hook
+    useHomelab.ts                — Homelab feature hook (+ serviceUrl helper)
   components/
     layout/                — Sidebar, Topbar
     command/                — CommandPalette (Ctrl/Cmd+K)
     ui/                      — Card, EmptyState, StatCounter, ShieldProgress,
-                                Confetti — shared primitives, Dashboard-flavoured
+                                Confetti, ConfirmButton — shared primitives
+    homelab/                  — ServiceTile, ServiceForm
     dashboard/                — one file per Dashboard widget
     routine/                    — RoutineSectionCard, RoutineSummary, routineMeta.ts
     missions/                    — MissionCard, MissionBadges, EditableField,
@@ -135,6 +139,7 @@ src/
                                     NewMissionForm, ReservedSection
   pages/
     Dashboard.tsx, DailyRoutine.tsx, MissionBoard.tsx, MissionDetail.tsx,
+    Homelab.tsx, ActivityLog.tsx, Contents.tsx, Dev.tsx,
     ComingSoon.tsx           — placeholder for any route not yet built
 ```
 
@@ -176,10 +181,24 @@ components — use the token classes.
   numeric %. This page should read like Linear/Notion, not a game HUD —
   if extending it, keep matching that register.
 
+- **Homelab**: infra register — closer to Mission Board than the Dashboard.
+  Status is a dot and a port number. A service being up is not an
+  achievement, so no shields, no confetti, no XP language.
+
 If asked to add a new top-level feature, ask (or infer from the request's
 own tone) which register it should sit in before building it — don't
 default to copying Mission Board's calm style or the Dashboard's playful
 style without thinking about which fits.
+
+### Destructive actions
+
+Every delete goes through `ui/ConfirmButton.tsx` — two taps, self-disarming
+after four seconds. Don't use `window.confirm` (unstyled, and on iOS it steals
+focus from the row being edited) and don't add a bespoke modal per feature.
+Where a record is worth keeping, offer **archive before delete** — Mission
+Board does both, and the board has an "Archived" filter so archiving is
+genuinely reversible rather than a disappearance. There is **no undo**
+(**OPS-020**), which is why the confirm step is not optional.
 
 ### Responsive is not optional
 
@@ -196,6 +215,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Dashboard | `/` | Built |
 | Daily Routine | `/routine` | Built |
 | Mission Board | `/missions`, `/missions/:id` | Built |
+| Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser |

@@ -1,21 +1,38 @@
 import { useState } from "react";
-import { StickyNote, Plus } from "lucide-react";
+import { StickyNote, Pencil, Plus } from "lucide-react";
 import Card from "@/components/ui/Card";
 import EmptyState from "@/components/ui/EmptyState";
+import ConfirmButton from "@/components/ui/ConfirmButton";
 import type { QuickNote } from "@/lib/types";
 
 export default function QuickNotes({
   notes,
   onAdd,
+  onEdit,
+  onDelete,
 }: {
   notes: QuickNote[];
   onAdd: (text: string) => void;
+  onEdit: (id: string, text: string) => void;
+  onDelete: (id: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
 
   function submit() {
     onAdd(draft);
     setDraft("");
+  }
+
+  function startEdit(n: QuickNote) {
+    setEditingId(n.id);
+    setEditDraft(n.text);
+  }
+
+  function commitEdit() {
+    if (editingId) onEdit(editingId, editDraft);
+    setEditingId(null);
   }
 
   return (
@@ -27,9 +44,38 @@ export default function QuickNotes({
           {notes.map((n) => (
             <li
               key={n.id}
-              className="text-sm text-ink-300 bg-base-700/40 border border-base-600 rounded-badge px-3 py-2"
+              className="bg-base-700/40 border border-base-600 rounded-badge px-3 py-2"
             >
-              {n.text}
+              {editingId === n.id ? (
+                <textarea
+                  autoFocus
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      commitEdit();
+                    }
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  rows={2}
+                  className="w-full bg-transparent text-base sm:text-sm text-ink-100 outline-none resize-none"
+                />
+              ) : (
+                <div className="flex items-start gap-1">
+                  <p className="flex-1 min-w-0 text-sm text-ink-300 break-words py-1.5">{n.text}</p>
+                  <button
+                    onClick={() => startEdit(n)}
+                    aria-label="Edit note"
+                    title="Edit"
+                    className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <ConfirmButton onConfirm={() => onDelete(n.id)} label="Delete note" compact />
+                </div>
+              )}
             </li>
           ))}
         </ul>

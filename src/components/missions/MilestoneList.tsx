@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Check, Pencil, Plus, X } from "lucide-react";
+import ConfirmButton from "@/components/ui/ConfirmButton";
 import type { Milestone, MilestoneStatus } from "@/lib/types";
 
 const STATUS_OPTIONS: MilestoneStatus[] = ["pending", "in_progress", "complete"];
@@ -18,13 +19,32 @@ export default function MilestoneList({
   milestones,
   onAdd,
   onUpdate,
+  onDelete,
 }: {
   milestones: Milestone[];
   onAdd: (m: Omit<Milestone, "id">) => void;
   onUpdate: (id: string, patch: Partial<Milestone>) => void;
+  onDelete: (id: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDuration, setEditDuration] = useState("");
+
+  function startEdit(m: Milestone) {
+    setEditingId(m.id);
+    setEditTitle(m.title);
+    setEditDuration(m.estimatedDuration);
+  }
+
+  function commitEdit(id: string) {
+    const patch: Partial<Milestone> = {};
+    if (editTitle.trim()) patch.title = editTitle.trim();
+    if (editDuration.trim()) patch.estimatedDuration = editDuration.trim();
+    if (Object.keys(patch).length > 0) onUpdate(id, patch);
+    setEditingId(null);
+  }
 
   function submit() {
     if (!title.trim()) return;
@@ -67,11 +87,65 @@ export default function MilestoneList({
         <ul className="space-y-3 mb-4">
           {milestones.map((m) => (
             <li key={m.id} className="p-3 rounded-badge border border-base-600 bg-base-700/30">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2 min-w-0">
+              {editingId === m.id ? (
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitEdit(m.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    aria-label="Milestone title"
+                    className="flex-1 min-w-0 bg-base-800 border border-base-600 rounded-badge px-2 py-1.5 text-base sm:text-sm text-ink-100 outline-none focus:border-xp/50"
+                  />
+                  <input
+                    value={editDuration}
+                    onChange={(e) => setEditDuration(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitEdit(m.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    aria-label="Estimated duration"
+                    className="w-20 sm:w-24 shrink-0 bg-base-800 border border-base-600 rounded-badge px-2 py-1.5 text-base sm:text-sm text-ink-300 outline-none focus:border-xp/50"
+                  />
+                  <button
+                    onClick={() => commitEdit(m.id)}
+                    aria-label="Save milestone"
+                    title="Save"
+                    className="w-11 h-11 shrink-0 flex items-center justify-center rounded-badge text-xp hover:bg-base-700 transition-colors"
+                  >
+                    <Check size={15} />
+                  </button>
+                  <button
+                    onClick={() => setEditingId(null)}
+                    aria-label="Cancel"
+                    title="Cancel"
+                    className="w-11 h-11 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              ) : (
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[m.status]}`} />
                   <span className="text-sm text-ink-100 truncate">{m.title}</span>
                 </div>
+                <button
+                  onClick={() => startEdit(m)}
+                  aria-label={`Edit "${m.title}"`}
+                  title="Edit"
+                  className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
+                >
+                  <Pencil size={13} />
+                </button>
+                <ConfirmButton
+                  onConfirm={() => onDelete(m.id)}
+                  label={`Delete "${m.title}"`}
+                  compact
+                />
                 <select
                   value={m.status}
                   onChange={(e) => setStatus(m.id, e.target.value as MilestoneStatus)}
@@ -84,6 +158,7 @@ export default function MilestoneList({
                   ))}
                 </select>
               </div>
+              )}
               <div className="h-1 bg-base-700 rounded-full overflow-hidden mb-2">
                 <div
                   className="h-full bg-xp rounded-full transition-all duration-500"

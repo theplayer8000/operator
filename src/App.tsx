@@ -5,6 +5,7 @@ import DailyRoutine from "@/pages/DailyRoutine";
 import MissionBoard from "@/pages/MissionBoard";
 import MissionDetail from "@/pages/MissionDetail";
 import ActivityLog from "@/pages/ActivityLog";
+import Homelab from "@/pages/Homelab";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/routine" element={<DailyRoutine />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
+        <Route path="/homelab" element={<Homelab />} />
         <Route path="/log" element={<ActivityLog />} />
         <Route path="/contents" element={<Contents />} />
         <Route path="/dev" element={<Dev />} />

@@ -118,6 +118,37 @@ export interface LogEntry {
   missionName?: string;
 }
 
+// --- Homelab --------------------------------------------------------------
+// The tile grid that makes Operator the front door to the EPYC box. Each
+// service is something running *on the same machine as Operator's storage
+// server* — that assumption is what lets the client rewrite "localhost" to
+// whatever host the browser reached Operator on (see `serviceUrl` in
+// useHomelab.ts), so a tile works from the phone as well as the desk.
+//
+// Operator holds only the pointer. It does not embed, proxy, or share data
+// with any of these services.
+
+export interface HomelabService {
+  id: ID;
+  name: string;
+  description: string;
+  /** As seen from the box running the storage server. Usually "localhost". */
+  host: string;
+  port: number;
+  /** Appended when opening the service, e.g. "/" or "/dashboard". */
+  path: string;
+  protocol: "http" | "https";
+  /** Free text shown on the tile, e.g. "Flask · SQLite". */
+  stack: string;
+}
+
+/** Result of one server-side reachability probe. Never persisted. */
+export interface ServiceStatus {
+  id: ID;
+  online: boolean;
+  latencyMs: number | null;
+}
+
 // --- Mission Board --------------------------------------------------------
 // The heart of the app. Deliberately its own namespace ("missions.records"),
 // separate from the Dashboard's lightweight `Mission` summary type above —

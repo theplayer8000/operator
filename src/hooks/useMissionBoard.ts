@@ -72,6 +72,33 @@ export function useMissionBoard() {
     return record.id;
   }
 
+  /**
+   * Deleting a mission has to sweep it out of every other mission's
+   * `dependsOn` in the same write. Successors are computed by filtering for
+   * `dependsOn.includes(id)` rather than stored as a reverse reference, so a
+   * leftover ID isn't a broken link that shows up — it's an invisible one that
+   * quietly changes nothing until someone reuses the ID. Do it here, once,
+   * where the invariant is obvious.
+   */
+  function deleteMission(id: string) {
+    setMissions((prev) =>
+      prev
+        .filter((m) => m.id !== id)
+        .map((m) =>
+          m.dependsOn.includes(id) ? { ...m, dependsOn: m.dependsOn.filter((d) => d !== id) } : m
+        )
+    );
+  }
+
+  /**
+   * Archiving is the non-destructive option and the one the list view offers
+   * first: `archived` has been on the type since v3 with nothing setting it.
+   */
+  function setArchived(id: string, archived: boolean) {
+    updateMission(id, { archived });
+    logActivity(id, archived ? "Mission archived" : "Mission restored");
+  }
+
   function setStatus(id: string, status: MissionStatus) {
     updateMission(id, { status });
     logActivity(id, `Status changed to "${status.replace("_", " ")}"`);
@@ -125,6 +152,14 @@ export function useMissionBoard() {
     }
   }
 
+  function deleteMilestone(id: string, milestoneId: string) {
+    setMissions((prev) =>
+      prev.map((m) =>
+        m.id !== id ? m : { ...m, milestones: m.milestones.filter((ms) => ms.id !== milestoneId) }
+      )
+    );
+  }
+
   function setNotes(id: string, notes: string) {
     updateMission(id, { notes });
   }
@@ -138,19 +173,24 @@ export function useMissionBoard() {
   }
 
   const active = missions.filter((m) => !m.archived);
+  const archived = missions.filter((m) => m.archived);
 
   return {
     missions,
     active,
+    archived,
     getMission,
     getDependents,
     addMission,
     updateMission,
+    deleteMission,
+    setArchived,
     setStatus,
     setProgress,
     toggleDependency,
     addMilestone,
     updateMilestone,
+    deleteMilestone,
     setNotes,
     logActivity,
   };

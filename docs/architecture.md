@@ -110,6 +110,13 @@ Two things still hold:
 allowed because it *only reads* — it owns no namespace, persists nothing, and
 mutates nothing. Statistics should be built the same way.
 
+`components/dashboard/HomelabStatus.tsx` is the same shape one level down: a
+Dashboard widget that calls `useHomelab()` to render the tile strip on the
+homepage. It reads the Homelab namespace and mutates none of it; every add,
+edit and delete stays on `/homelab`, where the feature's hook is the only
+writer. A widget rendering another feature's data is fine. A widget *writing*
+another feature's data is the thing this rule exists to stop.
+
 Anything that wants to **write** across features is still forbidden. Route the
 write through the owning feature's mutator.
 

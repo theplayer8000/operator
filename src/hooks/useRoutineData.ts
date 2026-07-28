@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useRemoteStorage } from "./useRemoteStorage";
 import { generateId } from "@/lib/id";
 import { seedRoutineSections } from "@/lib/seed";
-import type { RoutineSection, RoutineSectionKey } from "@/lib/types";
+import type { RoutineSection, RoutineSectionKey, RoutineTask } from "@/lib/types";
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -69,6 +69,40 @@ export function useRoutineData() {
     );
   }
 
+  function editTask(
+    sectionKey: RoutineSectionKey,
+    taskId: string,
+    patch: { title?: string; estimatedMinutes?: number }
+  ) {
+    // Build key by key. An explicit `undefined` in the spread below would
+    // overwrite the existing value rather than leave it alone.
+    const clean: Partial<RoutineTask> = {};
+    if (patch.title !== undefined && patch.title.trim()) clean.title = patch.title.trim();
+    if (patch.estimatedMinutes !== undefined && Number.isFinite(patch.estimatedMinutes)) {
+      clean.estimatedMinutes = Math.max(0, Math.round(patch.estimatedMinutes));
+    }
+    if (Object.keys(clean).length === 0) return;
+
+    setSections((prev) =>
+      prev.map((s) =>
+        s.key !== sectionKey
+          ? s
+          : {
+              ...s,
+              tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, ...clean } : t)),
+            }
+      )
+    );
+  }
+
+  function deleteTask(sectionKey: RoutineSectionKey, taskId: string) {
+    setSections((prev) =>
+      prev.map((s) =>
+        s.key !== sectionKey ? s : { ...s, tasks: s.tasks.filter((t) => t.id !== taskId) }
+      )
+    );
+  }
+
   function toggleRepeat(sectionKey: RoutineSectionKey, taskId: string) {
     setSections((prev) =>
       prev.map((s) =>
@@ -104,6 +138,8 @@ export function useRoutineData() {
     sections,
     toggleTask,
     addTask,
+    editTask,
+    deleteTask,
     toggleRepeat,
     setNotes,
     overallPercent,

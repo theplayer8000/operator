@@ -19,6 +19,10 @@ owner).
 | [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
 | [OPS-017](#ops-017) | `data/operator.json` has no backup | Medium | Needs decision |
 | [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | Medium | Accepted |
+| [OPS-019](#ops-019) | Homelab status reports port-open, not health | Low | Accepted |
+| [OPS-020](#ops-020) | Deletes have a confirm step but no undo | Low | Open |
+| [OPS-022](#ops-022) | Vite dev server served every file under the project root | **High** | **Fixed** (v7) |
+| [OPS-021](#ops-021) | Separate project with real client data sits inside this repo | Medium | Mitigated, relocation optional |
 | [OPS-005](#ops-005) | Dashboard mission widgets are decorative | Medium | Needs decision |
 | [OPS-006](#ops-006) | Storage writes fail silently | Medium | Partly addressed |
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
@@ -26,7 +30,7 @@ owner).
 | [OPS-009](#ops-009) | Daily reset is mount-only and UTC-based | Low | Open |
 | [OPS-010](#ops-010) | Stale module-load date in Topbar | Low | **Fixed** (v6) |
 | [OPS-011](#ops-011) | Dead type surface | Low | Open |
-| [OPS-012](#ops-012) | No delete or archive path for missions | Low | Needs decision |
+| [OPS-012](#ops-012) | No delete or archive path for missions | Low | **Fixed** (v7) |
 | [OPS-013](#ops-013) | Dependency cycles are possible | Low | Open |
 | [OPS-014](#ops-014) | Google Fonts breaks the offline-first claim | Low | Needs decision |
 | [OPS-015](#ops-015) | Duplicate SVG gradient IDs in `ShieldProgress` | Trivial | Open |
@@ -245,11 +249,17 @@ or on visibility change rather than mount only.
 
 ## OPS-012
 
-**No delete or archive path for missions** · Low · Needs decision
+**No delete or archive path for missions** · Low · **Fixed** (v7)
 
-`MissionRecord.archived` exists and is filtered on
-(`hooks/useMissionBoard.ts:139`) but nothing can set it, and there is no delete
-anywhere in the app. A mistyped mission is permanent.
+`MissionRecord.archived` existed and was filtered on but nothing could set it,
+and there was no delete anywhere in the app. A mistyped mission was permanent.
+
+Fixed in v7 along with edit/delete for tasks, notes, routine steps and
+milestones. `setArchived` and `deleteMission` live in `useMissionBoard`;
+both are surfaced at the bottom of `MissionDetail`, below the tabs, with an
+"Archived" filter on the board so an archived record can be reached and
+restored. `deleteMission` also sweeps the deleted ID out of every other
+mission's `dependsOn` — see the note in `data-model.md`.
 
 ## OPS-013
 
@@ -314,6 +324,108 @@ reason it should not be.
 
 Verified at implementation: `..`, `../../../Windows`, `data`, `node_modules`
 and an absolute-ish sibling path were all rejected.
+
+## OPS-019
+
+**Homelab status reports port-open, not health** · Low · Accepted
+
+`server/homelab.mjs` does a TCP connect. A process that is hung but still
+holding its port reads as online. This is deliberate — see
+[ADR 0007](decisions/0007-homelab-server-side-probes.md); anything richer means
+per-service health endpoints, which couples Operator to each service's
+internals. The Homelab page states the limitation on the page itself rather
+than implying more certainty than it has.
+
+Revisit the first time a tile says "online" about something visibly broken.
+
+## OPS-020
+
+**Deletes have a confirm step but no undo** · Low · Open
+
+v7 added delete for tasks, notes, routine steps, milestones and missions. Each
+is two-step (`components/ui/ConfirmButton.tsx`) and self-disarms after four
+seconds, but once confirmed the record is gone — there is no undo buffer and no
+soft-delete for anything except missions, which have archive.
+
+The store is a single JSON file with no history, so recovery today means
+restoring the whole file — which is also **OPS-017**, and is the second reason
+that one matters. A cheap improvement would be a short-lived "undo" toast
+holding the deleted item in memory; the honest fix is snapshots.
+
+## OPS-022
+
+**The Vite dev server served every file under the project root** · **High** ·
+**Fixed** (v7)
+
+`npm run dev -- --host` binds to the tailnet, and Vite's static middleware will
+serve anything under the project root as an asset. No auth, by design — Vite
+assumes localhost.
+
+Verified before the fix, against the running dev server:
+
+| Path | Result |
+|---|---|
+| `GET /data/operator.json` | **200 — the entire Operator store, 36 KB** |
+| `GET /Darams-CRM/darams_crm.db` | **200 — the CRM's SQLite database, 53 KB** |
+| `GET /Darams-CRM/uploads/tenancies/1/EICR.pdf` | **200 — a real tenancy document** |
+
+This is a **third, independent door**. `.gitignore` does not apply to it, and
+neither does the `DENY` set in `server/dev.mjs` — those guard git and the Dev
+browser respectively. It is easy to close one and assume the others followed.
+
+Fixed with `server.fs.deny` in `vite.config.ts`, covering `data/`,
+`Darams-CRM/`, `*.db`, `*.sqlite` and `.env*`. Re-verified: all of the above
+now return 403, while the app and the `/api` proxy still return 200.
+
+**Production is unaffected** — `npm run serve` serves `dist/` only, and never
+had this behaviour. This was dev-server-only, which is also why it went
+unnoticed: dev is exactly where `--host` gets used.
+
+If a future change adds a directory holding anything private, add it to that
+deny list. The lesson worth keeping: three different mechanisms decide what
+leaves this machine, and they share no configuration.
+
+## OPS-021
+
+**A separate project with real client data sits inside this repo** · Medium ·
+Mitigated, relocation optional
+
+`Darams-CRM/` is a separate Flask project (its own repo, own database, own
+handoff) that currently lives inside Operator's working directory. It contains
+`darams_crm.db` and `uploads/` — real tenancy documents and personal details.
+
+Two live exposures were found and closed in v7:
+
+- **It was untracked but not ignored.** A `git add -A` would have staged client
+  PII into a repo with a GitHub remote. Now in `.gitignore`.
+- **The Dev browser listed it.** The extension allowlist stopped `.db`/`.pdf`
+  *contents* being served, but `listTree` exposed tenancy document *filenames*
+  over HTTP. `Darams-CRM` is now in the `DENY` set in `server/dev.mjs`.
+
+A third exposure — the Vite dev server serving the CRM's database and uploads
+over the tailnet — turned out to be a **general Operator defect** rather than a
+consequence of nesting, and is tracked separately as **OPS-022**.
+
+**Relocating is no longer required.** The owner opted to keep the CRM nested
+and hidden, which is sound now that all three doors are shut:
+
+| Door | Guard |
+|---|---|
+| git history | `Darams-CRM/` in `.gitignore` |
+| Dev browser (`/api/dev/*`) | `Darams-CRM` in `DENY`, `server/dev.mjs` |
+| Vite dev server | `**/Darams-CRM/**` in `server.fs.deny`, `vite.config.ts` |
+
+**Do not remove any of the three.** They are independent mechanisms sharing no
+configuration, so removing one will not fail loudly.
+
+Two things remain true regardless of where the directory sits:
+
+- **The CRM has no version control of its own.** There is no `Darams-CRM/.git`,
+  and Operator's repo ignores it — so that project currently has *no history at
+  all* while it is being actively rewritten. `git init` in that directory is
+  worth doing on its own merits, and a nested repo is invisible to Operator.
+- **Operator's backup story still has to cover it** (**OPS-017**), and it is
+  now excluded from the one mechanism that was implicitly copying it.
 
 ## OPS-017
 
