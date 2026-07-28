@@ -174,7 +174,7 @@ export default function MissionDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-5 overflow-x-auto scrollbar-none border-b border-base-600">
+      <div className="flex flex-wrap gap-1 mb-5 border-b border-base-600 pb-1">
         {TABS.map((t) => (
           <button
             key={t.id}

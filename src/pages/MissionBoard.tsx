@@ -42,7 +42,7 @@ export default function MissionBoard() {
         <NewMissionForm onCreate={addMission} />
       </div>
 
-      <div className="flex items-center gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
         {FILTERS.map((f) => (
           <button
             key={f.key}
