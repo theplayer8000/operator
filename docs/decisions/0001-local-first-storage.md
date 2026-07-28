@@ -1,7 +1,14 @@
 # 0001 — Local-first storage, no backend
 
-**Status:** Accepted
+**Status:** Superseded by [0006](0006-json-file-storage-server.md) (2026-07-28)
 **Date:** 2026-07-26
+
+> **Superseded.** The trigger named in *What would change this* below — genuine
+> multi-device use — arrived, and the resolution was the one predicted: a
+> self-hosted store on the owner's own hardware, not a SaaS backend. The
+> self-hosting principle survives intact; only the mechanism changed, from
+> `localStorage` to a JSON file behind a local Node process. Kept unedited as
+> the record of why `localStorage` was right for v1–v4.
 
 ## Context
 

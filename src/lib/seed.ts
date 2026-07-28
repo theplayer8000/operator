@@ -11,7 +11,7 @@ import type {
 } from "./types";
 
 // First-run content only — every array below is fully editable/replaceable
-// the moment the user touches it, since each is backed by useLocalStorage.
+// the moment the user touches it, since each is backed by useRemoteStorage.
 
 export const seedTasks: Task[] = [
   { id: "t1", title: "Review Darams tenancies module HTML", done: false, priority: "high" },

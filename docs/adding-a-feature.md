@@ -55,7 +55,7 @@ This is the only file allowed to touch the feature's storage.
 
 ```ts
 export function useGymData() {
-  const [sessions, setSessions] = useLocalStorage<GymSession[]>(
+  const [sessions, setSessions] = useRemoteStorage<GymSession[]>(
     "gym.sessions",
     seedGymSessions
   );
@@ -76,14 +76,14 @@ Rules:
 - Expose **state + mutator functions**, never the raw setter, unless a page
   genuinely needs it.
 - Compute derived values here. Don't store them (Invariant 3).
-- Use the shared ID helper, not `crypto.randomUUID()` directly — see
-  **OPS-001**.
+- Use `generateId()` from `lib/id.ts`, never `crypto.randomUUID()` — it throws
+  in the non-secure context Operator actually runs in (**OPS-001**).
 - If the feature has a user-visible event log, cap it (missions cap at 30,
   dashboard at 20).
 
 ### 4. Components — `components/<feature>/`
 
-Presentational only: props in, `on*` callbacks out. No `useLocalStorage`, no
+Presentational only: props in, `on*` callbacks out. No `useRemoteStorage`, no
 storage imports, no knowledge of keys.
 
 Reuse `ui/Card` and `ui/EmptyState` if the register fits. `ShieldProgress` and
@@ -93,8 +93,10 @@ pattern.
 
 ### 5. Page — `pages/<Feature>.tsx`
 
-Calls the hook **exactly once** (Invariant 1 — this is the invariant most likely
-to be broken by a well-meaning refactor) and threads state down as props.
+Calls the hook and threads state down as props. Since v5 the store is shared,
+so calling a hook from two places is no longer a correctness bug — but keeping
+the page as the single owner keeps components presentational and the data flow
+readable.
 
 ### 6. Route — `App.tsx`
 
@@ -122,6 +124,8 @@ Both, every time. See [`development.md`](development.md).
 
 - Flip the row in [`roadmap.md`](roadmap.md) **and** the table in `CLAUDE.md`.
 - Add the new keys to the registry in [`data-model.md`](data-model.md).
+- If the feature changes an existing persisted shape, add a migration in
+  `server/index.mjs` and bump `SCHEMA_VERSION`.
 - Write an ADR in [`decisions/`](decisions/) **only** if you made a genuinely
   architectural choice — a new pattern, a cross-feature dependency, a deviation
   from the recipe. Not for routine features.
@@ -133,13 +137,15 @@ Both, every time. See [`development.md`](development.md).
 **"These two features share a shape — let me extract a generic hook."** No.
 `CLAUDE.md:60-62`. Duplication across slices is the design.
 
-**"Statistics needs data from every feature, so I'll call every hook."** That
-violates Invariant 1 and will corrupt data. Statistics needs an explicit
-decision about a read-only aggregation path first — see **OPS-004**.
+**"Statistics needs data from every feature, so I'll call every hook."** This is
+now allowed — the store is shared as of v5, so multiple hooks see the same data.
+Keep it **read-only**: Statistics should aggregate, never mutate another
+feature's slice.
 
-**"Settings should own other features' data to reset it."** It shouldn't —
-`resetAllData()` already operates on the `os.` prefix generically without
-knowing any feature (`lib/storage.ts:51-55`).
+**"Settings should own other features' data to reset it."** It shouldn't — the
+API is generic. `GET /api/state` is export, `PUT /api/state` is import, and
+`DELETE /api/state/<key>` drops one slice back to its seed, none of which
+require knowing what features exist.
 
 **"This feature needs files/attachments."** localStorage cannot hold binary at
 any real size. The reserved section in Mission Board's Overview tab is a

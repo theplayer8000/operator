@@ -15,7 +15,10 @@ If you are picking this project up cold, read in this order and stop when you
 have what the task needs:
 
 1. **`CLAUDE.md`** (root) — the rules. Always. Not optional.
-2. **`architecture.md`** — how a feature is put together, and the invariants
+2. **[`vision.md`](vision.md)** — why Operator exists. Equal in weight to
+   `CLAUDE.md`. The rules say how to build; this says what it is for, and the
+   two can pull against each other. When they do, say so before proceeding.
+3. **`architecture.md`** — how a feature is put together, and the invariants
    that hold the whole thing up.
 3. The document that matches your task (see the map below).
 4. **`known-issues.md`** — before shipping anything, so you don't build on top
@@ -25,6 +28,7 @@ have what the task needs:
 
 | Document | Owns | Read it when |
 |---|---|---|
+| [`vision.md`](vision.md) | Why Operator exists; the long-term destination; the AI philosophy | **Always.** Before any decision with a multi-year consequence |
 | [`architecture.md`](architecture.md) | The feature-slice pattern, data flow, composition root, architectural invariants | Adding or changing any feature; anything that touches state |
 | [`data-model.md`](data-model.md) | Domain types, the `os.*` storage namespace registry, seed strategy, ID generation, the migration gap | Adding a type, adding a storage key, changing a persisted shape |
 | [`design-system.md`](design-system.md) | Design tokens, the three tonal registers, shared primitives | Building any UI |

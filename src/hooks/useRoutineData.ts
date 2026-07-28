@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useLocalStorage } from "./useLocalStorage";
+import { useRemoteStorage } from "./useRemoteStorage";
+import { generateId } from "@/lib/id";
 import { seedRoutineSections } from "@/lib/seed";
 import type { RoutineSection, RoutineSectionKey } from "@/lib/types";
 
@@ -13,11 +14,11 @@ function todayKey(): string {
  * roll repeating tasks back to incomplete once per calendar day.
  */
 export function useRoutineData() {
-  const [sections, setSections] = useLocalStorage<RoutineSection[]>(
+  const [sections, setSections] = useRemoteStorage<RoutineSection[]>(
     "routine.sections",
     seedRoutineSections
   );
-  const [lastReset, setLastReset] = useLocalStorage<string>("routine.lastReset", todayKey());
+  const [lastReset, setLastReset] = useRemoteStorage<string>("routine.lastReset", todayKey());
 
   useEffect(() => {
     if (lastReset !== todayKey()) {
@@ -56,7 +57,7 @@ export function useRoutineData() {
               tasks: [
                 ...s.tasks,
                 {
-                  id: crypto.randomUUID(),
+                  id: generateId(),
                   title: title.trim(),
                   done: false,
                   estimatedMinutes,

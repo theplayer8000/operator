@@ -30,7 +30,8 @@ per-section notes. Tasks marked `repeatDaily` reset once per calendar day.
 
 Known gaps: the reset is mount-only and UTC-based, so a tab left open across
 midnight doesn't reset, and the day rolls at 01:00 local during BST
-(**OPS-009**).
+(**OPS-009**). The repeat-daily toggle is hover-only, so it is unreachable on
+a phone.
 
 ### Mission Board — `/missions`, `/missions/:id`
 
@@ -42,9 +43,9 @@ Supports: create, inline edit of every text field, status, progress, time
 invested, estimated completion, milestone CRUD, directional dependencies, and an
 activity log.
 
-Known gaps: no delete and no archive UI despite `archived` existing on the type;
-setting a milestone to "In Progress" wipes its progress (**OPS-002**); nothing
-prevents a dependency cycle.
+Known gaps: no delete and no archive UI despite `archived` existing on the type
+(**OPS-012**); nothing prevents a dependency cycle (**OPS-013**). The ten detail
+tabs wrap awkwardly on a narrow screen.
 
 ## Not built
 
@@ -58,8 +59,8 @@ command-palette destination already wired.
 | **Forex** | `/forex` | Study/observation journal. Note the routine caption is "Study, don't trade" — this is a learning journal, not a P&L tracker | Whether Recharts is needed here; it is currently used in exactly one widget |
 | **Work** | `/work` | GEH NHS / Darams work tracking | Scope — this overlaps Mission Board's `career` category |
 | **Journey** | `/journey` | The long-term life roadmap that missions ladder up to. `MissionRecord.relatedJourneyMilestone` is free text waiting for it. Nav entry reserved on request | The top of the three-tier hierarchy — this one deserves real design thought, and it is the feature the whole philosophy points at |
-| **Statistics** | `/statistics` | Cross-feature aggregate view | **Blocked on a real decision** — it must read across features, which Invariant 1 makes unsafe today (**OPS-004**). Do not start it without resolving that |
-| **Settings** | `/settings` | Export / import / reset, accent switcher | Nothing blocking. `exportAllData`/`importAllData`/`resetAllData` are already written and unused; the accent switcher is already wired and has no UI. This is the **cheapest** feature to build and it retires the largest product risk (data loss) |
+| **Statistics** | `/statistics` | Cross-feature aggregate view | **Unblocked as of v5** — the shared store means it can safely read every feature's hook. Keep it strictly read-only |
+| **Settings** | `/settings` | Export / import / reset, accent switcher, storage location | Nothing blocking, and now mostly plumbing: `GET /api/state` is export, `PUT /api/state` is import, `DELETE /api/state/<key>` is per-feature reset. The accent switcher is wired and just needs UI. Still the **cheapest** feature, and it closes **OPS-017** (backup) |
 
 ## Not started, no route
 
@@ -79,9 +80,9 @@ a `ReservedSection` or a free-text field, deliberately not a real reference
 | `MissionDetail` → Related Knowledge tab | Knowledge Vault |
 | `MissionDetail` → Related Decisions tab | Decision Log |
 | `MissionDetail` → Related Journey tab | Journey |
-| `MissionDetail` → Overview → Files & Attachments | A real design conversation — localStorage can't hold binary (`CLAUDE.md:181-185`) |
+| `MissionDetail` → Overview → Files & Attachments | A real design conversation. The store is JSON, so binary still doesn't belong in it — likely paths or links, not contents |
 | `MissionDetail` → AI Summary tab | An AI summary feature that would need a network call, i.e. a constraint conversation first |
-| `lib/storage.ts` export/import/reset | Settings |
+| `GET`/`PUT`/`DELETE /api/state` | Settings — export, import, per-feature reset |
 | `ThemeContext` accent | Settings |
 
 ## Suggested sequencing
@@ -89,13 +90,15 @@ a `ReservedSection` or a free-text field, deliberately not a real reference
 Not a decision — a recommendation for the owner, based on cost against risk
 retired:
 
-1. **`generateId()` fix** (**OPS-001**) — approved, spec'd, blocking real use
-   over Tailscale, and cheaper before a ninth call site exists.
-2. **Settings** — smallest feature, retires the biggest product risk (no way to
-   back data out), and everything it needs is already written.
-3. **Schema versioning** (**OPS-003**) — cheaper now than after four more
-   namespaces exist.
-4. Then whichever feature the owner actually wants.
+1. ~~`generateId()` fix (**OPS-001**)~~ — **done in v5.**
+2. ~~Storage off localStorage (**OPS-003**, **OPS-004**)~~ — **done in v5.**
+3. **Mobile / responsive pass** — required by `vision.md`; the app is used from
+   a phone today and the sidebar, touch targets, and hover-only controls are
+   desktop-assumed.
+4. **Settings** — smallest remaining feature, and the only route to a backup
+   (**OPS-017**).
+5. Then whichever feature the owner actually wants. Journey is the one the
+   whole three-tier philosophy points at.
 
 ## Pending naming changes
 

@@ -1,22 +1,42 @@
 # Data Model & Storage
 
-Everything Operator knows lives in `window.localStorage` under the `os.` prefix.
-This document is the registry of what is stored, what shape it has, and the
-rules for changing it.
+Everything Operator knows lives in **`data/operator.json`**, served by
+`server/index.mjs`. This document is the registry of what is stored, what shape
+it has, and the rules for changing it.
 
-## The namespace
+## Where the data is
 
-`lib/storage.ts:7-9` prefixes every key with `os.`:
-
-```ts
-storageKey("missions.records")  →  "os.missions.records"
+```json
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-28T03:27:36.006Z",
+  "state": {
+    "missions.records": [ ... ],
+    "routine.sections": [ ... ]
+  }
+}
 ```
 
-That prefix is not decoration — it is what makes `exportAllData` /
-`importAllData` / `resetAllData` (`lib/storage.ts:30-55`) able to operate on
-"all of Operator" without knowing which features exist. **Any key written
-outside `useLocalStorage`/`storageKey` is invisible to export, import, and
-reset, and will be silently lost the first time a user backs up their data.**
+The path defaults to `data/operator.json` and is overridable with
+`OPERATOR_DATA` — that is the knob that points it at a NAS mount. It is
+**gitignored**, so git is not a backup (**OPS-017**).
+
+`localStorage` is still written, under the same keys prefixed with `os.`
+(`lib/storage.ts:7-9`), but only as an **offline read mirror**. It is never the
+source of truth. Anything reading it directly is either `remoteStore` or a bug.
+
+### API
+
+| Route | Purpose |
+|---|---|
+| `GET /api/state` | The whole store |
+| `PUT /api/state/<key>` | Replace one slice; body `{ value }` |
+| `PUT /api/state` | Bulk merge; body `{ key: value }` — used by import and the one-time localStorage migration |
+| `DELETE /api/state/<key>` | Drop a slice back to its seed |
+| `GET /api/health` | Liveness + which file is in use |
+
+Writes are atomic: temp file then `rename`, so a crash cannot truncate the
+store.
 
 ### Key registry
 
@@ -35,6 +55,9 @@ reset, and will be silently lost the first time a user backs up their data.**
 | `routine.lastReset` | `string` (`YYYY-MM-DD`) | `useRoutineData` | Internal marker |
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
+
+Keys are created lazily — a slice only appears in the store once something
+writes it. Until then the feature reads its seed.
 
 Five of the nine Dashboard slices are display-only today. That is a product
 gap, not an architectural one — the storage and hook plumbing is already there
@@ -116,48 +139,51 @@ browsers that have never run the app.** Seeds are not a migration mechanism.
 
 ## ID generation
 
-Currently `crypto.randomUUID()` at eight call sites across three hooks. This
-**throws in non-secure contexts** and is the app's one known crash — see
-**OPS-001** in `known-issues.md`. The approved fix (a `generateId()` helper with
-a fallback) is specified in `CLAUDE.md:214-231` and should land before any new
-feature adds a ninth call site.
+**Always `generateId()` from `lib/id.ts`. Never `crypto.randomUUID()`.**
 
-New features must use whatever the shared helper is at the time, not
-`crypto.randomUUID()` directly.
+Operator is used over Tailscale at a bare IP, which browsers treat as a
+non-secure context, so `crypto.randomUUID` is undefined there and throws.
+`generateId()` uses it when available and falls back to a timestamp-plus-random
+string otherwise. This was the app's one crash bug (**OPS-001**).
 
 ## Changing a persisted shape — read this first
 
-There is **no schema versioning and no migration path**. `readStorage<T>`
-(`lib/storage.ts:11-19`) parses JSON and casts to `T` with no validation. The
-`try/catch` only protects against malformed JSON, not against a valid object of
-the wrong shape.
+**Bump `SCHEMA_VERSION` in `server/index.mjs` and add a migration.** The
+`MIGRATIONS` array runs oldest-first on load; entry *N* takes the store at
+version *N* and returns it at *N+1*:
 
-The consequence, concretely: a user has run the app, so `os.missions.records`
-holds records in today's shape. You add `tags: string[]` to `MissionRecord` and
-render `mission.tags.map(...)`. Their stored records have no `tags`, the cast
-lies, and the page white-screens on `undefined.map`.
+```js
+const MIGRATIONS = [
+  (store) => {                     // v1 -> v2
+    for (const m of store.state["missions.records"] ?? []) m.tags ??= [];
+    return store;
+  },
+];
+```
 
-Until a migration story exists (**OPS-003**), the safe rules are:
+Migrations run **once, server-side, against the file** — unlike the old
+localStorage world where every browser held its own unmigrated copy.
 
-1. **Additive changes only**, and every new field must be read defensively —
-   `mission.tags ?? []`, never `mission.tags.map`.
-2. **Never rename or retype an existing field** on a shipped type. Add a new
-   one and leave the old.
-3. **Never assume a nested array exists** on a record loaded from storage.
-4. If a breaking change is genuinely needed, that is the trigger to implement
-   versioning rather than a reason to skip it.
+Still good practice, because a migration can be forgotten:
+
+1. **Prefer additive changes**, and read new fields defensively —
+   `mission.tags ?? []` rather than `mission.tags.map`.
+2. **Don't rename or retype a shipped field** without a migration to match.
+3. **Back up `data/operator.json` before running a new migration** the first
+   time. There is no automatic pre-migration snapshot (**OPS-017**).
 
 ## Export / import contract
 
-`exportAllData()` produces a JSON object keyed by **full** storage keys
-(`"os.dashboard.tasks": [...]`), pretty-printed. `importAllData()` accepts that
-shape and writes back only keys starting with `os.`.
+Settings can be built directly on the API: `GET /api/state` **is** the export,
+and `PUT /api/state` **is** the import. The older
+`exportAllData`/`importAllData` helpers in `lib/storage.ts` operate on the
+localStorage mirror and are effectively legacy — prefer the API.
 
-Two properties worth knowing before Settings is built:
+Two properties worth knowing:
 
-- Import is a **merge, not a replace** — keys absent from the file are left
-  untouched. A user importing an old backup gets a mix of old and current data.
-- Import does **no validation and no version check**, so it is a second route to
-  the shape-mismatch problem above.
+- Bulk `PUT` is a **merge, not a replace** — keys absent from the payload are
+  left untouched. Importing an old backup yields a mix of old and current data.
+- It does **no validation and no version check**, so a stale export can
+  reintroduce an old shape without triggering a migration.
 
-Both are design questions for whoever builds Settings, not bugs today.
+Both are design questions for whoever builds Settings.

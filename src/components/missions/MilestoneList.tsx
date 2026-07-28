@@ -41,11 +41,22 @@ export default function MilestoneList({
   }
 
   function setStatus(id: string, status: MilestoneStatus) {
-    onUpdate(id, {
-      status,
-      progress: status === "complete" ? 100 : status === "pending" ? 0 : undefined,
-      completionDate: status === "complete" ? new Date().toISOString() : undefined,
-    });
+    // Build the patch key by key. A key present with the value `undefined`
+    // still overwrites when the hook spreads it, so "leave this alone" has to
+    // mean "omit the key" — not "pass undefined".
+    const patch: Partial<Milestone> = { status };
+
+    if (status === "complete") {
+      patch.progress = 100;
+      patch.completionDate = new Date().toISOString();
+    } else {
+      // Un-completing clears the date; this undefined IS meant to overwrite.
+      patch.completionDate = undefined;
+      // "In progress" keeps whatever progress the milestone already had.
+      if (status === "pending") patch.progress = 0;
+    }
+
+    onUpdate(id, patch);
   }
 
   return (

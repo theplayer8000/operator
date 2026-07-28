@@ -3,8 +3,8 @@
 The live register. Each item has a stable ID so it can be referenced from
 commits, handoffs, and other documents without depending on line numbers.
 
-**Read this before shipping.** Two of these (OPS-001, OPS-002) are active
-defects, not theoretical debt.
+**Read this before shipping.** The five high-severity entries were fixed in v5
+(2026-07-28); everything below OPS-005 is still live.
 
 Status values: `Open` · `Approved` (fix agreed, not applied) · `Fixed` ·
 `Accepted` (known and deliberately tolerated) · `Needs decision` (blocked on the
@@ -12,12 +12,14 @@ owner).
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| [OPS-001](#ops-001) | `crypto.randomUUID` crashes outside a secure context | **High** | Approved |
-| [OPS-002](#ops-002) | Milestone progress wiped when set to "In Progress" | **High** | Open |
-| [OPS-003](#ops-003) | No schema versioning or migration path | **High** | Needs decision |
-| [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | Needs decision |
+| [OPS-001](#ops-001) | `crypto.randomUUID` crashes outside a secure context | **High** | **Fixed** (v5) |
+| [OPS-002](#ops-002) | Milestone progress wiped when set to "In Progress" | **High** | **Fixed** (v5) |
+| [OPS-003](#ops-003) | No schema versioning or migration path | **High** | **Fixed** (v5) |
+| [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | **Fixed** (v5) |
+| [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
+| [OPS-017](#ops-017) | `data/operator.json` has no backup | Medium | Needs decision |
 | [OPS-005](#ops-005) | Dashboard mission widgets are decorative | Medium | Needs decision |
-| [OPS-006](#ops-006) | Storage writes fail silently | Medium | Accepted |
+| [OPS-006](#ops-006) | Storage writes fail silently | Medium | Partly addressed |
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
 | [OPS-008](#ops-008) | Hardcoded hex values in components | Low | Open |
 | [OPS-009](#ops-009) | Daily reset is mount-only and UTC-based | Low | Open |
@@ -32,7 +34,14 @@ owner).
 
 ## OPS-001
 
-**`crypto.randomUUID` crashes outside a secure context** · High · Approved
+**`crypto.randomUUID` crashes outside a secure context** · High · **Fixed in v5**
+
+> **Fixed 2026-07-28.** `src/lib/id.ts` now exposes `generateId()` with a
+> non-crypto fallback, and all eight call sites use it. Verified over Tailscale.
+> **Use `generateId()` for any new ID — never `crypto.randomUUID()` directly.**
+> The underlying constraint has not gone away: Operator is used at a bare IP, so
+> every secure-context API (`crypto.subtle`, `navigator.clipboard`, service
+> workers) is still unavailable.
 
 Documented in `CLAUDE.md:202-231`. `crypto.randomUUID()` exists only in a secure
 context (`localhost` or HTTPS). The owner accesses the dev server over Tailscale
@@ -56,7 +65,12 @@ Do this before adding a ninth call site.
 
 ## OPS-002
 
-**Milestone progress wiped when set to "In Progress"** · High · Open
+**Milestone progress wiped when set to "In Progress"** · High · **Fixed in v5**
+
+> **Fixed 2026-07-28.** `MilestoneList.setStatus` now builds the patch key by
+> key and omits `progress` when it should be left alone. `completionDate` still
+> passes an explicit `undefined`, because there the overwrite is the intent —
+> commented as such at the call site.
 
 *Not in `CLAUDE.md` — found during the 2026-07-28 review.*
 
@@ -91,7 +105,12 @@ and keeps the "explicit undefined means clear" behaviour available for
 
 ## OPS-003
 
-**No schema versioning or migration path** · High · Needs decision
+**No schema versioning or migration path** · High · **Fixed in v5**
+
+> **Fixed 2026-07-28.** The store now carries `schemaVersion`, and
+> `server/index.mjs` runs a `MIGRATIONS` array oldest-first on load. Add one
+> entry per persisted shape change. The defensive-read guidance below is still
+> good practice, but it is no longer the only line of defence.
 
 `lib/storage.ts:11-19` casts parsed JSON straight to `T` with no validation.
 Seeds persist on first render, so every future shape change lands on browsers
@@ -110,7 +129,12 @@ with every namespace added.
 
 ## OPS-004
 
-**Feature hooks don't share memory across instances** · Medium · Needs decision
+**Feature hooks don't share memory across instances** · Medium · **Fixed in v5**
+
+> **Fixed 2026-07-28.** `lib/remoteStore.ts` holds one module-level cache with
+> per-key subscribers, consumed via `useSyncExternalStore`. Every call site now
+> reads the same data, so calling a feature hook twice is safe and **Statistics
+> is no longer blocked**. Invariant 1 in `architecture.md` is retired.
 
 `useLocalStorage` is `useState` + a write-through effect with no context and no
 `storage` listener. Every call site gets an independent copy; two mounted
@@ -144,7 +168,12 @@ these two widgets should be the exception.
 
 ## OPS-006
 
-**Storage writes fail silently** · Medium · Accepted
+**Storage writes fail silently** · Medium · Partly addressed
+
+> **Partly addressed 2026-07-28.** Server writes that fail are now queued and
+> retried, and the Topbar shows an offline badge — failures are visible rather
+> than silent. The `localStorage` mirror write underneath still swallows errors,
+> which is now cosmetic rather than data-losing.
 
 `lib/storage.ts:21-27` swallows every write error. On quota exhaustion the app
 keeps working from memory and the user finds out on reload.
@@ -250,3 +279,37 @@ fonts to make offline-first literal, or accept degraded typography offline.
 size, so two shields at the same progress emit the same DOM ID. Invisible today
 because the gradients are identical. Would break if the gradient ever depends on
 anything else.
+
+## OPS-016
+
+**New mission lost when created — write dropped on unmount** · High · **Fixed in v5**
+
+> **Fixed 2026-07-28.** Root cause removed by the shared store in
+> `lib/remoteStore.ts` (see OPS-004). Writes now leave the component
+> synchronously instead of waiting for an effect that may never run.
+
+Reported as *"the New Mission button doesn't work"*.
+
+`NewMissionForm.submit()` called `onCreate(...)` — which queued `setMissions` —
+and then `navigate()` in the same handler. React 18 batched both into one
+commit, so `MissionBoard` **unmounted before its write-effect ran**.
+`MissionDetail` then mounted, read storage fresh, and found nothing:
+*"Mission not found."* The mission was gone.
+
+This was OPS-004 surfacing as visible data loss, and it is the reason the
+mutator-then-navigate pattern is safe now but was not before.
+
+## OPS-017
+
+**`data/operator.json` has no backup** · Medium · Needs decision
+
+`data/` is gitignored — correctly, since it will hold personal data — which
+means **git is not a backup**. The store is currently a single file on one
+machine's disk.
+
+Moving it to a NAS (`OPERATOR_DATA=/mnt/...`) improves durability but is still
+one copy. The owner has indicated cloud storage as an interim NAS before the
+EPYC server.
+
+**Decision needed** once real data goes in: a snapshot or copy job. Until then
+the exposure is limited to seed and test data.

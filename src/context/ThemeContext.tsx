@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useRemoteStorage } from "@/hooks/useRemoteStorage";
 
 export type AccentColor = "gold" | "violet" | "cyan" | "coral";
 
@@ -21,7 +21,7 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [accent, setAccent] = useLocalStorage<AccentColor>("theme.accent", "gold");
+  const [accent, setAccent] = useRemoteStorage<AccentColor>("theme.accent", "gold");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {

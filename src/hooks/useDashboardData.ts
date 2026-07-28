@@ -1,4 +1,5 @@
-import { useLocalStorage } from "./useLocalStorage";
+import { useRemoteStorage } from "./useRemoteStorage";
+import { generateId } from "@/lib/id";
 import type { ActivityItem, QuickNote, Task } from "@/lib/types";
 import {
   seedActivity,
@@ -17,25 +18,25 @@ import {
  * can own their slice without touching the others.
  */
 export function useDashboardData() {
-  const [focus, setFocus] = useLocalStorage<string>("dashboard.focus", "Ship the Dashboard v1");
-  const [tasks, setTasks] = useLocalStorage<Task[]>("dashboard.tasks", seedTasks);
-  const [missions, setMissions] = useLocalStorage("dashboard.missions", seedMissions);
-  const [weeklyGoals] = useLocalStorage("dashboard.weeklyGoals", seedWeeklyGoals);
-  const [streaks] = useLocalStorage("dashboard.streaks", seedStreaks);
-  const [events] = useLocalStorage("dashboard.events", seedEvents);
-  const [notes, setNotes] = useLocalStorage<QuickNote[]>("dashboard.notes", seedNotes);
-  const [activity, setActivity] = useLocalStorage<ActivityItem[]>(
+  const [focus, setFocus] = useRemoteStorage<string>("dashboard.focus", "Ship the Dashboard v1");
+  const [tasks, setTasks] = useRemoteStorage<Task[]>("dashboard.tasks", seedTasks);
+  const [missions, setMissions] = useRemoteStorage("dashboard.missions", seedMissions);
+  const [weeklyGoals] = useRemoteStorage("dashboard.weeklyGoals", seedWeeklyGoals);
+  const [streaks] = useRemoteStorage("dashboard.streaks", seedStreaks);
+  const [events] = useRemoteStorage("dashboard.events", seedEvents);
+  const [notes, setNotes] = useRemoteStorage<QuickNote[]>("dashboard.notes", seedNotes);
+  const [activity, setActivity] = useRemoteStorage<ActivityItem[]>(
     "dashboard.activity",
     seedActivity
   );
-  const [productivityHistory] = useLocalStorage(
+  const [productivityHistory] = useRemoteStorage(
     "dashboard.productivityHistory",
     seedProductivityHistory
   );
 
   function logActivity(label: string, kind: ActivityItem["kind"]) {
     setActivity((prev) =>
-      [{ id: crypto.randomUUID(), label, timestamp: new Date().toISOString(), kind }, ...prev].slice(
+      [{ id: generateId(), label, timestamp: new Date().toISOString(), kind }, ...prev].slice(
         0,
         20
       )
@@ -53,7 +54,7 @@ export function useDashboardData() {
   function addTask(title: string) {
     if (!title.trim()) return;
     setTasks((prev) => [
-      { id: crypto.randomUUID(), title: title.trim(), done: false, priority: "medium" },
+      { id: generateId(), title: title.trim(), done: false, priority: "medium" },
       ...prev,
     ]);
   }
@@ -61,7 +62,7 @@ export function useDashboardData() {
   function addNote(text: string) {
     if (!text.trim()) return;
     setNotes((prev) => [
-      { id: crypto.randomUUID(), text: text.trim(), createdAt: new Date().toISOString() },
+      { id: generateId(), text: text.trim(), createdAt: new Date().toISOString() },
       ...prev,
     ]);
   }

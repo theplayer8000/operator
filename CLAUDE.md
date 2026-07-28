@@ -13,6 +13,7 @@ file states the rule and the document explains it.
 
 | Document | Read it when |
 |---|---|
+| [`docs/vision.md`](docs/vision.md) | **Always — treat as equally important as this file.** Why Operator exists, not how it's built. If an implementation satisfies the architecture but conflicts with the vision, say so before proceeding |
 | [`docs/architecture.md`](docs/architecture.md) | Adding or changing any feature; anything touching state. **Contains the invariants** — the ways this codebase breaks while compiling cleanly |
 | [`docs/data-model.md`](docs/data-model.md) | Adding a type, a storage key, or changing a persisted shape |
 | [`docs/design-system.md`](docs/design-system.md) | Building any UI |
@@ -27,13 +28,25 @@ file states the rule and the document explains it.
 
 A personal productivity dashboard — the owner's daily operating system, not a
 generic todo app. Core philosophy: tasks contribute to missions, missions
-contribute to a long-term life roadmap. Everything is local — no backend, no
-auth, no cloud, no database. `localStorage` only. Must work fully offline.
+contribute to a long-term life roadmap. Everything is self-hosted — no cloud,
+no third-party services, no account. Data never leaves hardware the owner
+controls.
 
-**Do not add:** a backend, authentication, a database, cloud sync, or any
-network calls other than Google Fonts in `index.html`. If a future request
-seems to need one of these, flag it back to the user rather than adding it
-silently — offline-first is a hard requirement, not a default.
+Storage is a **local JSON file served by a small Node process in `server/`**
+(`data/operator.json`, path overridable with `OPERATOR_DATA`). It runs on the
+owner's PC today and moves to the EPYC server later. This replaced
+`localStorage` in v5 so that desktop and phone share one dataset over
+Tailscale — see [ADR 0006](docs/decisions/0006-json-file-storage-server.md).
+`localStorage` still exists, but only as an offline read-mirror.
+
+**Do not add:** cloud sync, a third-party backend, authentication against an
+external provider, or any network call to a host the owner doesn't own. Google
+Fonts in `index.html` is the one pre-existing exception. If a future request
+seems to need one of these, flag it back rather than adding it silently —
+self-hosted is a hard requirement, not a default.
+
+**The app must still work when the storage server is down** — degraded to the
+last known data with writes queued, never a blank screen.
 
 ## Tech stack
 
@@ -47,12 +60,13 @@ and should stay that way unless the user asks otherwise.
 Established across Dashboard, Daily Routine, and Mission Board, and expected
 to continue for Learning, Gym, Forex, Work, Journey, Statistics, Settings:
 
-- **One localStorage namespace per feature** (e.g. `dashboard.*`,
-  `routine.*`, `missions.records`). Namespacing lives in `lib/storage.ts`
-  (`storageKey()` prefixes everything with `os.`).
-- **One hook per feature** that owns that namespace's `useLocalStorage`
+- **One storage namespace per feature** (e.g. `dashboard.*`, `routine.*`,
+  `missions.records`). Keys are slices of the JSON store; the same strings are
+  used for the offline `localStorage` mirror, prefixed with `os.` by
+  `lib/storage.ts`.
+- **One hook per feature** that owns that namespace's `useRemoteStorage`
   slices and exposes read state + mutator functions. Pages/components never
-  call `useLocalStorage` directly for feature data — they go through the
+  call `useRemoteStorage` directly for feature data — they go through the
   feature's hook. See `useDashboardData.ts`, `useRoutineData.ts`,
   `useMissionBoard.ts`.
 - **One folder per feature** under `src/components/<feature>/` for that
@@ -83,6 +97,12 @@ objects in localStorage — keep doing that.
 ## Folder map
 
 ```
+server/
+  index.mjs             — JSON storage API (no deps). GET/PUT/DELETE /api/state
+scripts/
+  dev.mjs               — starts the API and Vite together
+data/
+  operator.json         — the store. gitignored; NOT backed up by git
 src/
   main.tsx              — entry, wraps App in BrowserRouter + ThemeProvider
   App.tsx                — all routes
@@ -95,8 +115,10 @@ src/
     types.ts              — all domain types, one section per feature
     seed.ts                — all first-run seed data, one export per feature
     storage.ts              — localStorage read/write/export/import/reset helpers
+    remoteStore.ts             — shared client cache + sync with the server
+    id.ts                       — generateId(), safe in non-secure contexts
   hooks/
-    useLocalStorage.ts       — generic localStorage-backed useState
+    useRemoteStorage.ts      — generic server-backed useState (shared cache)
     useDashboardData.ts       — Dashboard feature hook
     useRoutineData.ts          — Daily Routine feature hook (+ daily reset logic)
     useMissionBoard.ts          — Mission Board feature hook
@@ -218,36 +240,19 @@ These are single-string changes (`Card` `title` props, `NAV_ITEMS` in
 `Sidebar.tsx`) — trivial to apply, but wait for explicit confirmation
 before touching them.
 
-## Known issues — not yet fixed, on file for the next batch
+## Known issues
 
-**`crypto.randomUUID is not a function`** — thrown on any action that
-generates an ID (adding a task, toggling one, logging activity, adding a
-milestone, creating a mission). `crypto.randomUUID()` only exists in a
-[secure context](https://developer.mozilla.org/en-US/docs/Web/API/Window/crypto)
-(`localhost` or HTTPS). The user accesses the dev server over Tailscale via
-a bare IP (`http://100.x.x.x:5173`), which the browser treats as insecure,
-so the call throws and takes down whichever page it fires on (confirmed on
-Dashboard; will affect Daily Routine and Mission Board identically, since
-they call `crypto.randomUUID()` in the same pattern).
+The live register is [`docs/known-issues.md`](docs/known-issues.md) — read it
+before shipping. Two things worth knowing without opening it:
 
-**Fix plan (approved, not yet applied):** add a small fallback ID
-generator, e.g. in `lib/storage.ts` or a new `lib/id.ts`:
+**Secure context.** Operator is used over Tailscale at a bare IP, which
+browsers treat as insecure. `crypto.randomUUID`, `crypto.subtle`,
+`navigator.clipboard` and service workers are all unavailable there. Use
+`generateId()` from `lib/id.ts`, never `crypto.randomUUID()` directly. When a
+bug "only happens on the server", check this first.
 
-```ts
-export function generateId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-```
-
-Then replace every `crypto.randomUUID()` call with `generateId()`. Current
-call sites: `useDashboardData.ts`, `useRoutineData.ts` (task/note IDs),
-`useMissionBoard.ts` (mission/milestone/activity IDs). Search the repo for
-`crypto.randomUUID` to find them all before shipping the fix — don't rely
-on this list being exhaustive if more features have been added since this
-doc was written.
+**`data/operator.json` is gitignored, so git is not a backup.** Once real data
+goes in, it needs a copy job.
 
 ## Verification before handing anything back
 
@@ -256,18 +261,29 @@ npx tsc -b        # must exit clean
 npx vite build    # must exit clean
 ```
 
-Both must pass with no errors before considering a change done. `dist/`
-and `node_modules/` should not be committed or included when packaging the
-project for delivery.
+Both must pass with no errors before considering a change done. There are no
+tests and no linter — the type checker is the only automated gate, and it is
+weaker than it looks (`noUnusedLocals` is off, and an explicit `undefined` in a
+spread type-checks fine while corrupting data). Exercise the UI path you
+changed. `dist/`, `node_modules/` and `data/` should not be committed.
 
-## Running with network access (Tailscale, etc.)
+## Running it
 
 ```bash
-npm run dev -- --host
+npm run dev -- --host    # storage API + Vite, bound to the network
+npm run dev:web          # Vite only (API assumed already running)
+npm run server           # storage API only
+npm run serve            # built app + API from one port (deployment)
 ```
 
-The extra `--` is required so npm passes `--host` through to Vite. Without
-`--host`, Vite only binds to localhost.
+`npm run dev` starts **two** processes via `scripts/dev.mjs` — the storage
+server on 5174 and Vite on 5173. The extra `--` is required so npm passes
+`--host` through to Vite; without it Vite binds to localhost only and the
+phone can't reach it.
+
+Vite's port is pinned with `strictPort`. If it weren't, a stale dev server on
+5173 would push Vite onto 5174 — the API's port — and it would proxy `/api`
+to itself.
 
 
 ---

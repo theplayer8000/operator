@@ -1,4 +1,5 @@
-import { useLocalStorage } from "./useLocalStorage";
+import { useRemoteStorage } from "./useRemoteStorage";
+import { generateId } from "@/lib/id";
 import { seedMissionRecords } from "@/lib/seed";
 import type {
   Milestone,
@@ -13,7 +14,7 @@ import type {
  * pages read and write through. One localStorage key: "missions.records".
  */
 export function useMissionBoard() {
-  const [missions, setMissions] = useLocalStorage<MissionRecord[]>(
+  const [missions, setMissions] = useRemoteStorage<MissionRecord[]>(
     "missions.records",
     seedMissionRecords
   );
@@ -26,7 +27,7 @@ export function useMissionBoard() {
           : {
               ...m,
               activity: [
-                { id: crypto.randomUUID(), label, timestamp: new Date().toISOString() },
+                { id: generateId(), label, timestamp: new Date().toISOString() },
                 ...m.activity,
               ].slice(0, 30),
             }
@@ -45,7 +46,7 @@ export function useMissionBoard() {
     difficulty: MissionDifficulty;
   }) {
     const record: MissionRecord = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       name: input.name,
       description: input.description,
       category: input.category,
@@ -63,7 +64,7 @@ export function useMissionBoard() {
       whyItMatters: "",
       unlocks: "",
       knowledgeNeeded: "",
-      activity: [{ id: crypto.randomUUID(), label: "Mission created", timestamp: new Date().toISOString() }],
+      activity: [{ id: generateId(), label: "Mission created", timestamp: new Date().toISOString() }],
       archived: false,
       createdAt: new Date().toISOString(),
     };
@@ -97,7 +98,7 @@ export function useMissionBoard() {
   }
 
   function addMilestone(id: string, milestone: Omit<Milestone, "id">) {
-    const record: Milestone = { ...milestone, id: crypto.randomUUID() };
+    const record: Milestone = { ...milestone, id: generateId() };
     setMissions((prev) =>
       prev.map((m) => (m.id === id ? { ...m, milestones: [...m.milestones, record] } : m))
     );
