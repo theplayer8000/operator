@@ -9,4 +9,11 @@ onboarding-report.txt
 
 # Local data store — the app writes here at runtime
 data/
+
+# A separate project that currently sits inside this directory. It has its own
+# repo, its own database and real client data (tenancy documents, personal
+# details). It must never be committed to Operator's history — this repo has a
+# GitHub remote. Ignored rather than tracked; the proper fix is moving it out
+# to a sibling directory.
+Darams-CRM/
 tsconfig.tsbuildinfo

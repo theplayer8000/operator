@@ -20,7 +20,11 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-const DENY = new Set(["node_modules", ".git", "dist", "data", ".vite"]);
+// Darams-CRM is a separate project that currently lives inside this directory.
+// It holds real client data, and while the extension allowlist below stops its
+// .db and .pdf contents being served, `listTree` would still expose tenancy
+// document *filenames*. The Dev browser exists to browse Operator.
+const DENY = new Set(["node_modules", ".git", "dist", "data", ".vite", "Darams-CRM"]);
 const MAX_BYTES = 400_000;
 
 const TEXT_EXT = new Set([
