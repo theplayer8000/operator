@@ -27,7 +27,7 @@ owner).
 | [OPS-006](#ops-006) | Storage writes fail silently | Medium | Partly addressed |
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
 | [OPS-008](#ops-008) | Hardcoded hex values in components | Low | Open |
-| [OPS-009](#ops-009) | Daily reset is mount-only and UTC-based | Low | Open |
+| [OPS-009](#ops-009) | Daily reset is mount-only and UTC-based | Low | **Fixed** (v10) |
 | [OPS-010](#ops-010) | Stale module-load date in Topbar | Low | **Fixed** (v6) |
 | [OPS-011](#ops-011) | Dead type surface | Low | Open |
 | [OPS-012](#ops-012) | No delete or archive path for missions | Low | **Fixed** (v7) |
@@ -219,17 +219,29 @@ to leave with a comment. The Confetti one is straightforwardly fixable.
 
 ## OPS-009
 
-**Daily reset is mount-only and UTC-based** · Low · Open
+**Daily reset is mount-only and UTC-based** · Low · **Fixed** (v10)
 
-`hooks/useRoutineData.ts:22-33` runs the reset in an effect with `[]` deps, so a
-tab left open across midnight never resets until reload — and a dashboard is
-exactly the app people leave open.
+Two defects in the same effect. `useRoutineData` compared
+`new Date().toISOString().slice(0, 10)` — the **UTC** day — so between midnight
+and 01:00 during BST it reported yesterday and the routine rolled an hour late
+for half the year. And it ran on mount only, so a tab left open across midnight
+never reset at all: a phone in a pocket overnight, which is the common case.
 
-Separately, `todayKey()` uses `toISOString()`, i.e. **UTC**. For a UK user in
-BST the routine day rolls at 01:00 local, not midnight.
+Fixed in v10. The comparison now uses `toDateKey()` from `lib/time.ts`, which
+reads the local date parts, and the check re-runs on `visibilitychange` and
+`focus` as well as on mount. `lastReset` guards it, so re-checking is free.
 
-**Fix:** compute the local date (not `toISOString`), and re-check on an interval
-or on visibility change rather than mount only.
+Demonstrated before fixing, under `TZ=Europe/London`:
+
+| Local time | `toDateKey` | `toISOString().slice(0,10)` |
+|---|---|---|
+| 00:30, 2 July | `2026-07-02` | `2026-07-01` ← wrong day |
+| 01:00, 2 July | `2026-07-02` | `2026-07-02` |
+
+**The wider lesson is in `lib/time.ts`:** never build a calendar day with
+`toISOString()`. It converts to UTC first. Anything date-keyed — the routine
+reset, events, a future Gym log — must use `toDateKey`.
+
 
 ## OPS-010
 

@@ -58,9 +58,11 @@ store.
 | `dashboard.notes` | `QuickNote[]` | `useDashboardData` | Add, edit, delete |
 | `dashboard.activity` | `ActivityItem[]` | `useDashboardData` | Appended by mutators, capped at 20 |
 | ~~`dashboard.productivityHistory`~~ | — | — | **Retired v9** — the card charting it was seven fixed numbers presented as a trend. Replaced by `MissionStatusChart` |
+| ~~`dashboard.events`~~ | — | — | **Retired v10** — Events is a real feature now; the widget reads `events.records` |
 | `routine.sections` | `RoutineSection[]` | `useRoutineData` | Yes |
 | `routine.lastReset` | `string` (`YYYY-MM-DD`) | `useRoutineData` | Internal marker |
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
+| `events.records` | `CalendarEvent[]` | `useEvents` | Yes |
 | `homelab.services` | `HomelabService[]` | `useHomelab` | Yes — the server also reads this slice to know what to probe |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
 
@@ -164,6 +166,29 @@ full field list. Structural notes:
   than stored, a leftover ID is not a visibly broken link — it is an invisible
   one that changes nothing until the ID is reused. The invariant lives in the
   hook, not the caller.
+
+### Events
+
+`CalendarEvent` is title, `date`, optional `time`, `notes`, and a `kind` used
+only for colour.
+
+**`date` is a local calendar day (`"YYYY-MM-DD"`), not a timestamp.** A birthday
+is the 3rd of March wherever you are. Build it with `toDateKey()` from
+`lib/time.ts` and never with `toISOString().slice(0, 10)` — that converts to UTC
+first, so every event created between midnight and 01:00 BST lands on the
+previous day. This is the same defect as **OPS-009** and the reason that helper
+exists.
+
+`time` is optional and absent means all-day. It is an **omitted key**, not an
+explicit `undefined` — see the spread trap in `architecture.md`.
+
+Everything else (the by-day index, upcoming, the year list) is derived in
+`useEvents` per render and never stored, so an event can't appear in two places
+that disagree.
+
+Not modelled, deliberately: **repeating events, multi-day spans, reminders.**
+Each is a real calendar feature. Don't fake a repeat by writing N copies — that
+makes editing the series impossible and is the classic way calendar data rots.
 
 ### Homelab
 

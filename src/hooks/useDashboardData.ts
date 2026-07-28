@@ -3,7 +3,6 @@ import { generateId } from "@/lib/id";
 import type { ActivityItem, QuickNote, Task } from "@/lib/types";
 import {
   seedActivity,
-  seedEvents,
   seedNotes,
   seedStreaks,
   seedTasks,
@@ -25,7 +24,8 @@ export function useDashboardData() {
   const [tasks, setTasks] = useRemoteStorage<Task[]>("dashboard.tasks", seedTasks);
   const [weeklyGoals] = useRemoteStorage("dashboard.weeklyGoals", seedWeeklyGoals);
   const [streaks] = useRemoteStorage("dashboard.streaks", seedStreaks);
-  const [events] = useRemoteStorage("dashboard.events", seedEvents);
+  // `dashboard.events` was retired in v10 — Events is a real feature now
+  // (`events.records`) and the widget reads that. See useEvents.ts.
   const [notes, setNotes] = useRemoteStorage<QuickNote[]>("dashboard.notes", seedNotes);
   const [activity, setActivity] = useRemoteStorage<ActivityItem[]>(
     "dashboard.activity",
@@ -92,7 +92,6 @@ export function useDashboardData() {
     deleteTask,
     weeklyGoals,
     streaks,
-    events,
     notes,
     addNote,
     editNote,

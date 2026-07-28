@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useRemoteStorage } from "./useRemoteStorage";
 import { generateId } from "@/lib/id";
-import { parseHHMM } from "@/lib/time";
+import { parseHHMM, toDateKey } from "@/lib/time";
 import { seedRoutineSections } from "@/lib/seed";
 import type {
   RoutineSection,
@@ -18,10 +18,6 @@ import type {
  */
 const FALLBACK_START = 9 * 60;
 
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-}
-
 /**
  * Same pattern as useDashboardData: one localStorage-backed slice
  * ("routine.sections"), plus a small "routine.lastReset" marker used to
@@ -32,20 +28,53 @@ export function useRoutineData() {
     "routine.sections",
     seedRoutineSections
   );
-  const [lastReset, setLastReset] = useRemoteStorage<string>("routine.lastReset", todayKey());
+  const [lastReset, setLastReset] = useRemoteStorage<string>(
+    "routine.lastReset",
+    toDateKey(new Date())
+  );
 
+  /**
+   * The daily reset — **OPS-009**, fixed in v10. It had two defects:
+   *
+   * 1. It compared `new Date().toISOString().slice(0, 10)`, which is the *UTC*
+   *    day. Between midnight and 01:00 during BST that reports yesterday, so
+   *    the routine rolled an hour late for half the year. `toDateKey` reads the
+   *    local parts instead — verified against `TZ=Europe/London`.
+   * 2. It ran on mount only, so a tab left open across midnight never reset.
+   *    Now it re-checks whenever the tab becomes visible or regains focus,
+   *    which is the case that actually happens: a phone in a pocket overnight.
+   *
+   * `lastReset` is the guard, so re-checking often is free — the work only
+   * happens when the stored day differs from today.
+   */
   useEffect(() => {
-    if (lastReset !== todayKey()) {
+    function rollIfNewDay() {
+      const today = toDateKey(new Date());
+      if (lastReset === today) return;
+
       setSections((prev) =>
         prev.map((s) => ({
           ...s,
           tasks: s.tasks.map((t) => (t.repeatDaily ? { ...t, done: false } : t)),
         }))
       );
-      setLastReset(todayKey());
+      setLastReset(today);
     }
+
+    rollIfNewDay();
+
+    function onVisible() {
+      if (!document.hidden) rollIfNewDay();
+    }
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [lastReset]);
 
   function toggleTask(sectionKey: RoutineSectionKey, taskId: string) {
     setSections((prev) =>

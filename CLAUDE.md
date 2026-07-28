@@ -124,7 +124,9 @@ src/
     storageKeys.ts           — the namespace registry + each slice's blank value
     remoteStore.ts             — shared client cache + sync with the server
     id.ts                       — generateId(), safe in non-secure contexts
-    time.ts                      — wall-clock helpers (parse/format HH:MM). Local time only
+    time.ts                      — wall-clock + calendar-date helpers. Local time only.
+                                    Use toDateKey() for any "YYYY-MM-DD" — never
+                                    toISOString().slice(0,10), which is UTC (OPS-009)
   hooks/
     useRemoteStorage.ts      — generic server-backed useState (shared cache)
     useDashboardData.ts       — Dashboard feature hook
@@ -141,6 +143,7 @@ src/
     dashboard/                — one file per Dashboard widget
     routine/                    — RoutineSectionCard, RoutineSummary,
                                    RoutineTimeline, routineMeta.ts
+    events/                      — MonthGrid, DayPanel, eventMeta.ts
     missions/                    — MissionCard, MissionBadges, EditableField,
                                     DependencyChain, DependencyEditor,
                                     MilestoneList, MilestoneTimeline,
@@ -223,6 +226,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Dashboard | `/` | Built |
 | Daily Routine | `/routine` | Built |
 | Mission Board | `/missions`, `/missions/:id` | Built |
+| Events | `/events` | Built — year calendar, 12 month grids, day panel for add/edit/delete. Dashboard's Upcoming Events reads it |
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |

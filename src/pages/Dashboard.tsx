@@ -23,7 +23,6 @@ export default function Dashboard() {
     deleteTask,
     weeklyGoals,
     streaks,
-    events,
     notes,
     addNote,
     editNote,
@@ -52,7 +51,7 @@ export default function Dashboard() {
       <CurrentStreaks streaks={streaks} />
       <MissionStatusChart />
 
-      <UpcomingEvents events={events} />
+      <UpcomingEvents />
       <QuickNotes notes={notes} onAdd={addNote} onEdit={editNote} onDelete={deleteNote} />
       <RecentActivity activity={activity} />
     </div>

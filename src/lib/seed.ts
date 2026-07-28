@@ -6,9 +6,10 @@ import type {
   RoutineSection,
   Streak,
   Task,
-  UpcomingEvent,
+  CalendarEvent,
   WeeklyGoal,
 } from "./types";
+import { toDateKey } from "./time";
 
 // First-run content only — every array below is fully editable/replaceable
 // the moment the user touches it, since each is backed by useRemoteStorage.
@@ -32,10 +33,10 @@ export const seedStreaks: Streak[] = [
   { id: "s3", label: "Forex journal", days: 0, alive: false },
 ];
 
-export const seedEvents: UpcomingEvent[] = [
-  { id: "e1", title: "GEH NHS shift", date: nextDays(1) },
-  { id: "e2", title: "Darams UI review call", date: nextDays(3) },
-  { id: "e3", title: "Breakin Science — Amsterdam", date: nextDays(21) },
+export const seedEvents: CalendarEvent[] = [
+  { id: "e1", title: "GEH NHS shift", date: nextDateKey(1), kind: "work", notes: "" },
+  { id: "e2", title: "Darams UI review call", date: nextDateKey(3), time: "14:00", kind: "work", notes: "" },
+  { id: "e3", title: "Breakin Science — Amsterdam", date: nextDateKey(21), kind: "personal", notes: "" },
 ];
 
 export const seedNotes: QuickNote[] = [
@@ -397,10 +398,11 @@ function pastDays(n: number): string {
   return d.toISOString();
 }
 
-function nextDays(n: number): string {
+/** A local calendar day n days out, as "YYYY-MM-DD" — not a timestamp. */
+function nextDateKey(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() + n);
-  return d.toISOString();
+  return toDateKey(d);
 }
 function hoursAgo(n: number): string {
   const d = new Date();

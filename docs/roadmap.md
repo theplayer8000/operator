@@ -27,9 +27,8 @@ hardcoded numbers as a "7-day trend". Both now derive from real data — see
 [ADR 0008](decisions/0008-dashboard-reads-the-real-board.md), which supersedes
 ADR 0003.
 
-Known gaps: **Upcoming Events doesn't open into anything** — it wants a real
-events/calendar feature behind it. Weekly goals and streaks are still seeded
-with no editor.
+Known gaps: weekly goals and streaks are still seeded with no editor — the same
+class of defect OPS-005 fixed, one level down.
 
 ### Daily Routine — `/routine`
 
@@ -94,6 +93,27 @@ code.
 
 Known gaps: port-open is not health (**OPS-019**); no grouping or ordering of
 tiles beyond insertion order; no favicon or icon per service.
+
+### Events — `/events`
+
+The year on a calendar: twelve month grids, Monday-first, with coloured dots per
+day by kind (work / personal / admin / health / other). Pick a day to see what's
+on it and add, rename or delete. A "Next up" list runs alongside, and the
+Dashboard's Upcoming Events widget reads the same feature and links in.
+
+**Fully local — no external permissions.** This is ordinary data in
+`events.records`. What *would* need permissions is syncing a third-party
+calendar (Google, Outlook): that means OAuth to a host the owner doesn't
+control, which the self-hosted rule in `CLAUDE.md` bars. A manual `.ics` import
+would not cross that line and is the sanctioned route if calendar interop is
+ever wanted — same shape as Settings' JSON import.
+
+Dates are stored as local `"YYYY-MM-DD"` keys, never timestamps. See the
+`toDateKey` note under **OPS-009** — building one with `toISOString()` puts
+every event between midnight and 1am BST on the wrong day.
+
+Known gaps: no repeating events, no multi-day spans, no reminders. All three are
+real calendar features and none should be faked with a loop over single days.
 
 ### Settings — `/settings`
 

@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Repeat,
   Swords,
+  CalendarDays,
   Server,
   GraduationCap,
   Dumbbell,
@@ -55,6 +56,13 @@ const SECTIONS: Section[] = [
     icon: Swords,
     status: "built",
     blurb: "Long-running efforts with milestones, dependencies and their own history.",
+  },
+  {
+    to: "/events",
+    label: "Events",
+    icon: CalendarDays,
+    status: "built",
+    blurb: "The year on a calendar. What's coming, and what already happened.",
   },
   {
     to: "/homelab",

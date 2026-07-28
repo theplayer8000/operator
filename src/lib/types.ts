@@ -34,11 +34,26 @@ export interface Streak {
   alive: boolean; // false if broken
 }
 
-export interface UpcomingEvent {
+// --- Events ---------------------------------------------------------------
+// Its own feature since v10 (`events.records`). The Dashboard's Upcoming
+// Events widget reads it read-only, the same shape as the mission widgets —
+// it used to render `dashboard.events` seed data that nothing could change.
+
+export type EventKind = "work" | "personal" | "admin" | "health" | "other";
+
+export interface CalendarEvent {
   id: ID;
   title: string;
-  date: string; // ISO date
+  /**
+   * Local calendar day, "YYYY-MM-DD". Not a timestamp: a birthday is the 3rd
+   * of March wherever you are, and building this with toISOString() puts every
+   * BST evening on the wrong day. Use toDateKey() from lib/time.ts.
+   */
+  date: string;
+  /** Optional local wall-clock time, "HH:MM". Absent means all-day. */
   time?: string;
+  notes: string;
+  kind: EventKind;
 }
 
 export interface QuickNote {
@@ -111,7 +126,6 @@ export interface DashboardData {
   tasks: Task[];
   weeklyGoals: WeeklyGoal[];
   streaks: Streak[];
-  events: UpcomingEvent[];
   notes: QuickNote[];
   activity: ActivityItem[];
 }

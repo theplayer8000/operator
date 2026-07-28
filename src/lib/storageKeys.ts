@@ -39,13 +39,14 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "dashboard.tasks": [],
   "dashboard.weeklyGoals": [],
   "dashboard.streaks": [],
-  "dashboard.events": [],
+  "events.records": [],
   "dashboard.notes": [],
   "dashboard.activity": [],
   "dashboard.productivityHistory": [],
-  // Retired in v9 — no reader left, but existing stores still hold them and a
-  // clear should take them out rather than leave orphans behind.
-  "dashboard.missions": [],
+  // Retired — no reader left, but existing stores still hold them and a clear
+  // should take them out rather than leave orphans behind.
+  "dashboard.missions": [], // v9
+  "dashboard.events": [], // v10 — replaced by events.records
   "routine.sections": seedRoutineSections.map((s) => ({ ...s, tasks: [], notes: "" })),
   "routine.lastReset": new Date().toISOString().slice(0, 10),
   "missions.records": [],
@@ -62,7 +63,6 @@ export const FEATURE_SLICES: FeatureSlice[] = [
       "dashboard.tasks",
       "dashboard.weeklyGoals",
       "dashboard.streaks",
-      "dashboard.events",
       "dashboard.notes",
       "dashboard.activity",
       "dashboard.productivityHistory",
@@ -78,6 +78,11 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     label: "Mission Board",
     description: "Every mission, including milestones, dependencies and history. Archived ones too.",
     keys: ["missions.records"],
+  },
+  {
+    label: "Events",
+    description: "Every event on the calendar, past and future.",
+    keys: ["events.records"],
   },
   {
     label: "Homelab",
