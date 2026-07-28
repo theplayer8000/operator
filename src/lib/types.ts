@@ -14,15 +14,10 @@ export interface Task {
   missionId?: ID; // links a task to a Project/Mission
 }
 
-export interface Mission {
-  id: ID;
-  name: string;
-  category: "server" | "homelab" | "darams" | "gaming" | "ai" | "custom";
-  progress: number; // 0-100
-  deadline?: string;
-  priority: Priority;
-  archived: boolean;
-}
+// The lightweight `Mission` type lived here — a second, parallel mission shape
+// used only by the Dashboard's widgets over `dashboard.missions`. Retired in
+// v9: those widgets now read the real `MissionRecord` board, so there is one
+// mission type again. See ADR 0008, which supersedes ADR 0003.
 
 export interface WeeklyGoal {
   id: ID;
@@ -114,13 +109,11 @@ export interface ScheduleBlock {
 export interface DashboardData {
   focus: string;
   tasks: Task[];
-  missions: Mission[];
   weeklyGoals: WeeklyGoal[];
   streaks: Streak[];
   events: UpcomingEvent[];
   notes: QuickNote[];
   activity: ActivityItem[];
-  productivityHistory: { day: string; score: number }[];
 }
 
 // --- Activity Log ---------------------------------------------------------

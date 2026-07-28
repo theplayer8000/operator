@@ -22,11 +22,12 @@ Routine feature work does not need an ADR. Following the recipe in
 |---|---|---|---|
 | [0001](0001-local-first-storage.md) | Local-first storage, no backend | **Superseded by 0006** | 2026-07-26 |
 | [0002](0002-feature-slice-architecture.md) | Feature-slice architecture | Accepted | 2026-07-26 |
-| [0003](0003-separate-mission-types.md) | Two separate mission types | Accepted | 2026-07-27 |
+| [0003](0003-separate-mission-types.md) | Two separate mission types | **Superseded by 0008** | 2026-07-27 |
 | [0004](0004-tonal-registers.md) | Different tonal registers per feature | Accepted | 2026-07-27 |
 | [0005](0005-no-state-management-library.md) | No state management library | Accepted | 2026-07-26 |
 | [0006](0006-json-file-storage-server.md) | JSON file storage server | Accepted | 2026-07-28 |
 | [0007](0007-homelab-server-side-probes.md) | Homelab status is probed server-side | Accepted | 2026-07-28 |
+| [0008](0008-dashboard-reads-the-real-board.md) | The Dashboard reads the real Mission Board | Accepted | 2026-07-28 |
 
 Dates are when the decision was made in the codebase (from git history), not
 when it was written down.

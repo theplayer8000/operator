@@ -1,7 +1,6 @@
 import type {
   ActivityItem,
   HomelabService,
-  Mission,
   MissionRecord,
   QuickNote,
   RoutineSection,
@@ -19,13 +18,6 @@ export const seedTasks: Task[] = [
   { id: "t2", title: "Rack-plan the EPYC server bay", done: false, priority: "medium" },
   { id: "t3", title: "30 min French — Duolingo streak", done: true, priority: "low" },
   { id: "t4", title: "Log today's forex observations", done: false, priority: "medium" },
-];
-
-export const seedMissions: Mission[] = [
-  { id: "m1", name: "EPYC Server Build", category: "server", progress: 62, priority: "high", archived: false },
-  { id: "m2", name: "Home Lab Network", category: "homelab", progress: 40, priority: "medium", archived: false },
-  { id: "m3", name: "Darams CRM", category: "darams", progress: 78, priority: "high", archived: false },
-  { id: "m4", name: "AI Development", category: "ai", progress: 25, priority: "medium", archived: false },
 ];
 
 export const seedWeeklyGoals: WeeklyGoal[] = [
@@ -54,16 +46,6 @@ export const seedActivity: ActivityItem[] = [
   { id: "a1", label: "Completed \"30 min French\"", timestamp: hoursAgo(2), kind: "task" },
   { id: "a2", label: "Darams CRM moved to 78%", timestamp: hoursAgo(6), kind: "mission" },
   { id: "a3", label: "Learning streak hit 12 days", timestamp: hoursAgo(20), kind: "streak" },
-];
-
-export const seedProductivityHistory = [
-  { day: "Mon", score: 62 },
-  { day: "Tue", score: 71 },
-  { day: "Wed", score: 55 },
-  { day: "Thu", score: 80 },
-  { day: "Fri", score: 74 },
-  { day: "Sat", score: 40 },
-  { day: "Sun", score: 66 },
 ];
 
 export const seedRoutineSections: RoutineSection[] = [

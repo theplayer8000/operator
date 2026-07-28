@@ -6,6 +6,7 @@ import MissionBoard from "@/pages/MissionBoard";
 import MissionDetail from "@/pages/MissionDetail";
 import ActivityLog from "@/pages/ActivityLog";
 import Homelab from "@/pages/Homelab";
+import Settings from "@/pages/Settings";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
@@ -28,7 +29,7 @@ export default function App() {
         <Route path="/work" element={<ComingSoon title="Work" />} />
         <Route path="/journey" element={<ComingSoon title="Journey" />} />
         <Route path="/statistics" element={<ComingSoon title="Statistics" />} />
-        <Route path="/settings" element={<ComingSoon title="Settings" />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   );

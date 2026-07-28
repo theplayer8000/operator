@@ -17,13 +17,13 @@ owner).
 | [OPS-003](#ops-003) | No schema versioning or migration path | **High** | **Fixed** (v5) |
 | [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | **Fixed** (v5) |
 | [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
-| [OPS-017](#ops-017) | `data/operator.json` has no backup | Medium | Needs decision |
+| [OPS-017](#ops-017) | `data/operator.json` has no automatic backup | Medium | Partly addressed (v9) |
 | [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | Medium | Accepted |
 | [OPS-019](#ops-019) | Homelab status reports port-open, not health | Low | Accepted |
 | [OPS-020](#ops-020) | Deletes have a confirm step but no undo | Low | Open |
 | [OPS-022](#ops-022) | Vite dev server served every file under the project root | **High** | **Fixed** (v7) |
 | [OPS-021](#ops-021) | Separate project with real client data sits inside this repo | Medium | Mitigated, relocation optional |
-| [OPS-005](#ops-005) | Dashboard mission widgets are decorative | Medium | Needs decision |
+| [OPS-005](#ops-005) | Dashboard mission widgets are decorative | Medium | **Fixed** (v9) |
 | [OPS-006](#ops-006) | Storage writes fail silently | Medium | Partly addressed |
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
 | [OPS-008](#ops-008) | Hardcoded hex values in components | Low | Open |
@@ -156,20 +156,25 @@ hoc inside one feature.
 
 ## OPS-005
 
-**Dashboard mission widgets are decorative** · Medium · Needs decision
+**Dashboard mission widgets are decorative** · Medium · **Fixed** (v9)
 
-`CurrentMissions` and `ProjectProgress` render `dashboard.missions` seed data
-(EPYC 62%, Homelab 40%, Darams 78%, AI 25%) that never changes. `setMissions` is
-returned from `useDashboardData.ts:80` and never consumed, so there is no editor
+`CurrentMissions` and `ProjectProgress` rendered `dashboard.missions` seed data
+(EPYC 62%, Homelab 40%, Darams 78%, AI 25%) that never changed. `setMissions`
+was returned from `useDashboardData` and never consumed, so there was no editor
 either.
 
-Also: `components/dashboard/CurrentMissions.tsx:22` reads *"start one from
-Projects"* — pre-rename copy that should say "Mission Board". That part is a
-plain bug and can be fixed independently of the decision.
+The open product question — *should these read the real board?* — was answered
+by the owner in v9: yes. Both widgets now read `missions.records` through
+`useMissionBoard()`, read-only, and link to `/missions/:id`. The Productivity
+Score card had the same defect (a "7-day trend" over seven hardcoded numbers)
+and was replaced by `MissionStatusChart`, derived from the same real data.
 
-The separation itself is deliberate
-([ADR 0003](decisions/0003-separate-mission-types.md)) — the question is whether
-these two widgets should be the exception.
+`dashboard.missions`, `dashboard.productivityHistory`, the `Mission` type and
+`seedMissions` are all retired. See
+[ADR 0008](decisions/0008-dashboard-reads-the-real-board.md), which supersedes
+ADR 0003.
+
+The stale *"start one from Projects"* copy went with the rewrite.
 
 ## OPS-006
 
@@ -429,15 +434,26 @@ Two things remain true regardless of where the directory sits:
 
 ## OPS-017
 
-**`data/operator.json` has no backup** · Medium · Needs decision
+**`data/operator.json` has no automatic backup** · Medium · Partly addressed (v9)
 
-`data/` is gitignored — correctly, since it will hold personal data — which
-means **git is not a backup**. The store is currently a single file on one
-machine's disk.
+`data/` is gitignored — correctly, since it holds personal data — which means
+**git is not a backup**. The store is a single file on one machine's disk.
 
-Moving it to a NAS (`OPERATOR_DATA=/mnt/...`) improves durability but is still
-one copy. The owner has indicated cloud storage as an interim NAS before the
-EPYC server.
+**v9 gave it a manual route out.** Settings > Export downloads the whole store
+as JSON, read from the server rather than the local mirror (so it's complete,
+not just what this browser has loaded), and Import merges one back.
 
-**Decision needed** once real data goes in: a snapshot or copy job. Until then
-the exposure is limited to seed and test data.
+That is a real backup path and it closes the "no way to get a copy at all"
+half of this issue. **It does not close the automation half** — an export only
+exists if the owner remembers to take one, and nothing is scheduled. The store
+now holds real data (9 missions, live routine), so this matters more than when
+it was logged.
+
+Still needed: a scheduled copy off this machine. `rsync` over SSH to the NAS on
+a timer is the obvious shape, and is independent of the app. Moving
+`OPERATOR_DATA` to a NAS mount improves durability but is still one copy — a
+copy job is the thing, not a relocation.
+
+There is also **no automatic pre-migration snapshot**: v8's schema migration ran
+against live data with nothing taken first. Taking an export before a migration
+is currently a habit, not a mechanism.

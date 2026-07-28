@@ -8,7 +8,7 @@ import CurrentStreaks from "@/components/dashboard/CurrentStreaks";
 import UpcomingEvents from "@/components/dashboard/UpcomingEvents";
 import QuickNotes from "@/components/dashboard/QuickNotes";
 import RecentActivity from "@/components/dashboard/RecentActivity";
-import ProductivityScore from "@/components/dashboard/ProductivityScore";
+import MissionStatusChart from "@/components/dashboard/MissionStatusChart";
 import HomelabStatus from "@/components/dashboard/HomelabStatus";
 import CurrentTime from "@/components/dashboard/CurrentTime";
 
@@ -21,7 +21,6 @@ export default function Dashboard() {
     addTask,
     editTask,
     deleteTask,
-    missions,
     weeklyGoals,
     streaks,
     events,
@@ -30,8 +29,6 @@ export default function Dashboard() {
     editNote,
     deleteNote,
     activity,
-    productivityHistory,
-    productivityScore,
   } = useDashboardData();
 
   return (
@@ -48,12 +45,12 @@ export default function Dashboard() {
         onDelete={deleteTask}
       />
 
-      <CurrentMissions missions={missions} />
+      <CurrentMissions />
       <WeeklyGoals goals={weeklyGoals} />
 
-      <ProjectProgress missions={missions} />
+      <ProjectProgress />
       <CurrentStreaks streaks={streaks} />
-      <ProductivityScore score={productivityScore} history={productivityHistory} />
+      <MissionStatusChart />
 
       <UpcomingEvents events={events} />
       <QuickNotes notes={notes} onAdd={addNote} onEdit={editNote} onDelete={deleteNote} />

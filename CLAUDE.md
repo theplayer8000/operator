@@ -76,12 +76,16 @@ to continue for Learning, Gym, Forex, Work, Journey, Statistics, Settings:
   (`MissionBoard.tsx` list + `MissionDetail.tsx` detail) because a mission
   board without a detail view isn't the feature — but it's still one hook,
   one namespace, one folder.
-- **Features stay independent.** Don't cross-wire one feature's data into
-  another's without being asked. Example: the Dashboard has its own
-  lightweight `Mission` type (`dashboard.missions`) used only by its
-  "Current Missions" / "Project Progress" widgets. Mission Board has a
-  completely separate, richer `MissionRecord` type (`missions.records`).
-  These are deliberately not synced. Don't "fix" that by merging them.
+- **Features stay independent for writes.** Don't cross-wire one feature's
+  mutators into another's without being asked. **Reads are different** — a
+  widget or page may read another feature's hook as long as it mutates
+  nothing. The Activity Log, `HomelabStatus`, `CurrentTime` and the Dashboard's
+  three mission widgets all do this. Writing still goes through the owning
+  feature's hook, always.
+  (The Dashboard used to keep its *own* parallel `Mission` type over
+  `dashboard.missions`. That was retired in v9 — see
+  [ADR 0008](docs/decisions/0008-dashboard-reads-the-real-board.md). Don't
+  reintroduce a second stored copy of anything; derive it instead.)
 - **Types are additive.** `lib/types.ts` is one file, but each feature's
   types are appended, not interleaved with or mutated from another
   feature's types. Follow the existing section-comment style
@@ -116,7 +120,8 @@ src/
   lib/
     types.ts              — all domain types, one section per feature
     seed.ts                — all first-run seed data, one export per feature
-    storage.ts              — localStorage read/write/export/import/reset helpers
+    storage.ts              — localStorage mirror read/write/remove helpers
+    storageKeys.ts           — the namespace registry + each slice's blank value
     remoteStore.ts             — shared client cache + sync with the server
     id.ts                       — generateId(), safe in non-secure contexts
     time.ts                      — wall-clock helpers (parse/format HH:MM). Local time only
@@ -228,7 +233,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Work | `/work` | Not built — `ComingSoon` placeholder |
 | Journey | `/journey` | Not built — `ComingSoon` placeholder. Nav entry reserved on request. |
 | Statistics | `/statistics` | Not built — `ComingSoon` placeholder |
-| Settings | `/settings` | Not built — `ComingSoon` placeholder |
+| Settings | `/settings` | Built — storage status, export/import backup, per-feature clear. Acts on every namespace; owns none |
 | Knowledge Vault | none yet | Not started, no nav entry. Future personal wiki — notes/commands/resources/confidence per topic, linked from missions' "Related Knowledge" tab (currently a free-text field + reserved-section note in `MissionDetail.tsx`). |
 | Decision Log | none yet | Not started, no nav entry. Future decision/date/reasoning/outcome log, linked from missions' "Related Decisions" tab (currently a `ReservedSection` placeholder). |
 

@@ -14,17 +14,22 @@ Ten widgets in a 3-column grid. The daily glance.
 
 **Editable:** focus, tasks (add/toggle/edit/delete), quick notes
 (add/edit/delete).
-**Live:** a "Now" card (clock, date, and which routine block is on with time
-remaining) and the Homelab tile strip. Both read other features' data and
-mutate none of it.
-**Display-only:** weekly goals, streaks, upcoming events, productivity score,
-current missions, project progress. The storage and hook plumbing exists for all
-of them; only the editors are missing.
+**Live, read-only:** the "Now" card (clock, date, current routine block with
+time remaining), the Homelab tile strip, and three mission widgets — Current
+Missions, Mission Progress and Mission Status — all reading the real
+`missions.records` and linking through to `/missions/:id`.
+**Still display-only seed:** weekly goals, streaks, upcoming events. Plumbing
+exists; editors don't.
 
-Known gap: the two mission widgets render `dashboard.missions` seed data that
-never moves, and `setMissions` is returned but unused (**OPS-005**). Whether
-these should read live Mission Board data is an open product question — see
-[ADR 0003](decisions/0003-separate-mission-types.md) before deciding.
+**OPS-005 closed in v9.** The mission widgets used to render `dashboard.missions`
+seed data that never moved, and the Productivity Score card charted seven
+hardcoded numbers as a "7-day trend". Both now derive from real data — see
+[ADR 0008](decisions/0008-dashboard-reads-the-real-board.md), which supersedes
+ADR 0003.
+
+Known gaps: **Upcoming Events doesn't open into anything** — it wants a real
+events/calendar feature behind it. Weekly goals and streaks are still seeded
+with no editor.
 
 ### Daily Routine — `/routine`
 
@@ -89,6 +94,29 @@ code.
 
 Known gaps: port-open is not health (**OPS-019**); no grouping or ordering of
 tiles beyond insertion order; no favicon or icon per service.
+
+### Settings — `/settings`
+
+Storage status (online/offline, data file, schema version), backup, and clear.
+
+**Backup.** Export downloads the whole store as JSON, read from the **server**
+rather than the local mirror — a mirror-based export would silently omit
+anything this browser had never loaded, which is the worst kind of backup.
+Import merges: a slice missing from the file is left alone rather than wiped, so
+export → edit the JSON → import back is a supported way to load your own data.
+
+**Clear empties, it does not restore the seed.** See the data-model note — this
+is the counter-intuitive part, and the reason clearing writes `[]` instead of
+deleting the key.
+
+Architecturally Settings is the second sanctioned exception after the Activity
+Log: it acts on **every** namespace and owns none. It talks to the storage API
+directly instead of going through a feature hook, because it administers the
+store rather than modelling anything in it.
+
+Known gaps: backup is manual — nothing is scheduled (**OPS-017**). No accent
+picker, deliberately: the accent is ~95% inert (**OPS-007**) and shipping a
+control that does nothing is worse than not shipping one.
 
 ### Activity Log — `/log`
 

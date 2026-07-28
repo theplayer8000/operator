@@ -1,6 +1,6 @@
 # 0003 — Two separate mission types
 
-**Status:** Accepted
+**Status:** Superseded by [0008](0008-dashboard-reads-the-real-board.md)
 **Date:** 2026-07-27
 
 ## Context

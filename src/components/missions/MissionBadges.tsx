@@ -7,6 +7,19 @@ const STATUS_META: Record<MissionStatus, { label: string; dot: string }> = {
   complete: { label: "Complete", dot: "bg-vital-up" },
 };
 
+/**
+ * The same four status colours as hex, for Recharts — which paints to SVG and
+ * cannot take a Tailwind class. Keep these in step with `dot` above; they are
+ * the token values from tailwind.config.ts (ink-700, rank, vital-down,
+ * vital-up), not new colours.
+ */
+const STATUS_HEX: Record<MissionStatus, string> = {
+  not_started: "#5C6577",
+  in_progress: "#8D7FE0",
+  blocked: "#D9685F",
+  complete: "#4FB477",
+};
+
 const DIFFICULTY_META: Record<MissionDifficulty, { label: string; pips: number }> = {
   easy: { label: "Easy", pips: 1 },
   moderate: { label: "Moderate", pips: 2 },
@@ -43,4 +56,4 @@ export function DifficultyPips({ difficulty }: { difficulty: MissionDifficulty }
 
 export const STATUS_OPTIONS: MissionStatus[] = ["not_started", "in_progress", "blocked", "complete"];
 export const DIFFICULTY_OPTIONS: MissionDifficulty[] = ["easy", "moderate", "hard", "epic"];
-export { STATUS_META, DIFFICULTY_META };
+export { STATUS_META, STATUS_HEX, DIFFICULTY_META };

@@ -116,7 +116,7 @@ const SECTIONS: Section[] = [
     to: "/settings",
     label: "Settings",
     icon: Settings,
-    status: "planned",
+    status: "built",
     blurb: "Export, import, reset and storage location. The route to a backup.",
   },
   {

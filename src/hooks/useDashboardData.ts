@@ -4,9 +4,7 @@ import type { ActivityItem, QuickNote, Task } from "@/lib/types";
 import {
   seedActivity,
   seedEvents,
-  seedMissions,
   seedNotes,
-  seedProductivityHistory,
   seedStreaks,
   seedTasks,
   seedWeeklyGoals,
@@ -18,9 +16,13 @@ import {
  * can own their slice without touching the others.
  */
 export function useDashboardData() {
+  // `dashboard.missions` and `dashboard.productivityHistory` used to be read
+  // here. Both were seeded lists nothing could change (OPS-005), rendered by
+  // widgets that looked live. The mission widgets now read the real board and
+  // the productivity chart is gone, so neither slice has a reader. They stay in
+  // BLANK_VALUES so an existing store can still be cleared of them.
   const [focus, setFocus] = useRemoteStorage<string>("dashboard.focus", "Ship the Dashboard v1");
   const [tasks, setTasks] = useRemoteStorage<Task[]>("dashboard.tasks", seedTasks);
-  const [missions, setMissions] = useRemoteStorage("dashboard.missions", seedMissions);
   const [weeklyGoals] = useRemoteStorage("dashboard.weeklyGoals", seedWeeklyGoals);
   const [streaks] = useRemoteStorage("dashboard.streaks", seedStreaks);
   const [events] = useRemoteStorage("dashboard.events", seedEvents);
@@ -29,11 +31,6 @@ export function useDashboardData() {
     "dashboard.activity",
     seedActivity
   );
-  const [productivityHistory] = useRemoteStorage(
-    "dashboard.productivityHistory",
-    seedProductivityHistory
-  );
-
   function logActivity(label: string, kind: ActivityItem["kind"]) {
     setActivity((prev) =>
       [{ id: generateId(), label, timestamp: new Date().toISOString(), kind }, ...prev].slice(
@@ -85,10 +82,6 @@ export function useDashboardData() {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   }
 
-  const productivityScore = Math.round(
-    productivityHistory.reduce((sum, d) => sum + d.score, 0) / productivityHistory.length
-  );
-
   return {
     focus,
     setFocus,
@@ -97,8 +90,6 @@ export function useDashboardData() {
     addTask,
     editTask,
     deleteTask,
-    missions,
-    setMissions,
     weeklyGoals,
     streaks,
     events,
@@ -107,7 +98,5 @@ export function useDashboardData() {
     editNote,
     deleteNote,
     activity,
-    productivityHistory,
-    productivityScore,
   };
 }

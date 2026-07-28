@@ -9,7 +9,7 @@
 // localStorage is kept as a read-through mirror so a cold start with the
 // server down still shows the last known data instead of an empty app.
 
-import { readStorage, writeStorage } from "./storage";
+import { clearMirror, readStorage, removeStorage, writeStorage } from "./storage";
 
 export type StoreStatus = "loading" | "online" | "offline";
 
@@ -187,6 +187,39 @@ export function set<T>(key: string, value: T): void {
   writeStorage(key, value); // keep the offline mirror current
   notify(key);
   void push(key, value);
+}
+
+/**
+ * Forget a key locally after the server has dropped it, so the owning feature
+ * falls back to its seed. Clears the cache entry, the server-key record, the
+ * mirror, and any queued write — a pending write would otherwise resurrect the
+ * slice the moment the server came back.
+ */
+export function dropKey(key: string): void {
+  cache.delete(key);
+  serverKeys.delete(key);
+  pending.delete(key);
+  removeStorage(key);
+  notify(key);
+}
+
+/** Same, for every key. Used by Settings > Reset everything. */
+export function dropAll(): void {
+  const touched = [...cache.keys()];
+  cache.clear();
+  serverKeys.clear();
+  pending.clear();
+  clearMirror();
+  touched.forEach(notify);
+}
+
+/**
+ * Re-read the whole store from the server and notify every subscriber. Used
+ * after an import, where the server's contents changed underneath us.
+ */
+export async function reload(): Promise<void> {
+  loadPromise = null;
+  await load();
 }
 
 export function subscribe(key: string, fn: Listener): () => void {

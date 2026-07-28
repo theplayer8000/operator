@@ -51,13 +51,13 @@ store.
 |---|---|---|---|
 | `dashboard.focus` | `string` | `useDashboardData` | Yes |
 | `dashboard.tasks` | `Task[]` | `useDashboardData` | Add, toggle, edit, delete |
-| `dashboard.missions` | `Mission[]` | `useDashboardData` | **No** — `setMissions` is returned but unused (**OPS-005**) |
+| ~~`dashboard.missions`~~ | — | — | **Retired v9** — no reader. Dashboard reads `missions.records` ([ADR 0008](decisions/0008-dashboard-reads-the-real-board.md)). Kept in `BLANK_VALUES` so existing stores can be cleared of it |
 | `dashboard.weeklyGoals` | `WeeklyGoal[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.streaks` | `Streak[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.events` | `UpcomingEvent[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.notes` | `QuickNote[]` | `useDashboardData` | Add, edit, delete |
 | `dashboard.activity` | `ActivityItem[]` | `useDashboardData` | Appended by mutators, capped at 20 |
-| `dashboard.productivityHistory` | `{day, score}[]` | `useDashboardData` | **No** — read-only display |
+| ~~`dashboard.productivityHistory`~~ | — | — | **Retired v9** — the card charting it was seven fixed numbers presented as a trend. Replaced by `MissionStatusChart` |
 | `routine.sections` | `RoutineSection[]` | `useRoutineData` | Yes |
 | `routine.lastReset` | `string` (`YYYY-MM-DD`) | `useRoutineData` | Internal marker |
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
@@ -66,6 +66,23 @@ store.
 
 Keys are created lazily — a slice only appears in the store once something
 writes it. Until then the feature reads its seed.
+
+### Clearing is a write, not a delete
+
+**This is the trap in the whole registry.** Because an absent key falls back to
+the feature's seed, `DELETE /api/state/<key>` does not empty a slice — it
+restores the demo content. Settings therefore **writes the empty value**
+(`PUT` with `[]`, `""`, …) rather than deleting, and `lib/storageKeys.ts` holds
+one blank value per key.
+
+Two slices can't be blanked to nothing and stay usable, and both are encoded
+there: `routine.sections` keeps its seven sections and start times (sections are
+fixed by the type — there is no UI to recreate one, so `[]` is a Daily Routine
+you can never refill), and `theme.accent` returns to `"gold"` (a four-value
+union has no empty member).
+
+A key with no entry in `BLANK_VALUES` is deleted instead — falling back to a
+seed beats guessing an empty shape. Add new slices to that map.
 
 Five of the nine Dashboard slices are display-only today. That is a product
 gap, not an architectural one — the storage and hook plumbing is already there

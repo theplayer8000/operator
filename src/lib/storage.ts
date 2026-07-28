@@ -26,30 +26,34 @@ export function writeStorage<T>(key: string, value: T): void {
   }
 }
 
-/** Exports every "os.*" key as a single JSON blob — used by Settings later. */
-export function exportAllData(): string {
-  const data: Record<string, unknown> = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(`${NAMESPACE}.`)) {
-      data[key] = JSON.parse(localStorage.getItem(key) ?? "null");
-    }
+/**
+ * Drop one key from the offline mirror.
+ *
+ * This is not housekeeping — it is required for reset to work. `getSnapshot`
+ * falls back to the mirror whenever the server doesn't have a key, so deleting
+ * a slice on the server and leaving the mirror alone makes the "deleted" data
+ * reappear on the next read. Server delete and mirror delete are one operation.
+ */
+export function removeStorage(key: string): void {
+  try {
+    localStorage.removeItem(storageKey(key));
+  } catch {
+    /* nothing to do — the mirror is best-effort */
   }
-  return JSON.stringify(data, null, 2);
 }
 
-/** Imports a JSON blob produced by exportAllData(). */
-export function importAllData(json: string): void {
-  const data = JSON.parse(json) as Record<string, unknown>;
-  Object.entries(data).forEach(([key, value]) => {
-    if (key.startsWith(`${NAMESPACE}.`)) {
-      localStorage.setItem(key, JSON.stringify(value));
-    }
-  });
+/** Drop the whole mirror. Same reasoning as removeStorage, for a full reset. */
+export function clearMirror(): void {
+  try {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith(`${NAMESPACE}.`))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* best-effort */
+  }
 }
 
-export function resetAllData(): void {
-  Object.keys(localStorage)
-    .filter((k) => k.startsWith(`${NAMESPACE}.`))
-    .forEach((k) => localStorage.removeItem(k));
-}
+// The old exportAllData / importAllData / resetAllData lived here and read the
+// mirror. Since v5 the mirror is a read-through cache, not the store — an
+// export taken from it would silently miss anything this browser had never
+// loaded. Settings exports from the server instead (GET /api/state).
