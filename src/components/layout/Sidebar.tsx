@@ -11,6 +11,8 @@ import {
   Map,
   BarChart3,
   ScrollText,
+  Compass,
+  Terminal,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -19,6 +21,7 @@ import {
 import { useTheme } from "@/context/ThemeContext";
 
 const NAV_ITEMS = [
+  { to: "/contents", label: "Contents", icon: Compass },
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
   { to: "/missions", label: "Mission Board", icon: Swords },
@@ -134,6 +137,10 @@ export default function Sidebar() {
         </nav>
 
         <div className="p-2 border-t border-base-600 space-y-0.5 shrink-0">
+          <NavLink to="/dev" className={navLinkClass}>
+            <Terminal size={17} className="shrink-0" />
+            <span className={sidebarCollapsed ? "lg:hidden" : ""}>Dev</span>
+          </NavLink>
           <NavLink to="/settings" className={navLinkClass}>
             <Settings size={17} className="shrink-0" />
             <span className={sidebarCollapsed ? "lg:hidden" : ""}>Settings</span>

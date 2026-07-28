@@ -5,6 +5,8 @@ import DailyRoutine from "@/pages/DailyRoutine";
 import MissionBoard from "@/pages/MissionBoard";
 import MissionDetail from "@/pages/MissionDetail";
 import ActivityLog from "@/pages/ActivityLog";
+import Contents from "@/pages/Contents";
+import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
 
 export default function App() {
@@ -16,6 +18,8 @@ export default function App() {
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
         <Route path="/log" element={<ActivityLog />} />
+        <Route path="/contents" element={<Contents />} />
+        <Route path="/dev" element={<Dev />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
         <Route path="/gym" element={<ComingSoon title="Gym" />} />
         <Route path="/forex" element={<ComingSoon title="Forex Journal" />} />

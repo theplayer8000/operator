@@ -61,6 +61,29 @@ Known gaps: it can only show what the underlying logs retain — Dashboard
 activity caps at 20 entries and each mission at 30, so the log has a horizon
 rather than full history. Routine and theme changes are not logged at all.
 
+### Contents — `/contents`
+
+A hand-written index of every section: what it is, what it's for, and whether
+it's built, planned or a concept. Deliberately **not** derived from the route
+table — routes know paths, not purpose, and purpose is the point of the page.
+**Keep it in step with this document** when a feature's status changes.
+
+### Dev — `/dev`
+
+Repo status (branch, commit, subject), links out to GitHub, and a read-only
+browser over the project directory with shortcuts to the key docs.
+
+Served by `server/dev.mjs`, which is the only part of Operator that touches the
+filesystem beyond the data file. It is deliberately narrow: **reads only** (no
+write route exists), every path is resolved and re-checked against the repo
+root so traversal cannot escape, and `node_modules`, `.git`, `dist` and `data`
+are never listed or served — `data` because it holds personal content and has
+its own API. Text only, 400 KB cap.
+
+There is no authentication; the tailnet is the boundary
+([ADR 0006](decisions/0006-json-file-storage-server.md)). **This must not be
+exposed beyond it.**
+
 ## Not built
 
 All seven have a route, a `ComingSoon` placeholder, a sidebar entry, and a

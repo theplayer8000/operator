@@ -16,6 +16,7 @@ import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OPERATOR_PORT ?? 5174);
@@ -179,6 +180,25 @@ const server = createServer(async (req, res) => {
       cache.state[key] = body?.value ?? null;
       await persist();
       return json(res, 200, { ok: true, key });
+    }
+
+    // --- Dev browser (read-only, sandboxed to the repo — see dev.mjs) ---
+
+    if (pathname === "/api/dev/meta") {
+      return json(res, 200, await repoMeta(ROOT));
+    }
+
+    if (pathname === "/api/dev/tree") {
+      const tree = await listTree(ROOT, url.searchParams.get("path") ?? ".");
+      if (!tree) return json(res, 400, { error: "path not allowed" });
+      return json(res, 200, tree);
+    }
+
+    if (pathname === "/api/dev/file") {
+      const rel = url.searchParams.get("path");
+      if (!rel) return json(res, 400, { error: "missing path" });
+      const file = await readTextFile(ROOT, rel);
+      return json(res, file.error ? 400 : 200, file);
     }
 
     // Drop a single slice back to its seed. Settings > Reset will use this.

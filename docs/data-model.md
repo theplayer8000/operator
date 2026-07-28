@@ -34,6 +34,12 @@ source of truth. Anything reading it directly is either `remoteStore` or a bug.
 | `PUT /api/state` | Bulk merge; body `{ key: value }` — used by import and the one-time localStorage migration |
 | `DELETE /api/state/<key>` | Drop a slice back to its seed |
 | `GET /api/health` | Liveness + which file is in use |
+| `GET /api/dev/meta` | Repo branch, commit, remote — read-only |
+| `GET /api/dev/tree?path=` | Directory listing, sandboxed to the repo |
+| `GET /api/dev/file?path=` | Text file contents, 400 KB cap |
+
+The `/api/dev/*` routes are read-only and never touch the store — see
+`server/dev.mjs` and **OPS-018**.
 
 Writes are atomic: temp file then `rename`, so a crash cannot truncate the
 store.

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 
 const DESTINATIONS = [
+  { to: "/contents", label: "Contents" },
   { to: "/", label: "Dashboard" },
   { to: "/routine", label: "Daily Routine" },
   { to: "/missions", label: "Mission Board" },
@@ -13,6 +14,7 @@ const DESTINATIONS = [
   { to: "/journey", label: "Journey" },
   { to: "/statistics", label: "Statistics" },
   { to: "/log", label: "Activity Log" },
+  { to: "/dev", label: "Dev" },
   { to: "/settings", label: "Settings" },
 ];
 

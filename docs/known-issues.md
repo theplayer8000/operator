@@ -18,6 +18,7 @@ owner).
 | [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | **Fixed** (v5) |
 | [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
 | [OPS-017](#ops-017) | `data/operator.json` has no backup | Medium | Needs decision |
+| [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | Medium | Accepted |
 | [OPS-005](#ops-005) | Dashboard mission widgets are decorative | Medium | Needs decision |
 | [OPS-006](#ops-006) | Storage writes fail silently | Medium | Partly addressed |
 | [OPS-007](#ops-007) | Accent theme is ~95% inert | Low | Needs decision |
@@ -297,6 +298,22 @@ commit, so `MissionBoard` **unmounted before its write-effect ran**.
 
 This was OPS-004 surfacing as visible data loss, and it is the reason the
 mutator-then-navigate pattern is safe now but was not before.
+
+## OPS-018
+
+**Dev browser exposes the repo over HTTP with no auth** · Medium · Accepted
+
+`server/dev.mjs` serves the project directory read-only at `/api/dev/*`. It is
+sandboxed — traversal outside the repo root is rejected, and `node_modules`,
+`.git`, `dist` and `data` are excluded — but there is **no authentication**, in
+line with the rest of the API.
+
+Accepted because the tailnet is the security boundary. It becomes a real
+problem the moment Operator is reachable from anywhere else, which is a good
+reason it should not be.
+
+Verified at implementation: `..`, `../../../Windows`, `data`, `node_modules`
+and an absolute-ish sibling path were all rejected.
 
 ## OPS-017
 

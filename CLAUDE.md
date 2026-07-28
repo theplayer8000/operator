@@ -197,6 +197,8 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Daily Routine | `/routine` | Built |
 | Mission Board | `/missions`, `/missions/:id` | Built |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
+| Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Gym | `/gym` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |
