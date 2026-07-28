@@ -12,6 +12,7 @@ const DESTINATIONS = [
   { to: "/work", label: "Work" },
   { to: "/journey", label: "Journey" },
   { to: "/statistics", label: "Statistics" },
+  { to: "/log", label: "Activity Log" },
   { to: "/settings", label: "Settings" },
 ];
 

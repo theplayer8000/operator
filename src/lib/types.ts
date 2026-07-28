@@ -99,6 +99,25 @@ export interface DashboardData {
   productivityHistory: { day: string; score: number }[];
 }
 
+// --- Activity Log ---------------------------------------------------------
+// The one read-only aggregator in the app. It owns no storage: entries are
+// derived on the fly from the Dashboard's activity slice and every mission's
+// embedded activity[]. Nothing here is persisted, and nothing here mutates.
+
+export type LogSource = "dashboard" | "mission";
+
+export interface LogEntry {
+  id: ID;
+  label: string;
+  timestamp: string;
+  source: LogSource;
+  /** Present for dashboard entries — the original ActivityItem kind. */
+  kind?: ActivityItem["kind"];
+  /** Present for mission entries, so the row can link back to the record. */
+  missionId?: ID;
+  missionName?: string;
+}
+
 // --- Mission Board --------------------------------------------------------
 // The heart of the app. Deliberately its own namespace ("missions.records"),
 // separate from the Dashboard's lightweight `Mission` summary type above —

@@ -103,7 +103,16 @@ Two things still hold:
   Not for correctness any more, but because it keeps components presentational
   and the data flow readable.
 
-### 2. Features do not read each other's data
+### 2. Features do not read each other's data — with one sanctioned exception
+
+**Exception: read-only aggregators.** `hooks/useActivityLog.ts` reads both
+`useDashboardData` and `useMissionBoard` to build the Activity Log. This is
+allowed because it *only reads* — it owns no namespace, persists nothing, and
+mutates nothing. Statistics should be built the same way.
+
+Anything that wants to **write** across features is still forbidden. Route the
+write through the owning feature's mutator.
+
 
 `CLAUDE.md:46-51`. The Dashboard's `Mission` and the Mission Board's
 `MissionRecord` are separate types over separate keys, deliberately unsynced —

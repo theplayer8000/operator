@@ -10,6 +10,7 @@ import {
   Briefcase,
   Map,
   BarChart3,
+  ScrollText,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { to: "/work", label: "Work", icon: Briefcase },
   { to: "/journey", label: "Journey", icon: Map },
   { to: "/statistics", label: "Statistics", icon: BarChart3 },
+  { to: "/log", label: "Activity Log", icon: ScrollText },
 ];
 
 /**

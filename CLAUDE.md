@@ -196,6 +196,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Dashboard | `/` | Built |
 | Daily Routine | `/routine` | Built |
 | Mission Board | `/missions`, `/missions/:id` | Built |
+| Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Gym | `/gym` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |

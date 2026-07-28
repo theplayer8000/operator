@@ -45,6 +45,22 @@ activity log.
 Known gaps: no delete and no archive UI despite `archived` existing on the type
 (**OPS-012**); nothing prevents a dependency cycle (**OPS-013**).
 
+### Activity Log — `/log`
+
+A unified, read-only feed of everything that has happened: the Dashboard's
+activity slice plus every mission's embedded `activity[]`, merged and grouped
+by local calendar day. Filterable by source; mission rows link to the record.
+
+**Architecturally it is the exception that proves the rule** — the app's only
+cross-feature reader. It owns no namespace, persists nothing, and mutates
+nothing. That became safe in v5 when `remoteStore` gave every hook one shared
+cache; before that, calling two feature hooks from one page would have diverged
+their state. Statistics should follow this same shape.
+
+Known gaps: it can only show what the underlying logs retain — Dashboard
+activity caps at 20 entries and each mission at 30, so the log has a horizon
+rather than full history. Routine and theme changes are not logged at all.
+
 ## Not built
 
 All seven have a route, a `ComingSoon` placeholder, a sidebar entry, and a

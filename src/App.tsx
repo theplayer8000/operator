@@ -4,6 +4,7 @@ import Dashboard from "@/pages/Dashboard";
 import DailyRoutine from "@/pages/DailyRoutine";
 import MissionBoard from "@/pages/MissionBoard";
 import MissionDetail from "@/pages/MissionDetail";
+import ActivityLog from "@/pages/ActivityLog";
 import ComingSoon from "@/pages/ComingSoon";
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/routine" element={<DailyRoutine />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
+        <Route path="/log" element={<ActivityLog />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
         <Route path="/gym" element={<ComingSoon title="Gym" />} />
         <Route path="/forex" element={<ComingSoon title="Forex Journal" />} />
