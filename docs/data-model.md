@@ -8,7 +8,7 @@ it has, and the rules for changing it.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "updatedAt": "2026-07-28T03:27:36.006Z",
   "state": {
     "missions.records": [ ... ],
@@ -105,6 +105,23 @@ Adding a section means editing the union, `seedRoutineSections`, and
 `RoutineTask` carries `estimatedMinutes` and `repeatDaily`, which drive the
 minute totals and the daily reset respectively.
 
+`RoutineSection.startTime` is a **local wall-clock string** (`"HH:MM"`, 24h),
+added in schema v2. It is not a timestamp: a routine happens at 06:30 every
+day, not at one instant. A block's **end is derived**, never stored — start
+plus the section's task minutes — so it stays honest when tasks are added or
+re-estimated.
+
+`ScheduleBlock` (start, end, duration, done/total, `overlapsPrevious`) is
+computed in `useRoutineData` per render and never persisted. It is sorted by
+start time rather than array order, because the day is what the clock says, not
+what order the sections happen to sit in.
+
+**The offline mirror is never migrated.** Migrations run on the server, so a
+cold start with the server down can hand the client pre-v2 sections with no
+`startTime`. Both `useRoutineData` and `RoutineSectionCard` defend against that
+— a missing start reads as 09:00 rather than crashing. Any future field added
+to a persisted shape needs the same treatment.
+
 ### Mission Board
 
 `MissionRecord` is the richest type in the app — see `CLAUDE.md:162-166` for the
@@ -190,20 +207,42 @@ string otherwise. This was the app's one crash bug (**OPS-001**).
 ## Changing a persisted shape — read this first
 
 **Bump `SCHEMA_VERSION` in `server/index.mjs` and add a migration.** The
-`MIGRATIONS` array runs oldest-first on load; entry *N* takes the store at
-version *N* and returns it at *N+1*:
+`MIGRATIONS` array runs oldest-first on load. **The array is indexed by the
+version being migrated *from*** — `migrate()` reads `MIGRATIONS[current]` where
+`current` starts at the store's own `schemaVersion`. So the v1 → v2 step is at
+index **1**, not 0, and index 0 is the v0 → v1 slot:
 
 ```js
 const MIGRATIONS = [
-  (store) => {                     // v1 -> v2
+  null,                            // 0 -> 1: nothing; v1 was the first shape
+  (store) => {                     // 1 -> 2
     for (const m of store.state["missions.records"] ?? []) m.tags ??= [];
     return store;
   },
 ];
 ```
 
+A `null` (or any non-function) entry is skipped and the version still bumps,
+which is what makes the index-0 placeholder safe. Getting this off by one puts
+your migration on the wrong version and it silently never runs.
+
+The real v1 → v2 migration in `server/index.mjs` — backfilling
+`RoutineSection.startTime` — is the worked example.
+
 Migrations run **once, server-side, against the file** — unlike the old
 localStorage world where every browser held its own unmigrated copy.
+
+Three consequences worth knowing:
+
+- **The file isn't rewritten until something writes.** `load()` migrates the
+  in-memory cache; `persist()` only runs on a write. So the version on disk
+  can lag the version being served. Migrations must therefore be
+  **idempotent** — they will re-run on every cold start until a write lands.
+- **The offline localStorage mirror is never migrated at all.** Read new
+  fields defensively on the client too, or a cold start with the server down
+  hands you the old shape.
+- **A running server does not pick up a new migration.** It has to be
+  restarted, or it will keep serving the old shape from its cache.
 
 Still good practice, because a migration can be forgotten:
 
@@ -212,6 +251,8 @@ Still good practice, because a migration can be forgotten:
 2. **Don't rename or retype a shipped field** without a migration to match.
 3. **Back up `data/operator.json` before running a new migration** the first
    time. There is no automatic pre-migration snapshot (**OPS-017**).
+4. **Test against a copy of the real store**, not just seed data. Seeds already
+   have the new field; only real data exercises the migration.
 
 ## Export / import contract
 

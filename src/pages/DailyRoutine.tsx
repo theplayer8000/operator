@@ -1,15 +1,18 @@
 import { useRoutineData } from "@/hooks/useRoutineData";
 import RoutineSummary from "@/components/routine/RoutineSummary";
+import RoutineTimeline from "@/components/routine/RoutineTimeline";
 import RoutineSectionCard from "@/components/routine/RoutineSectionCard";
 
 export default function DailyRoutine() {
   const {
     sections,
+    schedule,
     toggleTask,
     addTask,
     editTask,
     deleteTask,
     toggleRepeat,
+    setStartTime,
     setNotes,
     overallPercent,
     doneTasks,
@@ -28,6 +31,8 @@ export default function DailyRoutine() {
         totalMinutes={totalMinutes}
       />
 
+      <RoutineTimeline schedule={schedule} />
+
       <div>
         {sections.map((section, i) => (
           <RoutineSectionCard
@@ -39,6 +44,7 @@ export default function DailyRoutine() {
             onEditTask={editTask}
             onDeleteTask={deleteTask}
             onToggleRepeat={toggleRepeat}
+            onStartTimeChange={setStartTime}
             onNotesChange={setNotes}
           />
         ))}

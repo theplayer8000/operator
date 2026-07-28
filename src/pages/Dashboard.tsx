@@ -10,6 +10,7 @@ import QuickNotes from "@/components/dashboard/QuickNotes";
 import RecentActivity from "@/components/dashboard/RecentActivity";
 import ProductivityScore from "@/components/dashboard/ProductivityScore";
 import HomelabStatus from "@/components/dashboard/HomelabStatus";
+import CurrentTime from "@/components/dashboard/CurrentTime";
 
 export default function Dashboard() {
   const {
@@ -37,6 +38,7 @@ export default function Dashboard() {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <HomelabStatus />
 
+      <CurrentTime />
       <TodayFocus focus={focus} onChange={setFocus} />
       <TodayTasks
         tasks={tasks}

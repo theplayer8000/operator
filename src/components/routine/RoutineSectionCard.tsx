@@ -12,6 +12,7 @@ export default function RoutineSectionCard({
   onEditTask,
   onDeleteTask,
   onToggleRepeat,
+  onStartTimeChange,
   onNotesChange,
 }: {
   section: RoutineSection;
@@ -25,6 +26,7 @@ export default function RoutineSectionCard({
   ) => void;
   onDeleteTask: (key: RoutineSectionKey, taskId: string) => void;
   onToggleRepeat: (key: RoutineSectionKey, taskId: string) => void;
+  onStartTimeChange: (key: RoutineSectionKey, startTime: string) => void;
   onNotesChange: (key: RoutineSectionKey, notes: string) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -81,12 +83,26 @@ export default function RoutineSectionCard({
       {/* card */}
       <div className="card-base p-4 sm:p-5 flex-1 min-w-0 mb-4 animate-fade-up">
         <header className="flex items-center justify-between mb-4">
-          <div>
+          <div className="min-w-0">
             <h3 className="font-display text-sm font-medium text-ink-100">{section.label}</h3>
             <p className="text-xs text-ink-700">{caption}</p>
           </div>
-          <div className="flex items-center gap-3 text-xs text-ink-500 font-mono">
-            <span className="flex items-center gap-1">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs text-ink-500 font-mono shrink-0">
+            {/*
+              A native time input: it gets the platform's own picker on a
+              phone, which beats anything hand-rolled, and it validates the
+              format for free. `startTime` may be missing on a pre-v2 section
+              read from the offline mirror, so it is defended here too.
+            */}
+            <input
+              type="time"
+              value={section.startTime ?? ""}
+              onChange={(e) => e.target.value && onStartTimeChange(section.key, e.target.value)}
+              aria-label={`${section.label} start time`}
+              title="Start time"
+              className="bg-base-700/40 border border-base-600 rounded-badge px-2 min-h-[38px] text-base sm:text-xs font-mono text-ink-300 outline-none focus:border-xp/50 transition-colors"
+            />
+            <span className="hidden sm:flex items-center gap-1">
               <Clock size={12} /> {totalMinutes}m
             </span>
             <span>

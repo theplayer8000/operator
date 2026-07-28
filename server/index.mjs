@@ -29,7 +29,7 @@ const DIST_DIR = join(ROOT, "dist");
 const SERVE_DIST =
   process.env.OPERATOR_SERVE_DIST === "1" || process.argv.includes("--serve-dist");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // --- store ----------------------------------------------------------------
 
@@ -43,9 +43,39 @@ function emptyStore() {
  * N and returns it at version N+1. Add one whenever a persisted shape changes
  * — this is the piece localStorage never had (OPS-003).
  */
+/** Default wall-clock starts for the fixed routine sections, used by v1 → v2. */
+const DEFAULT_SECTION_START = {
+  morning: "06:30",
+  work: "09:00",
+  gym: "17:30",
+  learning: "19:30",
+  forex: "20:30",
+  evening: "21:30",
+  sleep: "23:00",
+};
+
 const MIGRATIONS = [
-  // Example, for whoever adds the first real one:
-  // (store) => { ...transform store.state...; return store; },
+  // Index N takes the store from version N to N+1.
+
+  // 0 → 1: nothing. Version 1 was the first shipped shape; stores written
+  // before versioning existed are already in it.
+  null,
+
+  // 1 → 2: RoutineSection gained `startTime`. A store written before this has
+  // sections with no start, which would render as "--:--" on the new timeline.
+  // Backfill from the same defaults the seed uses, keyed by section — the set
+  // of sections is fixed, so this is exact rather than a guess.
+  (store) => {
+    const sections = store.state?.["routine.sections"];
+    if (!Array.isArray(sections)) return store;
+
+    store.state["routine.sections"] = sections.map((section) =>
+      section && typeof section === "object" && typeof section.startTime !== "string"
+        ? { ...section, startTime: DEFAULT_SECTION_START[section.key] ?? "09:00" }
+        : section
+    );
+    return store;
+  },
 ];
 
 function migrate(store) {

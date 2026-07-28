@@ -119,12 +119,14 @@ src/
     storage.ts              — localStorage read/write/export/import/reset helpers
     remoteStore.ts             — shared client cache + sync with the server
     id.ts                       — generateId(), safe in non-secure contexts
+    time.ts                      — wall-clock helpers (parse/format HH:MM). Local time only
   hooks/
     useRemoteStorage.ts      — generic server-backed useState (shared cache)
     useDashboardData.ts       — Dashboard feature hook
     useRoutineData.ts          — Daily Routine feature hook (+ daily reset logic)
     useMissionBoard.ts          — Mission Board feature hook
     useHomelab.ts                — Homelab feature hook (+ serviceUrl helper)
+    useNow.ts                     — ticking clock, re-syncs on tab focus
   components/
     layout/                — Sidebar, Topbar
     command/                — CommandPalette (Ctrl/Cmd+K)
@@ -132,7 +134,8 @@ src/
                                 Confetti, ConfirmButton — shared primitives
     homelab/                  — ServiceTile, ServiceForm
     dashboard/                — one file per Dashboard widget
-    routine/                    — RoutineSectionCard, RoutineSummary, routineMeta.ts
+    routine/                    — RoutineSectionCard, RoutineSummary,
+                                   RoutineTimeline, routineMeta.ts
     missions/                    — MissionCard, MissionBadges, EditableField,
                                     DependencyChain, DependencyEditor,
                                     MilestoneList, MilestoneTimeline,

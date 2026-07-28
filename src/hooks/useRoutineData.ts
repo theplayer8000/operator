@@ -1,8 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRemoteStorage } from "./useRemoteStorage";
 import { generateId } from "@/lib/id";
+import { parseHHMM } from "@/lib/time";
 import { seedRoutineSections } from "@/lib/seed";
-import type { RoutineSection, RoutineSectionKey, RoutineTask } from "@/lib/types";
+import type {
+  RoutineSection,
+  RoutineSectionKey,
+  RoutineTask,
+  ScheduleBlock,
+} from "@/lib/types";
+
+/**
+ * Fallback when a section has no usable startTime. The server migrates stores
+ * to schema v2 on load, but the offline localStorage mirror is never migrated
+ * — so a cold start with the server down can still hand us pre-v2 sections.
+ * Reading those as 09:00 is wrong-but-harmless; crashing on them is not.
+ */
+const FALLBACK_START = 9 * 60;
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -118,6 +132,13 @@ export function useRoutineData() {
     );
   }
 
+  function setStartTime(sectionKey: RoutineSectionKey, startTime: string) {
+    if (parseHHMM(startTime) === null) return;
+    setSections((prev) =>
+      prev.map((s) => (s.key === sectionKey ? { ...s, startTime } : s))
+    );
+  }
+
   function setNotes(sectionKey: RoutineSectionKey, notes: string) {
     setSections((prev) => prev.map((s) => (s.key === sectionKey ? { ...s, notes } : s)));
   }
@@ -134,8 +155,45 @@ export function useRoutineData() {
   );
   const overallPercent = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100);
 
+  /**
+   * The day laid out on a clock. Derived, never stored — a block's end moves
+   * when tasks are added or re-estimated, and storing it would let the two
+   * drift. Sorted by start time rather than by array order, because the day is
+   * the sections' times, not the order they happen to sit in the array.
+   */
+  const schedule = useMemo<ScheduleBlock[]>(() => {
+    const blocks = sections
+      .map((s) => {
+        const start = parseHHMM(s.startTime ?? "") ?? FALLBACK_START;
+        const durationMinutes = s.tasks.reduce((a, t) => a + t.estimatedMinutes, 0);
+        return {
+          key: s.key,
+          label: s.label,
+          start,
+          end: start + durationMinutes,
+          durationMinutes,
+          doneTasks: s.tasks.filter((t) => t.done).length,
+          totalTasks: s.tasks.length,
+          overlapsPrevious: false,
+        };
+      })
+      .sort((a, b) => a.start - b.start);
+
+    // A block that begins before its predecessor has finished is a real
+    // planning conflict, and the one thing a schedule can tell you that a
+    // list cannot. Flag it rather than silently drawing them on top of
+    // each other.
+    for (let i = 1; i < blocks.length; i++) {
+      blocks[i].overlapsPrevious = blocks[i].start < blocks[i - 1].end;
+    }
+
+    return blocks;
+  }, [sections]);
+
   return {
     sections,
+    schedule,
+    setStartTime,
     toggleTask,
     addTask,
     editTask,

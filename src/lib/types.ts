@@ -85,6 +85,30 @@ export interface RoutineSection {
   label: string;
   tasks: RoutineTask[];
   notes: string;
+  /**
+   * Local wall-clock start, "HH:MM" 24h. Not a timestamp — a routine happens
+   * at 06:30 every day, not at one instant. The block's end is derived from
+   * the section's task minutes rather than stored, so it stays honest when
+   * tasks are added or re-estimated.
+   *
+   * Added in schema v2; see MIGRATIONS in server/index.mjs for how existing
+   * stores get one.
+   */
+  startTime: string;
+}
+
+/** Derived per render from a section's startTime + task minutes. Never stored. */
+export interface ScheduleBlock {
+  key: RoutineSectionKey;
+  label: string;
+  /** Minutes since local midnight. */
+  start: number;
+  end: number;
+  durationMinutes: number;
+  doneTasks: number;
+  totalTasks: number;
+  /** True when the section starts before the previous one has finished. */
+  overlapsPrevious: boolean;
 }
 
 export interface DashboardData {

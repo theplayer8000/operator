@@ -14,6 +14,9 @@ Ten widgets in a 3-column grid. The daily glance.
 
 **Editable:** focus, tasks (add/toggle/edit/delete), quick notes
 (add/edit/delete).
+**Live:** a "Now" card (clock, date, and which routine block is on with time
+remaining) and the Homelab tile strip. Both read other features' data and
+mutate none of it.
 **Display-only:** weekly goals, streaks, upcoming events, productivity score,
 current missions, project progress. The storage and hook plumbing exists for all
 of them; only the editors are missing.
@@ -31,6 +34,16 @@ per-section notes. Tasks marked `repeatDaily` reset once per calendar day.
 Steps can be renamed and re-estimated inline, or deleted — edit mode replaces
 the row rather than adding a fifth control to it, since the row already carries
 a checkbox, a minute estimate and the repeat toggle.
+
+Each section has a **start time** (schema v2), and a **Day Schedule** timeline
+sits above the rail: every block on a clock, with a live "on now" highlight,
+duration bars scaled to the longest block, and a warning when one block starts
+before the previous is estimated to finish. The Dashboard's "Now" card reads
+the same schedule to answer "what am I meant to be doing".
+
+Bar length is relative to the longest block rather than a literal 24h scale —
+at true scale a 2-minute step is a sub-pixel sliver and most of the height goes
+to the gap before work.
 
 Known gaps: the reset is mount-only and UTC-based, so a tab left open across
 midnight doesn't reset, and the day rolls at 01:00 local during BST

@@ -69,6 +69,7 @@ export const seedProductivityHistory = [
 export const seedRoutineSections: RoutineSection[] = [
   {
     key: "morning",
+    startTime: "06:30",
     label: "Morning",
     notes: "",
     tasks: [
@@ -79,6 +80,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "work",
+    startTime: "09:00",
     label: "Work",
     notes: "",
     tasks: [
@@ -88,6 +90,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "gym",
+    startTime: "17:30",
     label: "Gym",
     notes: "",
     tasks: [
@@ -98,6 +101,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "learning",
+    startTime: "19:30",
     label: "Learning",
     notes: "",
     tasks: [
@@ -107,6 +111,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "forex",
+    startTime: "20:30",
     label: "Forex",
     notes: "",
     tasks: [
@@ -116,6 +121,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "evening",
+    startTime: "21:30",
     label: "Evening",
     notes: "",
     tasks: [
@@ -125,6 +131,7 @@ export const seedRoutineSections: RoutineSection[] = [
   },
   {
     key: "sleep",
+    startTime: "23:00",
     label: "Sleep",
     notes: "",
     tasks: [
