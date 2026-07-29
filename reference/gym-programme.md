@@ -39,15 +39,52 @@ turns up — particularly lower back on deadlifts or shoulder on bench — that'
 
 **5 training days, 2 rest days.** Sessions 60–90 minutes.
 
-| Day | Session | Primary |
+### Your actual week
+
+This is built around your sleep, not around a generic Mon-start template.
+
+You train at 23:00 and are asleep around 01:00. You wake **07:55 on Darams days
+(Mon/Tue/Thu)** — that's just under 7 hours — and sleep in on the rest. So the
+nights that cost you sleep are the ones *followed* by a Darams morning:
+**Sunday, Monday and Wednesday nights.**
+
+The fix is simple: don't do your heaviest work on those nights.
+
+| Day | Darams | GEH | Gym at 23:00 | Sleep after |
+|---|---|---|---|---|
+| **Mon** | 09:00–14:30 | 17:00–22:00 | **Day 6** — Upper Hypertrophy | ~7h ⚠ |
+| **Tue** | 09:00–14:30 | 17:00–22:00 | **Day 2** — Deadlift | lie-in ✓ |
+| **Wed** | — | 17:00–22:00 | **Rest** | ~7h (but rested) |
+| **Thu** | 09:00–14:30 | 17:00–22:00 | **Day 1** — Bench | lie-in ✓ |
+| **Fri** | — | 17:00–22:00 | **Day 5** — Legs | lie-in ✓ |
+| **Sat** | — | — | **Day 4** — Shoulders/Back/Arms | lie-in ✓ |
+| **Sun** | — | — | **Rest** | ~7h (but rested) |
+
+**Every heavy session is followed by a lie-in.** Deadlift on Tuesday, bench on
+Thursday, legs on Friday — all followed by mornings you can sleep through. The
+only training night with a 07:55 alarm after it is Monday, and Monday carries
+the lightest session, which is also the one to cut if the week goes sideways.
+
+Both rest days (Wed, Sun) land before Darams mornings — so on those two nights
+you can go to bed at a normal hour and properly bank recovery. Use them.
+
+**Saturday is your one day with no work at all.** GEH is Mon–Fri, so if you'd
+rather train Saturday at a civilised hour instead of 23:00, that's free real
+estate. Entirely optional — your body clock runs late anyway, so keep it at
+23:00 if that's what feels right.
+
+### Session reference
+
+| # | Session | Primary |
 |---|---|---|
 | 1 | Bench Strength + Chest/Triceps | Bench press |
 | 2 | Deadlift Strength + Back Thickness | Deadlift |
-| 3 | **Rest** | — |
 | 4 | Shoulders + Back Width + Arms | Overhead press |
 | 5 | Legs + Core | Leg press / RDL |
 | 6 | Upper Hypertrophy + Arms/Forearms | — |
-| 7 | **Rest** | — |
+
+(Numbering kept from the original layout so the session detail below still
+lines up. Day 3 and Day 7 were the rest days and are now Wed and Sun.)
 
 **Back is trained on days 2, 4 and 6** — thickness, width, and hypertrophy
 respectively. By design you should finish the week having hit lats, mid-back,
@@ -345,15 +382,16 @@ glutamine, and most pre-workout blends beyond their caffeine content.
 |---|---|
 | Bodyweight | **70.5 kg** |
 | Height | **6'1"** (185.4 cm) |
-| BMI | **20.5** — matches the 20.4 you had |
-| Age | *still needed for precision, estimates below assume late 20s/early 30s* |
+| BMI | **20.5** (index, confirmed — not body fat %) |
+| Age | **20**, 21 on 14 November |
 
-One clarification, because it changes the advice: **BMI is an index, not a
-percentage** — yours is 20.5, not 20.4%. Worth separating from body fat
-percentage, which is a different number entirely. If 20.4% was actually a body
-fat reading, tell me, because a 20% body fat reading at BMI 20.5 would mean
-relatively little muscle mass and I'd adjust the starting loads down further.
-Assuming for now you meant BMI.
+**Being 20 is worth more than any supplement on this list.** Recovery capacity,
+hormonal environment and the sheer rate you'll respond to training are all at
+or near their lifetime peak. Two practical consequences: you'll add strength
+faster than the "3 weeks easy" phase suggests, and you should still do it
+anyway — connective tissue adapts on its own timeline regardless of how good
+you feel. Being 20 also means you may still have some natural filling out left
+in you, on top of what training adds.
 
 ### This is the headline: you need to eat more
 
@@ -373,19 +411,22 @@ that advice was wrong** — a lean bulk is clearly correct for you.
 
 ### Your numbers
 
-**BMR** (Mifflin–St Jeor) ≈ **1,700–1,760 kcal**
+**BMR** (Mifflin–St Jeor, age 20) = **1,769 kcal**
 
-**Maintenance** ≈ **2,800–2,900 kcal**
+**Maintenance** ≈ **2,900–2,950 kcal**
 — using a 1.65 activity multiplier: sedentary Darams mornings, on-your-feet GEH
 evenings, five gym sessions a week.
 
-**Target for lean bulk: 3,100–3,300 kcal/day.**
+**Target for lean bulk: 3,300 kcal/day.**
 
 | Macro | Target | Why |
 |---|---|---|
 | **Protein** | **150 g** (2.1 g/kg) | The one to be strict about. 30–50g per sitting, 4–5 sittings. |
-| **Fat** | **75–85 g** | Hormonal function floor is ~0.8g/kg — don't go below 55g. |
-| **Carbs** | **450–480 g** | The rest. High, because your training volume is high and carbs fuel it. |
+| **Fat** | **80 g** | Hormonal function floor is ~0.8g/kg — don't go below 55g. |
+| **Carbs** | **495 g** | The rest. High, because your training volume is high and carbs fuel it. |
+
+Being 20 rather than 30 is worth about 50 kcal a day on BMR — small, but it's
+why these numbers came out slightly above the estimate I gave you before.
 
 **Rate of gain: 0.25 kg per week.** That's ~1 kg a month, ~6 kg over six months
 → around 76–77 kg. That pace adds mostly muscle. Chasing 1 kg/week adds mostly
@@ -480,13 +521,20 @@ walks or a heavy top set will leave you wired; ending on the core work or
 stretching won't.
 
 **3. Protect the total, not the bedtime.**
-7–9 hours from ~01:00 means waking 08:00–10:00. If Darams at 09:00 makes that
-impossible on Mon/Tue/Thu, you're running a sleep deficit on training days and
-that will show up as stalled progression long before it shows up as tiredness.
-**If that's the case, tell me and I'll restructure the split** — the heavy days
-(bench, deadlift) can be moved to your non-Darams days so the days you're most
-recovered are the days you lift heaviest. That's a real change worth making,
-not a nicety.
+You get just under 7 hours before Darams days and sleep through on the rest.
+That's **already handled in the weekly layout above** — the split was built so
+every heavy session lands before a lie-in, and the only short night follows
+your lightest session.
+
+What's left is on you: the two rest nights (Wed and Sun) both sit before Darams
+mornings. Those are the nights to go to bed early rather than staying up
+because you can. Two properly long nights a week is the difference between this
+being sustainable and it grinding you down by month three.
+
+If the short Monday night starts to bite — Tuesday's deadlift session feeling
+consistently flat is the tell — swap Monday's session to Sunday and take
+Monday off instead. Sunday night is also pre-Darams, but you'd be moving a
+light session onto it rather than adding one.
 
 ### If the week goes badly
 
@@ -502,14 +550,12 @@ actually fits each week rather than guessing. Your routine already has the
 
 ## What I need from you
 
-1. **Your age** — the calorie estimate assumes late 20s/early 30s. Everything
-   else is now based on your real stats.
-2. **Whether 20.4 was BMI or body fat %** — see the note in Nutrition. It
-   changes the starting loads if it was body fat.
-3. **After week 3:** your top-set test numbers, so I can set your TMs properly
-4. **Your current programme**, if you still want me to reconcile this against it
-5. **Which day Darams actually is** — Thursday or Friday. Hours are correct now
-   (09:00–14:30, Mon/Tue/Thu in your calendar).
-6. **Roughly when you wake on Darams days** — if it's 08:00 off a 01:00 bedtime,
-   that's 7 hours on your three busiest days, and I'd move bench and deadlift to
-   your non-Darams days so you lift heaviest when you're most recovered.
+1. **After week 3:** your top-set test numbers, so I can set your TMs properly
+2. **Your current programme**, if you still want me to reconcile this against it
+3. **Which day Darams actually is** — Thursday or Friday. Everything else about
+   it is confirmed (09:00–14:30, Mon/Tue/Thu in your calendar). If it turns out
+   to be Friday, tell me: it changes which nights are pre-early-start, and the
+   weekly layout above would need reshuffling to match.
+
+Everything else is now set from your real stats: 70.5kg, 6'1", BMI 20.5, age 20,
+07:55 wake on Darams days.

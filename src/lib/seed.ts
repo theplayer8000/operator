@@ -213,10 +213,11 @@ export const seedUpdates: UpdateEntry[] = [
   },
   {
     id: "u14",
-    title: "Check you're actually getting enough sleep on Darams days",
+    title: "Training week rebuilt around your sleep",
     detail:
-      "Gym at 23:00, asleep ~01:00, Darams at 09:00 — that's under 8 hours on Mon/Tue/Thu. If it's short, the heavy sessions (bench, deadlift) should move to non-Darams days. Say the word and I'll restructure the split.",
-    status: "pending",
+      "You get ~7h before Darams days and sleep in otherwise, so the split now puts every heavy session before a lie-in: deadlift Tuesday, bench Thursday, legs Friday. Monday's the only short night and it carries the lightest session. Rest days are Wednesday and Sunday.",
+    status: "done",
+    date: pastDateKey(0),
   },
   {
     id: "u13",
