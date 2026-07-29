@@ -48,43 +48,44 @@ You train at 23:00 and are asleep around 01:00. You wake **07:55 on Darams days
 that cost you sleep are the ones *followed* by a Darams morning: **Sunday,
 Monday and Thursday.**
 
-There are four "free" nights (Tue, Wed, Fri, Sat) and you train five days, so
-exactly one session has to land on a short night. Everything below follows from
-putting the lightest session there and resting on the other two.
+There are four "free" nights (Tue, Wed, Fri, Sat) and you train five days —
+which would normally force one session onto a short night. **Sunday has no GEH
+shift, so that session moved to the afternoon instead.** That resolves it
+entirely.
 
-| Day | Darams | GEH | Gym at 23:00 | Sleep after |
+| Day | Darams | GEH | Gym | Sleep after |
 |---|---|---|---|---|
-| **Sun** | — | — | **Upper Volume** | ~7h ⚠ *(lightest session)* |
+| **Sun** | — | — | **Upper Volume** — 15:00 | full night ✓ |
 | **Mon** | 09:00–14:30 | 17:00–22:00 | **Rest** | ~7h (but rested) |
-| **Tue** | 09:00–14:30 | 17:00–22:00 | **Heavy Pull** | lie-in ✓ |
-| **Wed** | — | 17:00–22:00 | **Heavy Push** | lie-in ✓ |
+| **Tue** | 09:00–14:30 | 17:00–22:00 | **Heavy Pull** — 23:00 | lie-in ✓ |
+| **Wed** | — | 17:00–22:00 | **Heavy Push** — 23:00 | lie-in ✓ |
 | **Thu** | — | 17:00–22:00 | **Rest** | ~7h (but rested) |
-| **Fri** | 09:00–14:30 | 17:00–22:00 | **Legs & Core** | lie-in ✓ |
-| **Sat** | — | — | **Delts, Lats & Arms** | lie-in ✓ |
+| **Fri** | 09:00–14:30 | 17:00–22:00 | **Legs & Core** — 23:00 | lie-in ✓ |
+| **Sat** | — | — | **Delts, Lats & Arms** — 23:00 | lie-in ✓ |
 
-**Moving Darams to Friday made this better, not just different.** The Thursday
-version forced your heaviest session onto a night with a rowing session 24
-hours before it. This one gives you:
+**No session in this week is followed by compressed sleep.** That's the whole
+design, and it took two changes to get there:
 
 - **Deadlift on Tuesday, straight after a full rest day.** The most fatiguing
-  lift in the programme, done on the freshest day of your week. That's the
-  single biggest improvement.
-- **Bench on Wednesday, followed by a Thursday lie-in.**
-- **Only one short night (Sunday), carrying the lightest session** — which is
-  also the one to bin if the week goes sideways.
-- **Rest days absorb the other two short nights** (Monday and Thursday), so
-  you're never training on the back of compressed sleep twice running.
+  lift in the programme, done on the freshest day of your week.
+- **Bench Wednesday, legs Friday, delts Saturday** — every one followed by a
+  morning you can sleep through.
+- **Sunday moved to 15:00.** It was the one session landing before a 07:55
+  Monday start. Now Sunday night is free, so you can sleep early and start the
+  week properly rested.
+- **Rest days (Mon, Thu) absorb the other two pre-Darams nights.**
 - **A 1-on/1-off, 2-on/1-off, 2-on rhythm** rather than three consecutive
   training days.
 
-Wednesday and Thursday are also your Darams-free mornings, so the two nights
-either side of them are the ones you can genuinely stay up and not pay for it.
+Wednesday and Thursday are also your Darams-free mornings, so the nights either
+side of them are the ones you can genuinely stay up and not pay for it.
 
-**Saturday and Sunday have no GEH shift at all.** If you'd rather train those
-two at a civilised hour instead of 23:00 — particularly Sunday, since that's
-your short-sleep night — that's free real estate. Moving Sunday's session to
-the afternoon would remove the only compromised night in the week entirely.
-Optional; your body clock runs late anyway.
+**One thing to watch:** Saturday 23:00 → Sunday 15:00 is a short turnaround,
+about 14 hours between finishing delts and starting Upper Volume. Both are upper
+sessions. That's tolerable because Sunday is deliberately the lightest day and
+carries no main lift — but if Sunday consistently feels flat, push it later
+(17:00–18:00) rather than moving it back to the evening. Sunday afternoon is
+also your one genuinely relaxed training slot, so it's a good day not to rush.
 
 ### Session names
 
@@ -520,7 +521,9 @@ sleep quality is what your progression actually runs on.
 ### Training at 23:00 — making it work
 
 Your day is Darams 09:00–14:30, GEH 17:00–22:00, home, eat, gym around 23:00,
-asleep around 01:00. That's the schedule, and 11pm is the only slot in it.
+asleep around 01:00. On the four weekdays you train, 11pm is the only slot in
+it. **Sunday is the exception — that one runs at 15:00**, since there's no GEH
+shift, and everything below applies only to the 23:00 sessions.
 
 Late training is workable — your natural wind-down is already ~01:00, so you're
 not fighting your own body clock, which is the thing that actually makes late
@@ -547,25 +550,22 @@ stretching won't.
 
 **3. Protect the total, not the bedtime.**
 You get just under 7 hours before Darams days and sleep through on the rest.
-That's **already handled in the weekly layout above** — the split was built so
-every heavy session lands before a lie-in, and the only short night carries
-your lightest session.
+That's **fully handled in the weekly layout above** — no session is followed by
+a compressed night, now that Sunday sits in the afternoon.
 
-What's left is on you: the two rest nights (Mon and Thu) both sit before Darams
-mornings. Those are the nights to go to bed at a sensible hour rather than
-staying up because you can. Two properly long nights a week is roughly the
-difference between this being sustainable and it grinding you down by month
-three.
+What's left is entirely on you: **three nights a week now sit before a Darams
+morning with no training on them** — Sunday, Monday and Thursday. Those are the
+nights to actually go to bed at a sensible hour rather than staying up because
+you can. The schedule has given you the opportunity; whether you take it is the
+variable that decides how well this goes.
 
-If Sunday's short night starts to bite — Tuesday's deadlift feeling
-consistently flat is the tell, though it's cushioned by Monday's rest day —
-move Sunday's session to the afternoon. You have no GEH shift on Sunday, so
-it's the one session with no schedule constraint at all.
+Three properly long nights a week is roughly the difference between this being
+sustainable for years and it grinding you down by month three.
 
 ### If the week goes badly
 
 **Cut Upper Volume (Sunday) first.** It's the accumulation day — losing it costs
-you the least, and it's already the one on your short night. Never cut Heavy
+you the least, and it carries no main strength lift. Never cut Heavy
 Pull or Heavy Push; those two are the programme.
 
 Once the Gym feature is built in Operator, the plan is for these sessions to

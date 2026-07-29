@@ -216,7 +216,7 @@ export const seedUpdates: UpdateEntry[] = [
     id: "u14",
     title: "Training week rebuilt around your sleep",
     detail:
-      "You get ~7h before Darams days (Mon/Tue/Fri) and sleep in otherwise, so the split puts every heavy session before a lie-in: deadlift Tuesday straight after a rest day, bench Wednesday, legs Friday, shoulders Saturday. Sunday's the only short night and it carries the lightest session. Rest days are Monday and Thursday.",
+      "You get ~7h before Darams days (Mon/Tue/Fri) and sleep in otherwise, so the split puts every session before a lie-in: Heavy Pull Tuesday straight after a rest day, Heavy Push Wednesday, Legs Friday, Delts Saturday. Sunday's Upper Volume runs at 15:00 instead of 23:00 — no GEH shift that day — so nothing lands before an early start. Rest days are Monday and Thursday.",
     status: "done",
     date: pastDateKey(0),
   },
