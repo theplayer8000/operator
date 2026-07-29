@@ -311,7 +311,7 @@ Ranked by strength of evidence, which is how you asked for it.
 | **Creatine monohydrate** | 5g daily, any time, forever | The most well-supported ergogenic aid there is. No loading phase needed — 5g/day saturates in ~3–4 weeks. Don't buy fancier forms; monohydrate is the one that's been tested. |
 | **Vitamin D3** | 1000–2000 IU daily, Oct–Mar minimum | Genuinely warranted in the UK. Deficiency is common here and affects strength, mood and immune function. Worth an actual blood test if your GP will do one. |
 | **Whey protein** | As needed to hit target | Not magic — it's a convenient way to hit protein. If you hit your target with food, you don't need it. |
-| **Caffeine** | 3–6mg/kg, 45min pre-training | Strong evidence for strength and endurance output. Cycle off periodically or tolerance builds. Not within 8h of sleep. |
+| **Caffeine** | **See the late-training note below — mostly not usable for you** | Strong evidence for strength output, but its half-life is ~5–6 hours. At an 11pm session that lands squarely on your sleep. |
 
 ### Reasonable, weaker evidence
 
@@ -383,20 +383,52 @@ part of what makes sleep restorative. Post-training rather than pre- is
 sensible, and it's your call entirely — just worth knowing the mechanism, since
 sleep quality is what your progression actually runs on.
 
-**Your schedule is the real constraint here.** You're working Darams days and
-GEH evenings 17:00–22:00 — that's a long day, and training has to fit around
-it. Two practical consequences:
+### Training at 23:00 — making it work
 
-1. **Train on rest days from GEH where possible**, or before shifts rather than
-   after. Training at 22:30 after a five-hour shift will wreck your sleep and
-   your session quality.
-2. **When the week goes badly, cut Day 6 first.** It's the accumulation day —
-   losing it costs you the least. Never cut Day 2 (deadlift) or Day 1 (bench);
-   those are the programme.
+Your day is Darams 09:00–14:30, GEH 17:00–22:00, home, eat, gym around 23:00,
+asleep around 01:00. That's the schedule, and 11pm is the only slot in it.
+
+Late training is workable — your natural wind-down is already ~01:00, so you're
+not fighting your own body clock, which is the thing that actually makes late
+sessions bad for most people. Elite lifters train at all hours. But three
+things need handling deliberately:
+
+**1. Caffeine is mostly off the table, and this is the big one.**
+Half-life is roughly 5–6 hours, so a pre-workout at 22:45 still has half its
+dose in you at 04:00. You'd be trading session quality for sleep quality, and
+sleep is worth more. Options, best first:
+- **Nothing.** Genuinely fine. You'll adapt within a couple of weeks.
+- **Citrulline malate, 6–8g, 40min pre.** Pump and endurance, no stimulant. The
+  sensible pre-workout choice for a late trainer.
+- **50–100mg caffeine max**, and only on Day 1 or Day 2 (the heavy sessions) —
+  not as routine. If you ever find yourself needing it every session, that's a
+  sleep-debt signal, not a performance one.
+
+**2. You need a wind-down between the last set and bed.**
+Roughly 90 minutes, which your 23:00–01:00 window already gives you. Don't
+compress it. Practically: shower, eat, keep the lights low afterwards, and
+avoid finishing on your most stimulating exercise. Ending a session on farmer's
+walks or a heavy top set will leave you wired; ending on the core work or
+stretching won't.
+
+**3. Protect the total, not the bedtime.**
+7–9 hours from ~01:00 means waking 08:00–10:00. If Darams at 09:00 makes that
+impossible on Mon/Tue/Thu, you're running a sleep deficit on training days and
+that will show up as stalled progression long before it shows up as tiredness.
+**If that's the case, tell me and I'll restructure the split** — the heavy days
+(bench, deadlift) can be moved to your non-Darams days so the days you're most
+recovered are the days you lift heaviest. That's a real change worth making,
+not a nicety.
+
+### If the week goes badly
+
+**Cut Day 6 first.** It's the accumulation day — losing it costs you the least.
+Never cut Day 2 (deadlift) or Day 1 (bench); those are the programme.
 
 Once the Gym feature is built in Operator, the plan is for these sessions to
 sit alongside your shifts on the Day Schedule, so you can see where training
-actually fits each week rather than guessing.
+actually fits each week rather than guessing. Your routine already has the
+`gym` block at 23:00, so that part is already true.
 
 ---
 

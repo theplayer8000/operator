@@ -206,9 +206,16 @@ export const seedUpdates: UpdateEntry[] = [
   },
   {
     id: "u12",
-    title: "Confirm Darams days and hours",
+    title: "Confirm which day Darams is — Thursday or Friday",
     detail:
-      "Calendar currently assumes Mon/Tue/Thu, 09:00–17:00. The hours were a guess and Thursday-vs-Friday was unconfirmed — one edit fixes it since it's a single rule.",
+      "Hours are correct now (09:00–14:30). Only the Thursday-vs-Friday question is left, and it's one edit since it's a single rule.",
+    status: "pending",
+  },
+  {
+    id: "u14",
+    title: "Check you're actually getting enough sleep on Darams days",
+    detail:
+      "Gym at 23:00, asleep ~01:00, Darams at 09:00 — that's under 8 hours on Mon/Tue/Thu. If it's short, the heavy sessions (bench, deadlift) should move to non-Darams days. Say the word and I'll restructure the split.",
     status: "pending",
   },
   {
