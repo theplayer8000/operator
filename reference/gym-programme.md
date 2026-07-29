@@ -54,13 +54,13 @@ putting the lightest session there and resting on the other two.
 
 | Day | Darams | GEH | Gym at 23:00 | Sleep after |
 |---|---|---|---|---|
-| **Sun** | — | — | **Day 6** — Upper Hypertrophy | ~7h ⚠ *(lightest session)* |
+| **Sun** | — | — | **Upper Volume** | ~7h ⚠ *(lightest session)* |
 | **Mon** | 09:00–14:30 | 17:00–22:00 | **Rest** | ~7h (but rested) |
-| **Tue** | 09:00–14:30 | 17:00–22:00 | **Day 2** — Deadlift | lie-in ✓ |
-| **Wed** | — | 17:00–22:00 | **Day 1** — Bench | lie-in ✓ |
+| **Tue** | 09:00–14:30 | 17:00–22:00 | **Heavy Pull** | lie-in ✓ |
+| **Wed** | — | 17:00–22:00 | **Heavy Push** | lie-in ✓ |
 | **Thu** | — | 17:00–22:00 | **Rest** | ~7h (but rested) |
-| **Fri** | 09:00–14:30 | 17:00–22:00 | **Day 5** — Legs | lie-in ✓ |
-| **Sat** | — | — | **Day 4** — Shoulders/Back/Arms | lie-in ✓ |
+| **Fri** | 09:00–14:30 | 17:00–22:00 | **Legs & Core** | lie-in ✓ |
+| **Sat** | — | — | **Delts, Lats & Arms** | lie-in ✓ |
 
 **Moving Darams to Friday made this better, not just different.** The Thursday
 version forced your heaviest session onto a night with a rowing session 24
@@ -86,22 +86,33 @@ your short-sleep night — that's free real estate. Moving Sunday's session to
 the afternoon would remove the only compromised night in the week entirely.
 Optional; your body clock runs late anyway.
 
-### Session reference
+### Session names
 
-| # | Session | Primary |
+Named for what the session *is*, not just its main lift — "Bench" told you
+nothing about the other 6 exercises. These are the names used in your calendar.
+
+| Name | Main lift | What it actually covers |
 |---|---|---|
-| 1 | Bench Strength + Chest/Triceps | Bench press |
-| 2 | Deadlift Strength + Back Thickness | Deadlift |
-| 4 | Shoulders + Back Width + Arms | Overhead press |
-| 5 | Legs + Core | Leg press / RDL |
-| 6 | Upper Hypertrophy + Arms/Forearms | — |
+| **Heavy Pull** | Deadlift | Deadlift, rows, face pulls, farmer's walks — back thickness |
+| **Heavy Push** | Bench press | Bench, incline, flyes, triceps, one balancing row |
+| **Legs & Core** | Leg press / RDL | Posterior chain, quads, calves, hanging leg raises |
+| **Delts, Lats & Arms** | Overhead press | OHP, pulldowns for width, laterals, rear delts, biceps |
+| **Upper Volume** | *none* | Accumulation — press, pull, arms, forearms, core |
 
-(Numbering kept from the original layout so the session detail below still
-lines up. Day 3 and Day 7 were the rest days and are now Wed and Sun.)
+**This is a powerbuilding hybrid, not strict push/pull/legs.** Heavy Pull and
+Heavy Push are the closest to true pull and push days. Delts/Lats/Arms
+deliberately mixes vertical pressing with vertical pulling, and Upper Volume
+covers both — because your priorities (back 3×/week, arms high) don't fit a
+clean PPL template, and forcing one would cost you back frequency.
 
-**Back is trained on days 2, 4 and 6** — thickness, width, and hypertrophy
-respectively. By design you should finish the week having hit lats, mid-back,
-traps, rhomboids, rear delts and spinal erectors from multiple angles.
+The detailed session tables below use the original Day 1/2/4/5/6 numbering.
+Mapping: Day 1 = Heavy Push, Day 2 = Heavy Pull, Day 4 = Delts/Lats/Arms,
+Day 5 = Legs & Core, Day 6 = Upper Volume.
+
+**Back is trained three times a week** — thickness on Heavy Pull, width on
+Delts/Lats/Arms, hypertrophy on Upper Volume. By design you should finish the
+week having hit lats, mid-back, traps, rhomboids, rear delts and spinal erectors
+from multiple angles.
 
 **Legs get one dedicated day, built around leg press, RDL and split squats
 rather than heavy back squats** — per your preference. This is enough for
@@ -112,8 +123,9 @@ trade you've chosen deliberately.
 
 **Overhead press** isn't on your exercise list, but shoulders are a stated
 priority and it's the single best strength driver for them — it also carries
-over to bench lockout and shoulder stability. I've made it Day 4's primary
-lift. If you dislike it, swap to seated dumbbell press and keep everything else;
+over to bench lockout and shoulder stability. I've made it the main lift on
+Delts/Lats/Arms (Saturday). If you dislike it, swap to seated dumbbell press
+and keep everything else;
 just don't drop vertical pressing entirely or shoulders will lag behind
 everything around them.
 
@@ -217,7 +229,7 @@ secondary compounds. **60–90s** on isolation.
 
 ---
 
-### Day 1 — Bench Strength + Chest/Triceps
+### Heavy Push — Bench Strength + Chest/Triceps *(Wed)*
 
 | Exercise | Sets × Reps | Notes |
 |---|---|---|
@@ -231,7 +243,7 @@ secondary compounds. **60–90s** on isolation.
 
 ---
 
-### Day 2 — Deadlift Strength + Back Thickness
+### Heavy Pull — Deadlift Strength + Back Thickness *(Tue)*
 
 | Exercise | Sets × Reps | Notes |
 |---|---|---|
@@ -248,7 +260,7 @@ what you can't afford right now.
 
 ---
 
-### Day 4 — Shoulders + Back Width + Arms
+### Delts, Lats & Arms — Shoulders + Back Width *(Sat)*
 
 | Exercise | Sets × Reps | Notes |
 |---|---|---|
@@ -262,7 +274,7 @@ what you can't afford right now.
 
 ---
 
-### Day 5 — Legs + Core
+### Legs & Core *(Fri)*
 
 | Exercise | Sets × Reps | Notes |
 |---|---|---|
@@ -276,7 +288,7 @@ what you can't afford right now.
 
 ---
 
-### Day 6 — Upper Hypertrophy + Arms/Forearms
+### Upper Volume — Hypertrophy + Arms/Forearms *(Sun)*
 
 No main strength lift. This is pure accumulation — go for quality contractions
 and get close to failure (RPE 9) on isolation work.
@@ -552,8 +564,9 @@ it's the one session with no schedule constraint at all.
 
 ### If the week goes badly
 
-**Cut Day 6 first.** It's the accumulation day — losing it costs you the least.
-Never cut Day 2 (deadlift) or Day 1 (bench); those are the programme.
+**Cut Upper Volume (Sunday) first.** It's the accumulation day — losing it costs
+you the least, and it's already the one on your short night. Never cut Heavy
+Pull or Heavy Push; those two are the programme.
 
 Once the Gym feature is built in Operator, the plan is for these sessions to
 sit alongside your shifts on the Day Schedule, so you can see where training

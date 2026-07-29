@@ -73,6 +73,7 @@ export default function DayPanel({
   const [editStart, setEditStart] = useState("");
   const [editFinish, setEditFinish] = useState("");
   const [editKind, setEditKind] = useState<EventKind>("other");
+  const [editNotes, setEditNotes] = useState("");
 
   const date = fromDateKey(dateKey);
   const longDate = date
@@ -108,6 +109,7 @@ export default function DayPanel({
         : ""
     );
     setEditKind(event.kind);
+    setEditNotes(event.notes ?? "");
   }
 
   function commitEdit(event: EventOccurrence) {
@@ -126,6 +128,7 @@ export default function DayPanel({
     onUpdate(event.id, {
       title: editTitle.trim(),
       kind: editKind,
+      notes: editNotes.trim(),
       ...(event.seriesId ? {} : { date: editDate }),
       // A cleared field is an explicit `undefined`, not an omitted key —
       // here that's the intent: it overwrites the stored value and is
@@ -236,6 +239,15 @@ export default function DayPanel({
                         className={`${INPUT_SM} font-mono flex-1 min-w-[100px] disabled:opacity-40`}
                       />
                     </div>
+                    <textarea
+                      value={editNotes}
+                      onChange={(e) => setEditNotes(e.target.value)}
+                      onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
+                      placeholder="Notes (optional)"
+                      aria-label="Notes"
+                      rows={3}
+                      className={`${INPUT} py-2 resize-y min-h-[72px]`}
+                    />
                     {event.seriesId && (
                       <p className="text-[11px] text-rank">
                         <Repeat size={10} className="inline mr-1 -mt-0.5" />
@@ -280,6 +292,17 @@ export default function DayPanel({
                       <span className="block text-[11px] font-mono text-ink-700">
                         {rangeLabel} · {EVENT_KIND_META[event.kind].label}
                       </span>
+                      {/*
+                        Notes were stored but never rendered anywhere before —
+                        a field that silently swallows what you type. Shown
+                        here with whitespace preserved so short line-per-point
+                        notes (a session breakdown, say) keep their shape.
+                      */}
+                      {event.notes && (
+                        <span className="block text-[11px] text-ink-500 leading-relaxed mt-1 whitespace-pre-line">
+                          {event.notes}
+                        </span>
+                      )}
                     </span>
                     <button
                       onClick={() => startEdit(event)}
