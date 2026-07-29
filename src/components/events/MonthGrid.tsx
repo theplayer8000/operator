@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { monthGrid, MONTH_NAMES, WEEKDAY_INITIALS } from "@/lib/time";
 import { EVENT_KIND_META } from "./eventMeta";
-import type { CalendarEvent } from "@/lib/types";
+import type { EventOccurrence } from "@/lib/types";
 
 /**
  * One month. Days carrying events show up to three coloured dots — the count
@@ -20,7 +20,7 @@ export default function MonthGrid({
 }: {
   year: number;
   month: number;
-  byDay: Map<string, CalendarEvent[]>;
+  byDay: Map<string, EventOccurrence[]>;
   todayKey: string;
   selected: string | null;
   onSelect: (dateKey: string) => void;

@@ -5,11 +5,11 @@ import { useNow } from "@/hooks/useNow";
 import { useEvents } from "@/hooks/useEvents";
 import { EVENT_KIND_META } from "@/components/events/eventMeta";
 import { ROUTINE_META } from "./routineMeta";
-import type { CalendarEvent, ScheduleBlock } from "@/lib/types";
+import type { EventOccurrence, ScheduleBlock } from "@/lib/types";
 
 type Row =
   | { kind: "routine"; block: ScheduleBlock; start: number; end: number }
-  | { kind: "event"; event: CalendarEvent; start: number; end: number };
+  | { kind: "event"; event: EventOccurrence; start: number; end: number };
 
 /**
  * The day on a clock rather than in a list.

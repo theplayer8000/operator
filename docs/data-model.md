@@ -215,9 +215,39 @@ call during the Work block), so it's excluded from the `overlapsPrevious`
 conflict warning, which stays scoped to routine-block-on-routine-block
 overlaps only.
 
-Not modelled, deliberately: **repeating events, multi-day spans, reminders.**
-Each is a real calendar feature. Don't fake a repeat by writing N copies — that
-makes editing the series impossible and is the classic way calendar data rots.
+### Recurring events
+
+Added v13, driven by the owner's work shifts (GEH Mon–Fri, Darams Mon/Tue/Thu,
+both to end of year — 179 occurrences that are really two rules).
+
+**One stored record per series, never one per occurrence.** `recurrence` is
+`{type: "weekly", weekdays: number[], until: string}` where weekdays are **ISO**
+(1 = Monday … 7 = Sunday, via `isoWeekday()` — deliberately not `getDay()`'s
+0 = Sunday, because an off-by-one in a persisted rule is silent and horrible).
+Occurrences are expanded per render in `useEvents`.
+
+Expansion produces `EventOccurrence`: a copy of the record with `date` set to
+that day and a **synthetic `id` of `ruleId@date`** so React keys stay unique,
+plus `seriesId` carrying the real record id. Every mutator calls `resolveId()`
+first, so a caller can pass whichever id it happens to be holding without
+knowing which it is.
+
+Three consequences the UI has to respect, all enforced in `DayPanel`:
+
+- **Editing an occurrence edits the series.** Stated in the edit form, not left
+  to be discovered.
+- **The date field is hidden for a series.** A series' `date` is the rule's
+  *anchor*, not that occurrence's day — writing an occurrence's date back would
+  silently reshape every other occurrence. `commitEdit` omits `date` entirely
+  when `seriesId` is set.
+- **Deleting an occurrence adds to `skipDates`, it doesn't delete the record.**
+  That's annual leave, a swapped shift, a bank holiday — the action wanted
+  almost every time. Removing the whole series is deliberately not reachable in
+  one tap from a single day.
+
+Still not modelled, deliberately: **multi-day spans, reminders, monthly/yearly
+recurrence.** Weekly exists because there was a real case for it. Add the
+others the same way — when something actually needs them.
 
 ### Homelab
 

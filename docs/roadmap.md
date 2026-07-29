@@ -138,10 +138,13 @@ Dates are stored as local `"YYYY-MM-DD"` keys, never timestamps. See the
 `toDateKey` note under **OPS-009** — building one with `toISOString()` puts
 every event between midnight and 1am BST on the wrong day.
 
-Known gaps: no repeating events, no multi-day spans, no reminders. All three are
-real calendar features and none should be faked with a loop over single days.
-Repeating events is now logged as a pending item on `/updates`, since it's the
-most likely next ask (weekly shifts).
+**Repeating events** landed in v13 (weekly only), driven by the owner's work
+shifts. One record per series, expanded at read time; deleting a single
+occurrence adds a skip date rather than destroying the rule, which is how
+annual leave is handled. See `data-model.md` → Recurring events.
+
+Known gaps: no multi-day spans, no reminders, no monthly/yearly recurrence.
+None should be faked with a loop over single days.
 
 ### Settings — `/settings`
 

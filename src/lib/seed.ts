@@ -190,10 +190,31 @@ export const seedUpdates: UpdateEntry[] = [
     date: pastDateKey(0),
   },
   {
-    id: "u8",
-    title: "Gym",
+    id: "u11",
+    title: "Repeating events, and your shifts are in",
     detail:
-      "Parked until you send over a real plan from ChatGPT — the import needs to be built against your actual format, not a guess.",
+      "Set up weekly repeats. GEH (Mon–Fri 17:00–22:00) and Darams (Mon/Tue/Thu) are stored as two rules covering the rest of the year, not 179 separate entries. Deleting one day of a repeat just skips that day — that's how annual leave works.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
+    id: "u8",
+    title: "Gym feature in Operator",
+    detail:
+      "Programme is written (reference/gym-programme.md). Still needs building as an actual feature — session tracking, logging sets and weights, progression against your training maxes.",
+    status: "pending",
+  },
+  {
+    id: "u12",
+    title: "Confirm Darams days and hours",
+    detail:
+      "Calendar currently assumes Mon/Tue/Thu, 09:00–17:00. The hours were a guess and Thursday-vs-Friday was unconfirmed — one edit fixes it since it's a single rule.",
+    status: "pending",
+  },
+  {
+    id: "u13",
+    title: "Send stats for nutrition targets",
+    detail: "Bodyweight, height and age — the gym programme has the method but not real calorie numbers without them.",
     status: "pending",
   },
   {
@@ -206,12 +227,6 @@ export const seedUpdates: UpdateEntry[] = [
     id: "u10",
     title: "Automatic backups",
     detail: "Export works, but nothing runs on a schedule yet — a copy job to the NAS over SSH is the plan.",
-    status: "pending",
-  },
-  {
-    id: "u11",
-    title: "Repeating events",
-    detail: "Your NHS shifts are weekly — entering them one at a time will get old. Needs a real recurrence design, not a loop that writes 52 copies.",
     status: "pending",
   },
 ];

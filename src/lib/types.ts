@@ -41,6 +41,23 @@ export interface Streak {
 
 export type EventKind = "work" | "personal" | "admin" | "health" | "other";
 
+/**
+ * A repeat rule. Only weekly exists because it's the only shape that's come
+ * up (work shifts) — add others when there's a real case, not speculatively.
+ *
+ * **One stored record per series, never one per occurrence.** Occurrences are
+ * expanded at read time in `useEvents`. Writing N copies of a recurring event
+ * makes editing the series impossible and is the standard way calendar data
+ * rots — see the note in `data-model.md`.
+ */
+export interface EventRecurrence {
+  type: "weekly";
+  /** ISO weekdays it lands on: 1 = Monday … 7 = Sunday. */
+  weekdays: number[];
+  /** Last day the rule applies, inclusive. Local `"YYYY-MM-DD"`. */
+  until: string;
+}
+
 export interface CalendarEvent {
   id: ID;
   title: string;
@@ -62,6 +79,31 @@ export interface CalendarEvent {
   durationMinutes?: number;
   notes: string;
   kind: EventKind;
+  /**
+   * Absent for a one-off. When present, `date` is the series **start** and
+   * the event repeats per this rule until `recurrence.until`.
+   */
+  recurrence?: EventRecurrence;
+  /**
+   * Days the series doesn't happen — annual leave, bank holidays, a swapped
+   * shift. Only meaningful alongside `recurrence`. This is what "delete" does
+   * to a single occurrence of a repeating event: it skips that day rather
+   * than destroying the rule.
+   */
+  skipDates?: string[];
+}
+
+/**
+ * One materialised occurrence of an event on a specific day.
+ *
+ * For a one-off this is the record itself. For a recurring series it's a copy
+ * with `date` set to the occurrence's day and a synthetic `id` (`ruleId@date`)
+ * so React keys stay unique — `seriesId` carries the real record id, and every
+ * mutator must write through to that, never to the synthetic one.
+ */
+export interface EventOccurrence extends CalendarEvent {
+  /** Set only on expanded occurrences of a recurring series. */
+  seriesId?: ID;
 }
 
 export interface QuickNote {

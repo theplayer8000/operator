@@ -54,6 +54,43 @@ export function fromDateKey(key: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * ISO weekday for a date key: 1 = Monday … 7 = Sunday. Null if unparseable.
+ *
+ * Deliberately ISO rather than `Date.getDay()`'s 0 = Sunday, because stored
+ * recurrence rules read as data a human has to check ("weekdays: [1,2,4]" is
+ * Mon/Tue/Thu), and an off-by-one in a persisted rule is silent and horrible.
+ */
+export function isoWeekday(key: string): number | null {
+  const date = fromDateKey(key);
+  if (!date) return null;
+  const day = date.getDay();
+  return day === 0 ? 7 : day;
+}
+
+/**
+ * Every date key from `from` to `to` inclusive, in order. Both ends are local
+ * calendar days, and the walk uses setDate() so DST transitions can't drift it
+ * (adding 86_400_000ms would, twice a year).
+ *
+ * Capped at `maxDays` as a guard: this is called with user-editable `until`
+ * dates, and a fat-fingered year would otherwise spin building a decade of
+ * keys on every render.
+ */
+export function dateKeysBetween(from: string, to: string, maxDays = 800): string[] {
+  const start = fromDateKey(from);
+  const end = fromDateKey(to);
+  if (!start || !end || end < start) return [];
+
+  const keys: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end && keys.length < maxDays) {
+    keys.push(toDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
+
 /** Whole days from today to `key`. Negative is past, 0 is today. */
 export function daysFromToday(key: string): number | null {
   const target = fromDateKey(key);

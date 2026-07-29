@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Plus, Pencil, Check, X } from "lucide-react";
+import { Plus, Pencil, Check, X, Repeat } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { formatHHMM, fromDateKey, parseHHMM, relativeDay } from "@/lib/time";
 import { EVENT_KIND_META, EVENT_KINDS } from "./eventMeta";
-import type { CalendarEvent, EventKind } from "@/lib/types";
+import type { CalendarEvent, EventKind, EventOccurrence } from "@/lib/types";
 
 const INPUT =
   "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
@@ -32,11 +32,12 @@ export default function DayPanel({
   onAdd,
   onUpdate,
   onDelete,
+  onSkip,
   onMoved,
   onClose,
 }: {
   dateKey: string;
-  events: CalendarEvent[];
+  events: EventOccurrence[];
   onAdd: (input: {
     title: string;
     date: string;
@@ -46,6 +47,11 @@ export default function DayPanel({
   }) => void;
   onUpdate: (id: string, patch: Partial<CalendarEvent>) => void;
   onDelete: (id: string) => void;
+  /**
+   * Drop one day out of a repeating series. This is what deleting a single
+   * occurrence means — the rule survives, that date doesn't.
+   */
+  onSkip: (seriesId: string, date: string) => void;
   /** Called with the new date when an edit moves an event off this day. */
   onMoved?: (newDate: string) => void;
   /**
@@ -88,7 +94,7 @@ export default function DayPanel({
     setFinish("");
   }
 
-  function startEdit(event: CalendarEvent) {
+  function startEdit(event: EventOccurrence) {
     setEditingId(event.id);
     setEditTitle(event.title);
     setEditDate(event.date);
@@ -104,7 +110,7 @@ export default function DayPanel({
     setEditKind(event.kind);
   }
 
-  function commitEdit(event: CalendarEvent) {
+  function commitEdit(event: EventOccurrence) {
     if (!editTitle.trim() || !editDate) {
       setEditingId(null);
       return;
@@ -112,10 +118,15 @@ export default function DayPanel({
     const trimmedStart = editStart.trim();
     const durationMinutes = trimmedStart ? rangeToDuration(trimmedStart, editFinish) : undefined;
 
+    // `onUpdate` resolves a synthetic occurrence id back to the real record,
+    // so passing event.id is safe either way. But `date` must be omitted for a
+    // series: this occurrence's date is a derived day, and writing it back
+    // would move the rule's anchor and silently reshape every other
+    // occurrence.
     onUpdate(event.id, {
       title: editTitle.trim(),
-      date: editDate,
       kind: editKind,
+      ...(event.seriesId ? {} : { date: editDate }),
       // A cleared field is an explicit `undefined`, not an omitted key —
       // here that's the intent: it overwrites the stored value and is
       // dropped on serialisation. Duration only survives alongside a start.
@@ -123,7 +134,7 @@ export default function DayPanel({
       durationMinutes,
     });
     setEditingId(null);
-    if (editDate !== event.date) onMoved?.(editDate);
+    if (!event.seriesId && editDate !== event.date) onMoved?.(editDate);
   }
 
   return (
@@ -176,14 +187,22 @@ export default function DayPanel({
                       className={INPUT}
                     />
                     <div className="flex flex-wrap gap-2">
-                      <input
-                        type="date"
-                        value={editDate}
-                        onChange={(e) => setEditDate(e.target.value)}
-                        aria-label="Date"
-                        title="Change the date to move this event"
-                        className={`${INPUT_SM} font-mono flex-1 min-w-[128px]`}
-                      />
+                      {/*
+                        A series has no single date to move — its `date` is the
+                        rule's start, not this occurrence. Editing one day's
+                        date would silently shift the whole series' anchor, so
+                        the field is hidden and the rule is stated instead.
+                      */}
+                      {!event.seriesId && (
+                        <input
+                          type="date"
+                          value={editDate}
+                          onChange={(e) => setEditDate(e.target.value)}
+                          aria-label="Date"
+                          title="Change the date to move this event"
+                          className={`${INPUT_SM} font-mono flex-1 min-w-[128px]`}
+                        />
+                      )}
                       <select
                         value={editKind}
                         onChange={(e) => setEditKind(e.target.value as EventKind)}
@@ -217,6 +236,13 @@ export default function DayPanel({
                         className={`${INPUT_SM} font-mono flex-1 min-w-[100px] disabled:opacity-40`}
                       />
                     </div>
+                    {event.seriesId && (
+                      <p className="text-[11px] text-rank">
+                        <Repeat size={10} className="inline mr-1 -mt-0.5" />
+                        Repeating — saving changes every occurrence. To drop
+                        just this day, cancel and use delete.
+                      </p>
+                    )}
                     <div className="flex items-center gap-2 pt-1">
                       <button
                         onClick={() => commitEdit(event)}
@@ -239,7 +265,18 @@ export default function DayPanel({
                       aria-hidden
                     />
                     <span className="flex-1 min-w-0">
-                      <span className="block text-sm text-ink-300 truncate">{event.title}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-sm text-ink-300 truncate">{event.title}</span>
+                        {event.seriesId && (
+                          <span
+                            className="shrink-0 text-rank"
+                            title="Part of a repeating series"
+                            aria-label="Repeating"
+                          >
+                            <Repeat size={11} />
+                          </span>
+                        )}
+                      </span>
                       <span className="block text-[11px] font-mono text-ink-700">
                         {rangeLabel} · {EVENT_KIND_META[event.kind].label}
                       </span>
@@ -247,14 +284,32 @@ export default function DayPanel({
                     <button
                       onClick={() => startEdit(event)}
                       aria-label={`Edit "${event.title}"`}
-                      title="Edit — including its date"
+                      title={
+                        event.seriesId
+                          ? "Edit — changes every occurrence in the series"
+                          : "Edit — including its date"
+                      }
                       className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
                     >
                       <Pencil size={13} />
                     </button>
+                    {/*
+                      On a repeating occurrence, delete skips this one day and
+                      leaves the rule alone — that's annual leave, and it's the
+                      action wanted 99% of the time. Removing the whole series
+                      is deliberately not a one-tap action from a single day.
+                    */}
                     <ConfirmButton
-                      label={`Delete "${event.title}"`}
-                      onConfirm={() => onDelete(event.id)}
+                      label={
+                        event.seriesId
+                          ? `Skip "${event.title}" on this day`
+                          : `Delete "${event.title}"`
+                      }
+                      onConfirm={() =>
+                        event.seriesId
+                          ? onSkip(event.seriesId, event.date)
+                          : onDelete(event.id)
+                      }
                       compact
                     />
                   </div>

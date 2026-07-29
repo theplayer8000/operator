@@ -7,7 +7,8 @@ import { EVENT_KIND_META } from "@/components/events/eventMeta";
 import { relativeDay } from "@/lib/time";
 
 export default function Events() {
-  const { byDay, upcoming, todayKey, addEvent, updateEvent, deleteEvent } = useEvents();
+  const { byDay, upcoming, todayKey, addEvent, updateEvent, deleteEvent, skipOccurrence } =
+    useEvents();
 
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [selected, setSelected] = useState<string | null>(todayKey);
@@ -142,6 +143,7 @@ export default function Events() {
                 onAdd={addEvent}
                 onUpdate={updateEvent}
                 onDelete={deleteEvent}
+                onSkip={skipOccurrence}
                 onMoved={(newDate) => {
                   setYear(Number(newDate.slice(0, 4)));
                   setSelected(newDate);
