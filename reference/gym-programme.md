@@ -44,34 +44,47 @@ turns up — particularly lower back on deadlifts or shoulder on bench — that'
 This is built around your sleep, not around a generic Mon-start template.
 
 You train at 23:00 and are asleep around 01:00. You wake **07:55 on Darams days
-(Mon/Tue/Thu)** — that's just under 7 hours — and sleep in on the rest. So the
-nights that cost you sleep are the ones *followed* by a Darams morning:
-**Sunday, Monday and Wednesday nights.**
+(Mon/Tue/Fri)** — just under 7 hours — and sleep in on the rest. So the nights
+that cost you sleep are the ones *followed* by a Darams morning: **Sunday,
+Monday and Thursday.**
 
-The fix is simple: don't do your heaviest work on those nights.
+There are four "free" nights (Tue, Wed, Fri, Sat) and you train five days, so
+exactly one session has to land on a short night. Everything below follows from
+putting the lightest session there and resting on the other two.
 
 | Day | Darams | GEH | Gym at 23:00 | Sleep after |
 |---|---|---|---|---|
-| **Mon** | 09:00–14:30 | 17:00–22:00 | **Day 6** — Upper Hypertrophy | ~7h ⚠ |
+| **Sun** | — | — | **Day 6** — Upper Hypertrophy | ~7h ⚠ *(lightest session)* |
+| **Mon** | 09:00–14:30 | 17:00–22:00 | **Rest** | ~7h (but rested) |
 | **Tue** | 09:00–14:30 | 17:00–22:00 | **Day 2** — Deadlift | lie-in ✓ |
-| **Wed** | — | 17:00–22:00 | **Rest** | ~7h (but rested) |
-| **Thu** | 09:00–14:30 | 17:00–22:00 | **Day 1** — Bench | lie-in ✓ |
-| **Fri** | — | 17:00–22:00 | **Day 5** — Legs | lie-in ✓ |
+| **Wed** | — | 17:00–22:00 | **Day 1** — Bench | lie-in ✓ |
+| **Thu** | — | 17:00–22:00 | **Rest** | ~7h (but rested) |
+| **Fri** | 09:00–14:30 | 17:00–22:00 | **Day 5** — Legs | lie-in ✓ |
 | **Sat** | — | — | **Day 4** — Shoulders/Back/Arms | lie-in ✓ |
-| **Sun** | — | — | **Rest** | ~7h (but rested) |
 
-**Every heavy session is followed by a lie-in.** Deadlift on Tuesday, bench on
-Thursday, legs on Friday — all followed by mornings you can sleep through. The
-only training night with a 07:55 alarm after it is Monday, and Monday carries
-the lightest session, which is also the one to cut if the week goes sideways.
+**Moving Darams to Friday made this better, not just different.** The Thursday
+version forced your heaviest session onto a night with a rowing session 24
+hours before it. This one gives you:
 
-Both rest days (Wed, Sun) land before Darams mornings — so on those two nights
-you can go to bed at a normal hour and properly bank recovery. Use them.
+- **Deadlift on Tuesday, straight after a full rest day.** The most fatiguing
+  lift in the programme, done on the freshest day of your week. That's the
+  single biggest improvement.
+- **Bench on Wednesday, followed by a Thursday lie-in.**
+- **Only one short night (Sunday), carrying the lightest session** — which is
+  also the one to bin if the week goes sideways.
+- **Rest days absorb the other two short nights** (Monday and Thursday), so
+  you're never training on the back of compressed sleep twice running.
+- **A 1-on/1-off, 2-on/1-off, 2-on rhythm** rather than three consecutive
+  training days.
 
-**Saturday is your one day with no work at all.** GEH is Mon–Fri, so if you'd
-rather train Saturday at a civilised hour instead of 23:00, that's free real
-estate. Entirely optional — your body clock runs late anyway, so keep it at
-23:00 if that's what feels right.
+Wednesday and Thursday are also your Darams-free mornings, so the two nights
+either side of them are the ones you can genuinely stay up and not pay for it.
+
+**Saturday and Sunday have no GEH shift at all.** If you'd rather train those
+two at a civilised hour instead of 23:00 — particularly Sunday, since that's
+your short-sleep night — that's free real estate. Moving Sunday's session to
+the afternoon would remove the only compromised night in the week entirely.
+Optional; your body clock runs late anyway.
 
 ### Session reference
 
@@ -523,18 +536,19 @@ stretching won't.
 **3. Protect the total, not the bedtime.**
 You get just under 7 hours before Darams days and sleep through on the rest.
 That's **already handled in the weekly layout above** — the split was built so
-every heavy session lands before a lie-in, and the only short night follows
+every heavy session lands before a lie-in, and the only short night carries
 your lightest session.
 
-What's left is on you: the two rest nights (Wed and Sun) both sit before Darams
-mornings. Those are the nights to go to bed early rather than staying up
-because you can. Two properly long nights a week is the difference between this
-being sustainable and it grinding you down by month three.
+What's left is on you: the two rest nights (Mon and Thu) both sit before Darams
+mornings. Those are the nights to go to bed at a sensible hour rather than
+staying up because you can. Two properly long nights a week is roughly the
+difference between this being sustainable and it grinding you down by month
+three.
 
-If the short Monday night starts to bite — Tuesday's deadlift session feeling
-consistently flat is the tell — swap Monday's session to Sunday and take
-Monday off instead. Sunday night is also pre-Darams, but you'd be moving a
-light session onto it rather than adding one.
+If Sunday's short night starts to bite — Tuesday's deadlift feeling
+consistently flat is the tell, though it's cushioned by Monday's rest day —
+move Sunday's session to the afternoon. You have no GEH shift on Sunday, so
+it's the one session with no schedule constraint at all.
 
 ### If the week goes badly
 
@@ -552,10 +566,5 @@ actually fits each week rather than guessing. Your routine already has the
 
 1. **After week 3:** your top-set test numbers, so I can set your TMs properly
 2. **Your current programme**, if you still want me to reconcile this against it
-3. **Which day Darams actually is** — Thursday or Friday. Everything else about
-   it is confirmed (09:00–14:30, Mon/Tue/Thu in your calendar). If it turns out
-   to be Friday, tell me: it changes which nights are pre-early-start, and the
-   weekly layout above would need reshuffling to match.
-
-Everything else is now set from your real stats: 70.5kg, 6'1", BMI 20.5, age 20,
-07:55 wake on Darams days.
+Everything else is now set: 70.5kg, 6'1", BMI 20.5, age 20, Darams Mon/Tue/Fri
+09:00–14:30, GEH Mon–Fri 17:00–22:00, 07:55 wake on Darams days, gym at 23:00.

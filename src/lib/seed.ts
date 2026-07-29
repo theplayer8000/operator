@@ -193,7 +193,7 @@ export const seedUpdates: UpdateEntry[] = [
     id: "u11",
     title: "Repeating events, and your shifts are in",
     detail:
-      "Set up weekly repeats. GEH (Mon–Fri 17:00–22:00) and Darams (Mon/Tue/Thu) are stored as two rules covering the rest of the year, not 179 separate entries. Deleting one day of a repeat just skips that day — that's how annual leave works.",
+      "Set up weekly repeats. GEH (Mon–Fri 17:00–22:00) and Darams (Mon/Tue/Fri 09:00–14:30) are stored as two rules covering the rest of the year, not 178 separate entries. Deleting one day of a repeat just skips that day — that's how annual leave works.",
     status: "done",
     date: pastDateKey(0),
   },
@@ -206,16 +206,17 @@ export const seedUpdates: UpdateEntry[] = [
   },
   {
     id: "u12",
-    title: "Confirm which day Darams is — Thursday or Friday",
+    title: "Darams moved to Friday",
     detail:
-      "Hours are correct now (09:00–14:30). Only the Thursday-vs-Friday question is left, and it's one edit since it's a single rule.",
-    status: "pending",
+      "Mon/Tue/Fri 09:00–14:30, confirmed. One edit to the rule, 66 occurrences updated. Frees up Thursday mornings and lets the training week put deadlift straight after a rest day.",
+    status: "done",
+    date: pastDateKey(0),
   },
   {
     id: "u14",
     title: "Training week rebuilt around your sleep",
     detail:
-      "You get ~7h before Darams days and sleep in otherwise, so the split now puts every heavy session before a lie-in: deadlift Tuesday, bench Thursday, legs Friday. Monday's the only short night and it carries the lightest session. Rest days are Wednesday and Sunday.",
+      "You get ~7h before Darams days (Mon/Tue/Fri) and sleep in otherwise, so the split puts every heavy session before a lie-in: deadlift Tuesday straight after a rest day, bench Wednesday, legs Friday, shoulders Saturday. Sunday's the only short night and it carries the lightest session. Rest days are Monday and Thursday.",
     status: "done",
     date: pastDateKey(0),
   },
