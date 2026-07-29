@@ -230,6 +230,42 @@ export interface ServiceStatus {
   latencyMs: number | null;
 }
 
+// --- Gym --------------------------------------------------------------------
+// Session templates plus per-day tick-offs. Deliberately separate from the
+// Daily Routine's `gym` block: routine sections are identical every day, and a
+// training split isn't — Tuesday is Heavy Pull and Wednesday is Heavy Push.
+// That mismatch is the whole reason this feature exists.
+//
+// The programme itself lives in reference/gym-programme.md; this is the part
+// you tick off at the gym.
+
+export interface GymExercise {
+  id: ID;
+  name: string;
+  /** Free text, matching the programme: "4 × 8–10", "Top set + 3 back-offs". */
+  sets: string;
+  /** The one cue worth remembering mid-session. Optional. */
+  cue?: string;
+}
+
+export interface GymSession {
+  id: ID;
+  /** Matches the calendar event title after the "Gym — " prefix. */
+  name: string;
+  /** ISO weekday it runs on: 1 = Monday … 7 = Sunday. */
+  weekday: number;
+  /** Wall-clock start, "HH:MM" — mirrors the calendar rule. */
+  time: string;
+  exercises: GymExercise[];
+}
+
+/**
+ * Which exercises were ticked, keyed by local date so each session's ticks are
+ * their own and nothing needs resetting. Derived progress is computed per
+ * render; only the raw ticks are stored.
+ */
+export type GymCompletions = Record<string, ID[]>;
+
 // --- Updates ----------------------------------------------------------------
 // A running log of what's changed in Operator itself, and what's queued —
 // reviewable in the app, not just in git history or docs/handoffs. Distinct

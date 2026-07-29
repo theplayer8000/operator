@@ -13,6 +13,7 @@ import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
+import Gym from "@/pages/Gym";
 
 export default function App() {
   return (
@@ -28,7 +29,7 @@ export default function App() {
         <Route path="/contents" element={<Contents />} />
         <Route path="/dev" element={<Dev />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
-        <Route path="/gym" element={<ComingSoon title="Gym" />} />
+        <Route path="/gym" element={<Gym />} />
         <Route path="/forex" element={<ComingSoon title="Forex Journal" />} />
         <Route path="/work" element={<ComingSoon title="Work" />} />
         <Route path="/journey" element={<ComingSoon title="Journey" />} />

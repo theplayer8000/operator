@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { NotebookPen, Pencil, Plus, Repeat, Clock, Check, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  NotebookPen,
+  Pencil,
+  Plus,
+  Repeat,
+  Clock,
+  Check,
+  X,
+  Dumbbell,
+  ChevronRight,
+} from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import type { RoutineSection, RoutineSectionKey } from "@/lib/types";
 import { ROUTINE_META } from "./routineMeta";
@@ -122,6 +133,27 @@ export default function RoutineSectionCard({
             </button>
           </div>
         </header>
+
+        {/*
+          The gym block is the one section whose real contents can't live here:
+          routine sections are identical every day and a training split isn't.
+          So it links to the Gym page rather than duplicating a checklist that
+          would be wrong on four days out of five.
+        */}
+        {section.key === "gym" && (
+          <Link
+            to="/gym"
+            className="flex items-center justify-between gap-3 mb-3 p-3 rounded-badge border border-xp/25 bg-xp/5 hover:bg-xp/10 hover:border-xp/40 transition-colors min-h-[44px]"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <Dumbbell size={15} className="text-xp shrink-0" />
+              <span className="text-sm text-ink-100 truncate">Today's session</span>
+            </span>
+            <span className="flex items-center gap-1 text-xs text-ink-500 shrink-0">
+              Open Gym <ChevronRight size={14} />
+            </span>
+          </Link>
+        )}
 
         {section.tasks.length === 0 ? (
           <p className="text-sm text-ink-700 mb-3">No steps yet — add the first one below.</p>

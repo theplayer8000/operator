@@ -56,6 +56,9 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "homelab.services": [],
   "events.records": [],
   "updates.entries": [],
+  "gym.sessions": [],
+  // Keyed by date rather than a list, so its empty value is an object.
+  "gym.completions": {},
   "theme.accent": "gold",
 };
 
@@ -93,6 +96,12 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     label: "Homelab",
     description: "The service tiles. Clearing these never touches the services themselves.",
     keys: ["homelab.services"],
+  },
+  {
+    label: "Gym",
+    description:
+      "Session templates and every exercise you've ticked off. Clearing loses your training history.",
+    keys: ["gym.sessions", "gym.completions"],
   },
   {
     label: "Updates",

@@ -1,5 +1,6 @@
 import type {
   ActivityItem,
+  GymSession,
   HomelabService,
   MissionRecord,
   QuickNote,
@@ -121,6 +122,96 @@ export const seedRoutineSections: RoutineSection[] = [
     tasks: [
       { id: "r15", title: "Screens off", done: false, estimatedMinutes: 0, repeatDaily: true },
       { id: "r16", title: "Lights out by target time", done: false, estimatedMinutes: 0, repeatDaily: true },
+    ],
+  },
+];
+
+// The five sessions from reference/gym-programme.md, in the order they're
+// performed. `weekday` is ISO (1 = Mon … 7 = Sun) and mirrors the recurring
+// calendar rules, which is how "today's session" is found without the two
+// having to reference each other.
+export const seedGymSessions: GymSession[] = [
+  {
+    id: "gs-pull",
+    name: "Heavy Pull",
+    weekday: 2,
+    time: "23:00",
+    exercises: [
+      { id: "gx-p1", name: "Warm-up", sets: "8 min + ramp", cue: "Cat-cow, hip hinges, dead hangs, then ramp the bar" },
+      { id: "gx-p2", name: "Conventional Deadlift", sets: "Top set + 2 back-offs", cue: "Dead stop every rep. No touch-and-go." },
+      { id: "gx-p3", name: "T-Bar Row", sets: "4 × 8–10", cue: "Heaviest rowing of the week" },
+      { id: "gx-p4", name: "Seated Cable Row", sets: "3 × 10–12", cue: "Full stretch, squeeze at the contraction" },
+      { id: "gx-p5", name: "Single-Arm Dumbbell Row", sets: "3 × 10–12 / side", cue: "Range of motion over weight" },
+      { id: "gx-p6", name: "Face Pulls", sets: "3 × 15–20", cue: "Rear delts and posture. Never skip." },
+      { id: "gx-p7", name: "Farmer's Walks", sets: "3 × 40m", cue: "Grip and traps. As heavy as you can hold." },
+    ],
+  },
+  {
+    id: "gs-push",
+    name: "Heavy Push",
+    weekday: 3,
+    time: "23:00",
+    exercises: [
+      { id: "gx-h1", name: "Warm-up", sets: "8 min + ramp", cue: "Band pull-aparts, dislocates, scap push-ups" },
+      { id: "gx-h2", name: "Competition Bench Press", sets: "Top set + 3 back-offs", cue: "Pause every rep on the chest" },
+      { id: "gx-h3", name: "Incline Dumbbell Press", sets: "3 × 8–10", cue: "RPE 8 — leave 2 in the tank" },
+      { id: "gx-h4", name: "Chest-Supported Row", sets: "3 × 10–12", cue: "Balances the pressing volume — don't skip" },
+      { id: "gx-h5", name: "Close-Grip Bench Press", sets: "3 × 8", cue: "Triceps plus bench carryover" },
+      { id: "gx-h6", name: "Cable Flyes or Pec Deck", sets: "3 × 12–15", cue: "Stretch-focused, controlled" },
+      { id: "gx-h7", name: "Rope Tricep Pushdowns", sets: "3 × 12–15", cue: "Drop set on the last one if you fancy" },
+      { id: "gx-h8", name: "Machine Ab Crunch", sets: "3 × 12–15", cue: "Weighted, progressive" },
+    ],
+  },
+  {
+    id: "gs-legs",
+    name: "Legs & Core",
+    weekday: 5,
+    time: "23:00",
+    exercises: [
+      { id: "gx-l1", name: "Warm-up", sets: "8 min", cue: "Leg swings, bodyweight split squats" },
+      { id: "gx-l2", name: "Romanian Deadlift", sets: "4 × 8", cue: "RPE 8 — never grind it" },
+      { id: "gx-l3", name: "Leg Press", sets: "4 × 10–12", cue: "Your main quad driver" },
+      { id: "gx-l4", name: "Bulgarian Split Squat", sets: "3 × 10 / side", cue: "Athleticism and single-leg balance" },
+      { id: "gx-l5", name: "Hamstring Curl", sets: "3 × 12–15" },
+      { id: "gx-l6", name: "Hip Thrust", sets: "3 × 10–12", cue: "Carries over to deadlift lockout" },
+      { id: "gx-l7", name: "Calf Raises", sets: "4 × 12–15", cue: "2s pause at the bottom stretch" },
+      { id: "gx-l8", name: "Hanging Leg Raises", sets: "3 × 10–15", cue: "Doubles as grip work" },
+    ],
+  },
+  {
+    id: "gs-delts",
+    name: "Delts, Lats & Arms",
+    weekday: 6,
+    time: "23:00",
+    exercises: [
+      { id: "gx-d1", name: "Warm-up", sets: "8 min + ramp", cue: "Band pull-aparts, dislocates" },
+      { id: "gx-d2", name: "Overhead Press", sets: "Top set + 3 back-offs", cue: "Standing, strict" },
+      { id: "gx-d3", name: "Lat Pulldown (wide)", sets: "4 × 10–12", cue: "Width day — drive elbows DOWN, not back" },
+      { id: "gx-d4", name: "Straight-Arm Cable Pulldown", sets: "3 × 12–15", cue: "Lats in isolation" },
+      { id: "gx-d5", name: "Dumbbell Lateral Raises", sets: "4 × 12–15", cue: "Lighter than ego wants. Slow eccentric." },
+      { id: "gx-d6", name: "Rear Delt Fly Machine", sets: "3 × 15–20", cue: "High volume, low load" },
+      { id: "gx-d7", name: "EZ Bar Curls", sets: "3 × 8–10", cue: "Heaviest curl of the week" },
+      { id: "gx-d8", name: "Hammer Curls", sets: "3 × 10–12", cue: "Brachialis and forearm" },
+    ],
+  },
+  {
+    id: "gs-volume",
+    name: "Upper Volume",
+    weekday: 7,
+    time: "15:00",
+    exercises: [
+      { id: "gx-v1", name: "Warm-up", sets: "8 min" },
+      { id: "gx-v2", name: "Incline Dumbbell Press", sets: "4 × 10–12" },
+      { id: "gx-v3", name: "Lat Pulldown (neutral/close)", sets: "4 × 10–12", cue: "Different grip from Saturday" },
+      { id: "gx-v4", name: "Seated Cable Row (wide)", sets: "3 × 12–15", cue: "Upper back and rhomboids" },
+      { id: "gx-v5", name: "Dips (assisted or weighted)", sets: "3 × 8–12" },
+      { id: "gx-v6", name: "Incline Dumbbell Curls", sets: "3 × 10–12", cue: "Max bicep stretch" },
+      { id: "gx-v7", name: "Preacher Curls", sets: "3 × 10–12" },
+      { id: "gx-v8", name: "Overhead Rope Extensions", sets: "3 × 12–15", cue: "Long head of the triceps" },
+      { id: "gx-v9", name: "Reverse EZ Bar Curls", sets: "3 × 12–15", cue: "Forearm extensors" },
+      { id: "gx-v10", name: "Wrist Curls + Reverse Wrist Curls", sets: "2 × 15–20 each" },
+      { id: "gx-v11", name: "Dead Hangs", sets: "3 × max time", cue: "Grip and shoulder decompression" },
+      { id: "gx-v12", name: "Cable Crunches", sets: "3 × 12–15" },
     ],
   },
 ];

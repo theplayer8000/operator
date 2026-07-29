@@ -90,8 +90,8 @@ const SECTIONS: Section[] = [
     to: "/gym",
     label: "Gym",
     icon: Dumbbell,
-    status: "planned",
-    blurb: "Training log — separate from the routine's daily gym checklist.",
+    status: "built",
+    blurb: "Today's session, tickable. Five templates from your powerbuilding programme.",
   },
   {
     to: "/forex",

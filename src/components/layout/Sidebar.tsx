@@ -23,20 +23,34 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
+/**
+ * Ordered by build state, not by category: everything built comes first, in
+ * rough order of how often it's opened, then everything unbuilt in the order
+ * it's planned to be built. So the nav doubles as a roadmap — the first
+ * `ComingSoon` you hit is the next thing being made.
+ *
+ * Keep this in step with the status table in CLAUDE.md and `/contents`. When a
+ * feature ships, move it up into the built group rather than leaving it in
+ * place.
+ */
 const NAV_ITEMS = [
   { to: "/contents", label: "Contents", icon: Compass },
+
+  // Built — daily use first
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
-  { to: "/missions", label: "Mission Board", icon: Swords },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/homelab", label: "Homelab", icon: Server },
-  { to: "/learning", label: "Learning", icon: GraduationCap },
   { to: "/gym", label: "Gym", icon: Dumbbell },
+  { to: "/missions", label: "Mission Board", icon: Swords },
+  { to: "/homelab", label: "Homelab", icon: Server },
+  { to: "/log", label: "Activity Log", icon: ScrollText },
+
+  // Not built — in planned build order
+  { to: "/learning", label: "Learning", icon: GraduationCap },
   { to: "/forex", label: "Forex", icon: LineChart },
   { to: "/work", label: "Work", icon: Briefcase },
   { to: "/journey", label: "Journey", icon: Map },
   { to: "/statistics", label: "Statistics", icon: BarChart3 },
-  { to: "/log", label: "Activity Log", icon: ScrollText },
 ];
 
 /**
