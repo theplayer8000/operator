@@ -192,6 +192,12 @@ export function useRoutineData() {
    */
   const schedule = useMemo<ScheduleBlock[]>(() => {
     const blocks = sections
+      // A section with no steps has nothing to do in it, so it's noise on the
+      // schedule — it still renders as a card on /routine, where you can add
+      // steps back. This is also how you retire a block you don't use: empty
+      // it. The seven sections are fixed by the type and can't be deleted, so
+      // emptying is the only "remove" available.
+      .filter((s) => s.tasks.length > 0)
       .map((s) => {
         const start = parseHHMM(s.startTime ?? "") ?? FALLBACK_START;
         const durationMinutes = s.tasks.reduce((a, t) => a + t.estimatedMinutes, 0);
