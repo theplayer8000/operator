@@ -339,37 +339,105 @@ glutamine, and most pre-workout blends beyond their caffeine content.
 
 ## Nutrition
 
-### Protein
+### Your stats
 
-**1.8–2.2 g per kg bodyweight per day.** This is the one nutrition variable
-genuinely worth being strict about. Spread across 3–5 meals, 30–50g per sitting.
+| | |
+|---|---|
+| Bodyweight | **70.5 kg** |
+| Height | **6'1"** (185.4 cm) |
+| BMI | **20.5** — matches the 20.4 you had |
+| Age | *still needed for precision, estimates below assume late 20s/early 30s* |
 
-### Calories
+One clarification, because it changes the advice: **BMI is an index, not a
+percentage** — yours is 20.5, not 20.4%. Worth separating from body fat
+percentage, which is a different number entirely. If 20.4% was actually a body
+fat reading, tell me, because a 20% body fat reading at BMI 20.5 would mean
+relatively little muscle mass and I'd adjust the starting loads down further.
+Assuming for now you meant BMI.
 
-**I need your bodyweight, height and age to give you real numbers** — you
-mentioned providing stats and haven't yet, so here's the method instead:
+### This is the headline: you need to eat more
 
-1. Maintenance ≈ **bodyweight (kg) × 33–35** for someone training 5×/week with
-   an otherwise active job
-2. Returning after a layoff with prior training history, you're in a good
-   position to gain muscle while roughly maintaining weight — **start at
-   maintenance**, not a surplus
-3. Reassess after 4 weeks. Gaining >0.5kg/week means eat slightly less; strength
-   stalling with no weight movement means eat slightly more
+**At 70.5 kg and 6'1", you are lean.** BMI 20.5 is the bottom end of the normal
+range. That is a genuinely good starting point — you have room to add
+significant muscle before body composition becomes any kind of concern — but it
+means one thing plainly:
 
-Send me your stats and I'll give you actual targets.
+**You cannot build the physique you described at maintenance calories.** Thick
+back, wide shoulders, powerful chest — those are mass. Mass requires a surplus.
+Your training programme is sound, but if nutrition doesn't change, it will
+produce a stronger version of the same 70.5 kg frame and you'll wonder why the
+mirror isn't moving.
 
-### Meal timing
+I originally wrote "start at maintenance" before I had your stats. **With them,
+that advice was wrong** — a lean bulk is clearly correct for you.
 
-Less important than total intake, with two exceptions worth bothering about:
-- **Protein spread across the day** beats one huge hit
-- **Something with carbs 1–2h before training** — you're training in the evening
-  after work, so this matters more for you than most
+### Your numbers
+
+**BMR** (Mifflin–St Jeor) ≈ **1,700–1,760 kcal**
+
+**Maintenance** ≈ **2,800–2,900 kcal**
+— using a 1.65 activity multiplier: sedentary Darams mornings, on-your-feet GEH
+evenings, five gym sessions a week.
+
+**Target for lean bulk: 3,100–3,300 kcal/day.**
+
+| Macro | Target | Why |
+|---|---|---|
+| **Protein** | **150 g** (2.1 g/kg) | The one to be strict about. 30–50g per sitting, 4–5 sittings. |
+| **Fat** | **75–85 g** | Hormonal function floor is ~0.8g/kg — don't go below 55g. |
+| **Carbs** | **450–480 g** | The rest. High, because your training volume is high and carbs fuel it. |
+
+**Rate of gain: 0.25 kg per week.** That's ~1 kg a month, ~6 kg over six months
+→ around 76–77 kg. That pace adds mostly muscle. Chasing 1 kg/week adds mostly
+fat and you'd spend next summer cutting it off.
+
+**Reassess every 4 weeks** — weigh yourself 3×/week, same conditions (morning,
+after the toilet, before food), and use the weekly *average*, never a single
+reading. Daily weight swings 1–2 kg on water alone and will mislead you.
+
+- Gaining faster than 0.4 kg/week → drop 200 kcal
+- Not gaining after 3 weeks → add 250 kcal
+- Strength climbing, weight static → you're recomping; fine short-term, but eat
+  more if you want size
+
+### The honest difficulty
+
+**3,200 kcal at 70.5 kg is a lot of food**, and naturally lean people are
+usually lean because they don't find eating that easy. This will be harder than
+the training. Practical levers, in order of usefulness:
+
+1. **Liquid calories.** A shake with 80g oats, 300ml whole milk, a banana, 2
+   tbsp peanut butter and a scoop of whey is ~800 kcal and takes two minutes to
+   drink. One of those a day closes most of the gap on its own.
+2. **Calorie-dense over voluminous.** Olive oil, nuts, nut butters, whole milk,
+   dried fruit, full-fat dairy. Not because "healthy fats" — because 400 kcal of
+   rice fills you up and 400 kcal of peanut butter doesn't.
+3. **Don't skip breakfast before Darams.** Missing a meal at your intake means
+   trying to claw back 700 kcal at midnight, which won't happen.
+
+### Meal timing — fitted to your actual day
+
+| Time | Meal | Notes |
+|---|---|---|
+| ~08:00 | Breakfast, before Darams | Don't skip. Oats/eggs, aim 600–700 kcal |
+| ~14:45 | Lunch, after Darams | Your biggest solid meal. 800–900 kcal |
+| ~16:30 | Pre-GEH | Portable. Shake or sandwich + nuts, 500–600 kcal |
+| ~22:15 | Post-GEH, pre-gym | **Moderate and carb-focused** — see below |
+| ~00:30 | Post-gym | Protein-led. 40g+ protein, plus carbs, 600–700 kcal |
+
+**The 22:15 meal is the one to get right.** You've got about 45 minutes before
+you train, which isn't long enough for a heavy meal to settle. Keep it moderate
+and carb-dominant — white rice, a bagel, fruit, a light shake. Save the big
+protein hit for after the session. Training on a full stomach at 23:00 will make
+deadlifts genuinely unpleasant.
 
 ### Hydration
 
 3–4 litres a day, more on training days. Creatine increases intracellular water
-demand, so this isn't optional once you're supplementing.
+demand, so this isn't optional once you're supplementing. Note you're drinking
+across a 09:00–01:00 waking day — front-load it, because heavy fluid intake
+after the gym means waking up to use the toilet, which costs you the sleep you
+already can't spare.
 
 ---
 
@@ -434,8 +502,14 @@ actually fits each week rather than guessing. Your routine already has the
 
 ## What I need from you
 
-1. **Bodyweight, height, age** — for real calorie targets
-2. **After week 3:** your top-set test numbers, so I can set your TMs properly
-3. **Your current programme**, if you still want me to reconcile this against it
-4. **Confirmation on Darams days** (Thursday or Friday?) and hours — currently
-   assumed 09:00–17:00 on Mon/Tue/Thu in your calendar
+1. **Your age** — the calorie estimate assumes late 20s/early 30s. Everything
+   else is now based on your real stats.
+2. **Whether 20.4 was BMI or body fat %** — see the note in Nutrition. It
+   changes the starting loads if it was body fat.
+3. **After week 3:** your top-set test numbers, so I can set your TMs properly
+4. **Your current programme**, if you still want me to reconcile this against it
+5. **Which day Darams actually is** — Thursday or Friday. Hours are correct now
+   (09:00–14:30, Mon/Tue/Thu in your calendar).
+6. **Roughly when you wake on Darams days** — if it's 08:00 off a 01:00 bedtime,
+   that's 7 hours on your three busiest days, and I'd move bench and deadlift to
+   your non-Darams days so you lift heaviest when you're most recovered.

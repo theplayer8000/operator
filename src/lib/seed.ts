@@ -220,9 +220,11 @@ export const seedUpdates: UpdateEntry[] = [
   },
   {
     id: "u13",
-    title: "Send stats for nutrition targets",
-    detail: "Bodyweight, height and age — the gym programme has the method but not real calorie numbers without them.",
-    status: "pending",
+    title: "Nutrition targets are set",
+    detail:
+      "70.5kg at 6'1' — you're lean, so it's a lean bulk not maintenance: ~3,200 kcal, 150g protein, aiming for 0.25kg a week. Full breakdown in the gym programme. Still need your age to tighten the estimate.",
+    status: "done",
+    date: pastDateKey(0),
   },
   {
     id: "u9",

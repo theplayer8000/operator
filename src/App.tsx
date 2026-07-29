@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "@/layouts/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import DailyRoutine from "@/pages/DailyRoutine";
@@ -12,6 +12,7 @@ import Updates from "@/pages/Updates";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
 import ComingSoon from "@/pages/ComingSoon";
+import NotFound from "@/pages/NotFound";
 
 export default function App() {
   return (
@@ -34,6 +35,20 @@ export default function App() {
         <Route path="/statistics" element={<ComingSoon title="Statistics" />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/updates" element={<Updates />} />
+
+        {/*
+          Renamed routes keep working. A phone left open on /events after the
+          v12 rename rendered a blank page — no matched route, nothing drawn,
+          indistinguishable from the server being down. Redirect rather than
+          404 so an old bookmark or a backgrounded tab just lands correctly.
+        */}
+        <Route path="/events" element={<Navigate to="/calendar" replace />} />
+
+        {/*
+          Catch-all. Without this, any unmatched path renders an empty page —
+          which is what made the rename look like an outage. Never remove it.
+        */}
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );
