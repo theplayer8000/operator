@@ -3,7 +3,7 @@ import { Clock } from "lucide-react";
 import Card from "@/components/ui/Card";
 import { useNow } from "@/hooks/useNow";
 import { useRoutineData } from "@/hooks/useRoutineData";
-import { formatHHMM, minutesIntoDay, formatDuration } from "@/lib/time";
+import { formatHHMM, minutesIntoDay, formatDuration, longDate } from "@/lib/time";
 
 /**
  * A clock on a dashboard is decorative — the phone already shows the time.
@@ -21,11 +21,7 @@ export default function CurrentTime() {
   const current = schedule.find((b) => nowMinutes >= b.start && nowMinutes < b.end);
   const next = schedule.find((b) => b.start > nowMinutes);
 
-  const dateLabel = now.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
+  const dateLabel = longDate(now);
 
   return (
     <Card title="Now" icon={<Clock size={15} />} span={1}>

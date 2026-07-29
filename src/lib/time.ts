@@ -100,6 +100,30 @@ export function daysFromToday(key: string): number | null {
   return Math.round((target.getTime() - today.getTime()) / 86_400_000);
 }
 
+/** 1 → "1st", 2 → "2nd", 3 → "3rd", 4 → "4th", 21 → "21st". */
+export function ordinal(day: number): string {
+  // 11th/12th/13th are the exception the naive rule gets wrong.
+  const teens = day % 100;
+  if (teens >= 11 && teens <= 13) return `${day}th`;
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
+
+/** "Wednesday 29th July 2026" — the long form, written how it's spoken. */
+export function longDate(date: Date): string {
+  const weekday = date.toLocaleDateString("en-GB", { weekday: "long" });
+  const month = date.toLocaleDateString("en-GB", { month: "long" });
+  return `${weekday} ${ordinal(date.getDate())} ${month} ${date.getFullYear()}`;
+}
+
 /** "Today", "Tomorrow", "In 4 days", "3 days ago", else a short date. */
 export function relativeDay(key: string): string {
   const diff = daysFromToday(key);

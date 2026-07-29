@@ -16,8 +16,13 @@ import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzip as gzipCb } from "node:zlib";
+import { promisify } from "node:util";
 import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
+import { recordRequest, listClients } from "./clients.mjs";
+
+const gzip = promisify(gzipCb);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OPERATOR_PORT ?? 5174);
@@ -159,7 +164,10 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
-async function serveStatic(res, pathname) {
+/** Text formats worth compressing. Images and woff2 are already compressed. */
+const COMPRESSIBLE = new Set([".html", ".js", ".css", ".json", ".svg"]);
+
+async function serveStatic(req, res, pathname) {
   // Anything that isn't a real file falls through to index.html — the app is
   // a client-side router, so /missions/<id> must not 404 on a hard refresh.
   let filePath = join(DIST_DIR, pathname);
@@ -169,8 +177,35 @@ async function serveStatic(res, pathname) {
   if (!existsSync(filePath)) {
     return json(res, 404, { error: "not built — run `npm run build` first" });
   }
+
+  const ext = extname(filePath);
   const body = await readFile(filePath);
-  res.writeHead(200, { "content-type": MIME[extname(filePath)] ?? "application/octet-stream" });
+  const headers = { "content-type": MIME[ext] ?? "application/octet-stream" };
+
+  // Cache policy, which is what makes the *second* load fast:
+  //
+  // Vite gives everything in /assets a content-hashed filename, so a given URL
+  // can never change meaning — safe to cache for a year. index.html must never
+  // be cached, or the browser would keep loading an old build's asset URLs and
+  // no deploy would ever reach the phone.
+  if (pathname.startsWith("/assets/")) {
+    headers["cache-control"] = "public, max-age=31536000, immutable";
+  } else {
+    headers["cache-control"] = "no-cache";
+  }
+
+  // The JS bundle is ~720 KB raw and ~200 KB gzipped. Serving it uncompressed
+  // was sending 3.6x more data than necessary, which over 4G on a phone is
+  // most of the wait. Node has zlib built in, so this costs no dependency —
+  // and the app is the one thing this server exists to deliver.
+  const wantsGzip = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
+  if (wantsGzip && COMPRESSIBLE.has(ext)) {
+    const compressed = await gzip(body);
+    res.writeHead(200, { ...headers, "content-encoding": "gzip", vary: "Accept-Encoding" });
+    return res.end(compressed);
+  }
+
+  res.writeHead(200, headers);
   res.end(body);
 }
 
@@ -180,7 +215,16 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
   const { pathname } = url;
 
+  // Record every request except the polling endpoint that reads this back —
+  // otherwise the Dev page watching for clients would keep itself permanently
+  // "active" and be the loudest thing on the list.
+  if (pathname !== "/api/clients") recordRequest(req);
+
   try {
+    if (pathname === "/api/clients") {
+      return json(res, 200, listClients());
+    }
+
     if (pathname === "/api/health") {
       return json(res, 200, { ok: true, schemaVersion: SCHEMA_VERSION, dataFile: DATA_FILE });
     }
@@ -252,7 +296,7 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: `no route for ${req.method} ${pathname}` });
     }
 
-    if (SERVE_DIST) return await serveStatic(res, pathname);
+    if (SERVE_DIST) return await serveStatic(req, res, pathname);
     return json(res, 404, { error: "API only — the dev server serves the app" });
   } catch (err) {
     console.error("[operator]", err);

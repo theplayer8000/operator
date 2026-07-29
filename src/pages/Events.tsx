@@ -53,6 +53,27 @@ export default function Events() {
 
   const inYear = upcoming.filter((e) => e.date.startsWith(String(year)));
 
+  /**
+   * Months already gone are hidden by default. Twelve grids is a lot to scroll
+   * past on a phone, and most of them are history — by December you'd be
+   * scrolling through eleven dead months to reach the one you're in.
+   *
+   * Only ever hides months strictly before the current one *in the current
+   * year*: a past year is entirely history so hiding it all would leave a blank
+   * page, and a future year has no past months to hide.
+   */
+  const [showPast, setShowPast] = useState(false);
+  const now = new Date();
+  const thisYear = now.getFullYear();
+  const thisMonth = now.getMonth();
+
+  const firstVisibleMonth = !showPast && year === thisYear ? thisMonth : 0;
+  const hiddenCount = firstVisibleMonth;
+  const months = Array.from(
+    { length: 12 - firstVisibleMonth },
+    (_, i) => i + firstVisibleMonth
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
@@ -99,8 +120,25 @@ export default function Events() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setShowPast(true)}
+              className="w-full mb-3 px-3 min-h-[44px] rounded-badge border border-base-600 border-dashed text-xs text-ink-500 hover:text-ink-300 hover:border-base-500 transition-colors"
+            >
+              Show {hiddenCount} earlier {hiddenCount === 1 ? "month" : "months"} of {year}
+            </button>
+          )}
+          {showPast && year === thisYear && thisMonth > 0 && (
+            <button
+              onClick={() => setShowPast(false)}
+              className="w-full mb-3 px-3 min-h-[44px] rounded-badge border border-base-600 border-dashed text-xs text-ink-500 hover:text-ink-300 hover:border-base-500 transition-colors"
+            >
+              Hide earlier months
+            </button>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {Array.from({ length: 12 }, (_, month) => (
+            {months.map((month) => (
               <MonthGrid
                 key={month}
                 year={year}
