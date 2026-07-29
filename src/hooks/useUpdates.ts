@@ -24,6 +24,29 @@ export function useUpdates() {
     [entries]
   );
 
+  /**
+   * Shipped entries grouped under their date, newest day first — a changelog
+   * rather than a flat list. Entries with no date fall into a trailing
+   * "Undated" group rather than being dropped, since a `done` entry without a
+   * date is a data oddity worth seeing rather than hiding.
+   */
+  const doneByDate = useMemo(() => {
+    const groups = new Map<string, typeof done>();
+    for (const entry of done) {
+      const key = entry.date ?? "";
+      const list = groups.get(key);
+      if (list) list.push(entry);
+      else groups.set(key, [entry]);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => {
+        if (a[0] === "") return 1;
+        if (b[0] === "") return -1;
+        return b[0].localeCompare(a[0]);
+      })
+      .map(([date, items]) => ({ date, items }));
+  }, [done]);
+
   function addEntry(input: { title: string; detail?: string; status?: UpdateStatus }) {
     if (!input.title.trim()) return;
     const status = input.status ?? "pending";
@@ -61,6 +84,7 @@ export function useUpdates() {
     entries,
     pending,
     done,
+    doneByDate,
     addEntry,
     updateEntry,
     markDone,

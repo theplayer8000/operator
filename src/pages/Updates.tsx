@@ -2,20 +2,48 @@ import { useState } from "react";
 import { ClipboardList, Plus, Pencil, Check, X, RotateCcw, CheckCircle2 } from "lucide-react";
 import { useUpdates } from "@/hooks/useUpdates";
 import ConfirmButton from "@/components/ui/ConfirmButton";
-import { relativeDay } from "@/lib/time";
+import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
 
 const INPUT =
   "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
 
+/** "Today", "Yesterday", else "Mon 27 July" — a changelog date heading. */
+function formatChangelogDate(dateKey: string): string {
+  const relative = relativeDay(dateKey);
+  if (relative === "Today" || relative === "Yesterday") {
+    const date = fromDateKey(dateKey);
+    return date
+      ? `${relative} · ${date.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`
+      : relative;
+  }
+  const date = fromDateKey(dateKey);
+  return (
+    date?.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }) ?? dateKey
+  );
+}
+
 /**
- * A running log of what's changed in Operator, and what's still queued —
- * meant to be read here, not dug out of git history. Calm/administrative
- * register, the same as Settings: this is a utility page, not a feature with
- * a personality of its own.
+ * Two jobs on one page, and they're deliberately different shapes:
+ *
+ * - **Queue** — what the owner wants doing. The capture box at the top is the
+ *   point of the feature: it's how work gets handed over between sessions,
+ *   rather than being remembered or retyped into a chat. Anything added here
+ *   gets picked up next time.
+ * - **Changelog** — what's shipped, grouped under date headings, newest day
+ *   first. A flat list of finished items isn't a changelog; the dates are what
+ *   make it readable as history.
+ *
+ * Calm/administrative register, the same as Settings — a utility page, not a
+ * feature with a personality of its own.
  */
 export default function Updates() {
-  const { pending, done, addEntry, updateEntry, markDone, markPending, deleteEntry } =
+  const { pending, done, doneByDate, addEntry, updateEntry, markDone, markPending, deleteEntry } =
     useUpdates();
 
   const [title, setTitle] = useState("");
@@ -51,19 +79,23 @@ export default function Updates() {
         <div>
           <h1 className="font-display text-lg text-ink-100 leading-tight">Updates</h1>
           <p className="text-xs text-ink-500">
-            {done.length} shipped · {pending.length} pending
+            {pending.length} queued · {done.length} shipped
           </p>
         </div>
       </div>
 
       {/* --- Quick capture --- */}
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up space-y-2">
+        <p className="text-xs text-ink-700 leading-relaxed">
+          Anything you add here lands in the queue below, and I pick it up next time we work on
+          Operator. Feature, bug, half-formed idea — it doesn't need to be tidy.
+        </p>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="Jot down something to build or fix later…"
-          aria-label="New pending update title"
+          placeholder="What do you want doing?"
+          aria-label="New request title"
           className={INPUT}
         />
         <div className="flex gap-2">
@@ -71,13 +103,13 @@ export default function Updates() {
             value={detail}
             onChange={(e) => setDetail(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder="Detail (optional)"
+            placeholder="Any detail (optional)"
             aria-label="Detail"
             className={`${INPUT} flex-1`}
           />
           <button
             onClick={submit}
-            aria-label="Add pending update"
+            aria-label="Add request"
             className="w-11 h-11 shrink-0 rounded-badge bg-xp text-base-950 flex items-center justify-center hover:bg-xp-bright transition-colors"
           >
             <Plus size={16} />
@@ -88,7 +120,8 @@ export default function Updates() {
       {/* --- Pending --- */}
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
         <header className="mb-3">
-          <h2 className="font-display text-sm font-medium text-ink-300">Pending</h2>
+          <h2 className="font-display text-sm font-medium text-ink-300">Queue</h2>
+          <p className="text-xs text-ink-700">Waiting to be built, newest of yours first.</p>
         </header>
 
         {pending.length === 0 ? (
@@ -170,17 +203,31 @@ export default function Updates() {
         )}
       </section>
 
-      {/* --- Shipped --- */}
+      {/* --- Changelog --- */}
       <section className="card-base p-4 sm:p-5 animate-fade-up">
-        <header className="mb-3">
-          <h2 className="font-display text-sm font-medium text-ink-300">Shipped</h2>
+        <header className="mb-4">
+          <h2 className="font-display text-sm font-medium text-ink-300">Changelog</h2>
+          <p className="text-xs text-ink-700">Everything that's shipped, newest day first.</p>
         </header>
 
         {done.length === 0 ? (
           <p className="text-sm text-ink-700">Nothing logged yet.</p>
         ) : (
-          <ul className="space-y-2">
-            {done.map((entry) => (
+          doneByDate.map(({ date, items }) => (
+            <div key={date || "undated"} className="mb-5 last:mb-0">
+              {/* Date heading — this is what makes it read as a changelog
+                  rather than a flat list of finished things. */}
+              <div className="flex items-baseline gap-2 mb-2 pb-1.5 border-b border-base-600">
+                <h3 className="font-display text-xs text-ink-100">
+                  {date ? formatChangelogDate(date) : "Undated"}
+                </h3>
+                <span className="font-mono text-[11px] text-ink-700">
+                  {items.length} {items.length === 1 ? "change" : "changes"}
+                </span>
+              </div>
+
+              <ul className="space-y-2">
+                {items.map((entry) => (
               <li
                 key={entry.id}
                 className="p-3 rounded-badge border border-base-600 bg-base-700/30"
@@ -226,11 +273,6 @@ export default function Updates() {
                           {entry.detail}
                         </p>
                       )}
-                      {entry.date && (
-                        <p className="text-[11px] font-mono text-ink-700 mt-1">
-                          {relativeDay(entry.date)}
-                        </p>
-                      )}
                     </div>
                     <button
                       onClick={() => markPending(entry.id)}
@@ -256,8 +298,10 @@ export default function Updates() {
                   </div>
                 )}
               </li>
-            ))}
-          </ul>
+                ))}
+              </ul>
+            </div>
+          ))
         )}
       </section>
     </div>
