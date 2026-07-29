@@ -32,7 +32,7 @@ export default function CurrentTime() {
       <div className="flex flex-col h-full">
         {/* The clock and date open the calendar; the block below opens the routine. */}
         <Link
-          to="/events"
+          to="/calendar"
           className="group block -mx-1 px-1 rounded-badge hover:bg-base-700/40 transition-colors"
           aria-label="Open the calendar"
         >

@@ -94,23 +94,38 @@ code.
 Known gaps: port-open is not health (**OPS-019**); no grouping or ordering of
 tiles beyond insertion order; no favicon or icon per service.
 
-### Events — `/events`
+### Calendar — `/calendar`
+
+Labelled **Calendar** in the nav; the feature underneath is still named Events
+internally (`events.records`, `useEvents`, `CalendarEvent`) — same split as
+"Mission Board" over `missions.records`. Only the user-facing label and route
+changed; `docs/data-model.md`'s Events section still covers the type.
 
 The year on a calendar: twelve month grids, Monday-first, with coloured dots per
 day by kind (work / personal / admin / health / other). Pick a day to see what's
 on it, add one, or edit any field of an existing one — including its **date**,
 which moves it off the day you're looking at and follows the selection there.
-A "Next up" list runs alongside. The Dashboard's Upcoming Events widget reads
-the same feature and links in, and the "Now" card's clock/date now opens the
+Timing is set as a **start and finish**, not a duration in minutes — pick two
+clock times and the app does the subtraction; editing an existing event
+reconstructs the finish time from the stored start + duration so it round-trips
+cleanly. A "Next up" list runs alongside. The Dashboard's Upcoming Events widget
+reads the same feature and links in, and the "Now" card's clock/date opens the
 calendar directly.
 
+**On a phone, tapping a day opens the day panel as a floating overlay**, not a
+block sitting after twelve month grids in document flow. It used to be the
+latter — reachable only by scrolling past however many months came before the
+one you tapped — which read as broken rather than as a long page. Below `lg` a
+tap opens a scrim + floating card (Escape or tapping the scrim closes it, body
+scroll locked underneath, same pattern as the Sidebar's mobile drawer); at
+`lg`+ the same component renders as the normal static sidebar column, unchanged.
+
 **Timed events sync onto the Daily Routine's Day Schedule, read-only.** Give an
-event a time (and optionally a duration, added in v11) and it shows up
-interleaved with today's routine blocks on `/routine` — a call at 14:00 sits
-between the Work and Gym blocks the way it actually happens in your day, rather
-than living only on a separate calendar page. Events still owns the data
-exclusively; the routine page only reads it, the same pattern
-`HomelabStatus` and `CurrentTime` already use.
+event a start and finish and it shows up interleaved with today's routine
+blocks on `/routine` — a call at 14:00 sits between the Work and Gym blocks the
+way it actually happens in your day, rather than living only on a separate
+calendar page. Events still owns the data exclusively; the routine page only
+reads it, the same pattern `HomelabStatus` and `CurrentTime` already use.
 
 **Fully local — no external permissions.** This is ordinary data in
 `events.records`. What *would* need permissions is syncing a third-party

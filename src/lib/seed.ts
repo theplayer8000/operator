@@ -131,6 +131,14 @@ export const seedRoutineSections: RoutineSection[] = [
 // file) whenever something real ships; this array only seeds a fresh store.
 export const seedUpdates: UpdateEntry[] = [
   {
+    id: "u0",
+    title: "Calendar: easier times, and fixed on mobile",
+    detail:
+      "Renamed Events to Calendar. Setting a time now means picking a start and finish instead of typing minutes. And on a phone, tapping a day opens a popup instead of making you scroll past every other month to reach the form.",
+    status: "done",
+    date: pastDateKey(0),
+  },
+  {
     id: "u1",
     title: "Events calendar synced into the Day Schedule",
     detail:

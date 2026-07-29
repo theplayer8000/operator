@@ -21,7 +21,7 @@ export default function App() {
         <Route path="/routine" element={<DailyRoutine />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
-        <Route path="/events" element={<Events />} />
+        <Route path="/calendar" element={<Events />} />
         <Route path="/homelab" element={<Homelab />} />
         <Route path="/log" element={<ActivityLog />} />
         <Route path="/contents" element={<Contents />} />

@@ -28,7 +28,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
   { to: "/missions", label: "Mission Board", icon: Swords },
-  { to: "/events", label: "Events", icon: CalendarDays },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/homelab", label: "Homelab", icon: Server },
   { to: "/learning", label: "Learning", icon: GraduationCap },
   { to: "/gym", label: "Gym", icon: Dumbbell },

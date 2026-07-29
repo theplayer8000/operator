@@ -105,7 +105,7 @@ nothing may be desktop-only.
 Below it the sidebar becomes a drawer; above it, a persistent rail. `sm`
 (640px) is used for padding and type-size tweaks only.
 
-**The four rules that matter:**
+**The rules that matter:**
 
 1. **44px minimum touch target.** Use `min-h-[44px]` on rows and `w-11 h-11`
    on icon buttons. The old 28px (`w-7 h-7`) buttons were unusable on a phone.
@@ -122,6 +122,18 @@ Below it the sidebar becomes a drawer; above it, a persistent rail. `sm`
    `overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0` — a single
    scrollable strip that bleeds to the screen edge on mobile and is inert on
    desktop.
+5. **A detail panel that sits after a long list in document flow is a trap on
+   mobile.** Calendar's day panel used to render below all twelve month grids;
+   selecting a day near the top of the year meant scrolling past everything
+   below it to reach the form, which read as broken rather than as a long
+   page (the owner's words: *"I thought it was broken at first"*). The fix,
+   established in `pages/Events.tsx` and reusable for the next page with the
+   same shape (a grid/list you pick from, plus a panel for the selection):
+   below `lg`, the panel becomes a scrim + floating overlay on selection
+   (Escape or scrim-tap closes it, `document.body.style.overflow = "hidden"`
+   while open — same mechanism as the Sidebar's mobile drawer); at `lg`+ the
+   same component renders as a normal static block, unchanged. One component,
+   two positioning modes via conditional classes — not two components.
 
 Also: `min-w-0` on flex children that contain truncating text, or the flexbox
 default (`min-width: auto`) makes them refuse to shrink and pushes the page
@@ -137,10 +149,14 @@ Tracked properly in `known-issues.md`; summarised here so they aren't copied as
 precedent:
 
 - **Hardcoded hex** in `components/ui/Confetti.tsx:3` and
-  `components/dashboard/ProductivityScore.tsx:24-42`. The Recharts one is close
-  to unavoidable (it takes props, not classes); the Confetti one is not
-  (**OPS-008**). The `accent-[#E8B04D]` in Mission Detail was replaced with
-  `accent-xp` in v6.
+  `components/missions/MissionBadges.tsx` (`STATUS_HEX`, feeding
+  `MissionStatusChart`'s Recharts pie). The Recharts one is close to
+  unavoidable (it takes props, not classes — and its values are the same
+  design tokens as `STATUS_META`'s Tailwind classes, kept in step by comment);
+  the Confetti one is not (**OPS-008**). The `accent-[#E8B04D]` in Mission
+  Detail was replaced with `accent-xp` in v6. (`ProductivityScore.tsx`, the
+  earlier holder of this note, was deleted in v9 — see
+  [ADR 0008](decisions/0008-dashboard-reads-the-real-board.md).)
 - **The accent switcher is inert.** `ThemeContext` offers four accents and sets
   a `--accent` CSS variable, but `ShieldProgress.tsx:10` is its only consumer —
   everything else uses the fixed `xp` token, and no UI exists to change it

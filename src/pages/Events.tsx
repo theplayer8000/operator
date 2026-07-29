@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useEvents } from "@/hooks/useEvents";
 import MonthGrid from "@/components/events/MonthGrid";
@@ -12,6 +12,44 @@ export default function Events() {
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [selected, setSelected] = useState<string | null>(todayKey);
 
+  /**
+   * Below `lg`, the day panel is a floating overlay instead of a block that
+   * sits after twelve month grids in document flow. It used to be the latter
+   * — reachable only by scrolling past however many months came before the
+   * one you tapped, which read as broken rather than as a page with a lot on
+   * it. `selected` still drives which day is shown; this only controls
+   * whether that day's panel is currently visible as an overlay on a narrow
+   * screen. On `lg+` the CSS below makes it a normal static block regardless
+   * of this flag, so desktop behaviour is unchanged.
+   */
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+
+  function openDay(dateKey: string) {
+    setSelected(dateKey);
+    setMobilePanelOpen(true);
+  }
+
+  // Escape closes it, and a locked body stops the page scrolling underneath
+  // — same pattern as the Sidebar's mobile drawer. Gated on the actual
+  // viewport width (checked once, when the panel opens) because unlike the
+  // drawer's hamburger button, a day can be tapped at any screen size —
+  // locking the desktop page for an overlay that isn't shown there would be
+  // a real bug, not just an unnecessary effect.
+  useEffect(() => {
+    if (!mobilePanelOpen) return;
+    if (window.innerWidth >= 1024) return;
+
+    document.body.style.overflow = "hidden";
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobilePanelOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mobilePanelOpen]);
+
   const inYear = upcoming.filter((e) => e.date.startsWith(String(year)));
 
   return (
@@ -22,7 +60,7 @@ export default function Events() {
             <CalendarDays size={18} />
           </div>
           <div>
-            <h1 className="font-display text-lg text-ink-100 leading-tight">Events</h1>
+            <h1 className="font-display text-lg text-ink-100 leading-tight">Calendar</h1>
             <p className="text-xs text-ink-500">
               {inYear.length} upcoming in {year}
             </p>
@@ -69,25 +107,48 @@ export default function Events() {
                 byDay={byDay}
                 todayKey={todayKey}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={openDay}
               />
             ))}
           </div>
         </div>
 
         <div className="lg:col-span-1 space-y-4">
-          {selected && (
-            <DayPanel
-              dateKey={selected}
-              events={byDay.get(selected) ?? []}
-              onAdd={addEvent}
-              onUpdate={updateEvent}
-              onDelete={deleteEvent}
-              onMoved={(newDate) => {
-                setYear(Number(newDate.slice(0, 4)));
-                setSelected(newDate);
-              }}
+          {/* Scrim — mobile only, and only while the panel is actually the
+              overlay (it's `lg:hidden`, so it never shows or blocks clicks
+              on desktop even though `mobilePanelOpen` can be true there). */}
+          {mobilePanelOpen && (
+            <div
+              onClick={() => setMobilePanelOpen(false)}
+              aria-hidden
+              className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
             />
+          )}
+
+          {selected && (
+            <div
+              className={
+                mobilePanelOpen
+                  ? "fixed inset-x-3 bottom-3 z-50 max-h-[80vh] overflow-y-auto lg:static lg:inset-auto lg:z-auto lg:max-h-none lg:overflow-visible"
+                  : "hidden lg:block"
+              }
+            >
+              <div className="lg:hidden flex justify-center pb-2" aria-hidden>
+                <span className="w-10 h-1 rounded-full bg-base-500" />
+              </div>
+              <DayPanel
+                dateKey={selected}
+                events={byDay.get(selected) ?? []}
+                onAdd={addEvent}
+                onUpdate={updateEvent}
+                onDelete={deleteEvent}
+                onMoved={(newDate) => {
+                  setYear(Number(newDate.slice(0, 4)));
+                  setSelected(newDate);
+                }}
+                onClose={() => setMobilePanelOpen(false)}
+              />
+            </div>
           )}
 
           <div className="card-base p-4 sm:p-5 animate-fade-up">
@@ -101,7 +162,7 @@ export default function Events() {
                     <button
                       onClick={() => {
                         setYear(Number(event.date.slice(0, 4)));
-                        setSelected(event.date);
+                        openDay(event.date);
                       }}
                       className="w-full flex items-center gap-2 min-h-[44px] px-2 -mx-2 rounded-badge hover:bg-base-700/60 text-left transition-colors"
                     >

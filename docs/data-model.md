@@ -170,8 +170,21 @@ full field list. Structural notes:
 
 ### Events
 
+**Labelled "Calendar" in the UI as of v12** (route `/calendar`) — the type,
+hook, storage key and folder are still named Events, matching how "Mission
+Board" sits over `missions.records`. This section covers the internal shape.
+
 `CalendarEvent` is title, `date`, optional `time`, optional `durationMinutes`,
 `notes`, and a `kind` used only for colour.
+
+**The UI never shows a duration field.** `DayPanel` takes a start and a finish
+time and computes `durationMinutes` from the difference (`rangeToDuration()`);
+editing an existing event reconstructs the finish time from the stored start +
+duration so the round trip is exact. An end at or before the start is treated
+as "no duration", not an error — the event still saves as a point-in-time
+entry. Two clock times are a better interface than typing a number of minutes,
+and the stored shape (`time` + `durationMinutes`) didn't need to change to get
+that — it's what `RoutineTimeline`'s sync already reads.
 
 **`date` is a local calendar day (`"YYYY-MM-DD"`), not a timestamp.** A birthday
 is the 3rd of March wherever you are. Build it with `toDateKey()` from

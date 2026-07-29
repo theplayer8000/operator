@@ -85,7 +85,7 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     keys: ["missions.records"],
   },
   {
-    label: "Events",
+    label: "Calendar",
     description: "Every event on the calendar, past and future.",
     keys: ["events.records"],
   },

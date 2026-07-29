@@ -59,8 +59,8 @@ const SECTIONS: Section[] = [
     blurb: "Long-running efforts with milestones, dependencies and their own history.",
   },
   {
-    to: "/events",
-    label: "Events",
+    to: "/calendar",
+    label: "Calendar",
     icon: CalendarDays,
     status: "built",
     blurb: "The year on a calendar. What's coming, and what already happened.",

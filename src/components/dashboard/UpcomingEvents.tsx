@@ -21,7 +21,7 @@ export default function UpcomingEvents() {
       icon={<CalendarClock size={15} />}
       span={1}
       action={
-        <Link to="/events" className="text-xs text-ink-500 hover:text-ink-300 transition-colors">
+        <Link to="/calendar" className="text-xs text-ink-500 hover:text-ink-300 transition-colors">
           Calendar →
         </Link>
       }
@@ -35,7 +35,7 @@ export default function UpcomingEvents() {
             return (
               <li key={event.id}>
                 <Link
-                  to="/events"
+                  to="/calendar"
                   className="flex items-center gap-3 min-h-[44px] px-2 -mx-2 rounded-badge hover:bg-base-700/60 transition-colors"
                 >
                   <span className="w-10 h-10 rounded-badge bg-base-700 border border-base-600 flex flex-col items-center justify-center shrink-0">

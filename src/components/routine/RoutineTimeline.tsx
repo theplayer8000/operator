@@ -224,7 +224,7 @@ export default function RoutineTimeline({ schedule }: { schedule: ScheduleBlock[
         <p className="text-[11px] text-ink-700 mt-3 pt-3 border-t border-base-600">
           <CalendarClock size={11} className="inline mr-1 -mt-0.5" />
           {todayEvents.length} timed event{todayEvents.length === 1 ? "" : "s"} from today's
-          calendar — edit them on the <span className="text-ink-500">Events</span> page.
+          calendar — edit them on the <span className="text-ink-500">Calendar</span> page.
         </p>
       )}
     </div>
