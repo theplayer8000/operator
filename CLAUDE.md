@@ -72,9 +72,11 @@ table above. Three hard conditions come with it:
   secrets or equivalent runtime config in production.
 - **The embedded terminal runs for named devices** ([ADR 0011](docs/decisions/0011-remote-terminal-for-authorised-devices.md),
   amending ADR 0009's local-only restriction now that authentication exists).
-  Off unless `OPERATOR_TERMINAL=1`, and then only for devices listed in
-  `OPERATOR_TERMINAL_DEVICES` — being a known tailnet device gets you the app,
-  not a shell. **The boundary is authentication, not the command allowlist:**
+  **Disarmed** on every start (`OPERATOR_TERMINAL=1` starts it armed), and
+  armable from the app only by a device listed in `OPERATOR_TERMINAL_DEVICES` —
+  being a known tailnet device gets you the app, not a shell. That list is
+  environment-only and **must not become app-editable**, or a device could grant
+  itself execution. **The boundary is authentication, not the command allowlist:**
   allowing `claude` is allowing arbitrary execution, because Claude Code runs
   commands. Never relax the auth on the grounds that commands are restricted.
   There is deliberately **no shell** (argv only, `shell: false`); if you hit

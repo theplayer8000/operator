@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { TerminalSquare, Play, Square, RotateCcw, ShieldAlert } from "lucide-react";
+import { TerminalSquare, Play, Square, RotateCcw, ShieldAlert, Power } from "lucide-react";
 
 interface RunSummary {
   id: string;
@@ -18,6 +18,7 @@ interface RunSummary {
 interface RunsBody {
   enabled: boolean;
   authorised?: boolean;
+  canManage?: boolean;
   reason?: string;
   allowed?: string[];
   authorisedDevices?: string[];
@@ -145,6 +146,38 @@ export default function TerminalPanel() {
     }
   }
 
+  /**
+   * Arm or disarm from the app.
+   *
+   * This exists because requiring an environment variable set *at the machine*
+   * to enable the feature built for being *away* from it was self-defeating. The
+   * device list still comes from the environment, so this switches on a
+   * capability the device already has — it cannot grant itself one.
+   */
+  async function setArmed(next: boolean) {
+    setError(null);
+    try {
+      const res = await fetch("/api/terminal/enable", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const body = (await res.json()) as { enabled?: boolean; error?: string; reason?: string };
+      if (!res.ok) {
+        setError(body.reason ?? body.error ?? `server returned ${res.status}`);
+        return;
+      }
+      if (!next) {
+        abortRef.current?.abort();
+        setActiveId(null);
+        setOutput("");
+      }
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function stop() {
     if (!activeId) return;
     await fetch(`/api/terminal/stop?id=${encodeURIComponent(activeId)}`, { method: "POST" }).catch(
@@ -152,8 +185,10 @@ export default function TerminalPanel() {
     );
   }
 
-  const disabled = info !== null && !info.enabled;
-  const unauthorised = info !== null && info.enabled && info.authorised === false;
+  const canManage = info?.canManage === true;
+  const armed = info?.enabled === true;
+  // Listed but not armed is the normal resting state, not an error.
+  const notListed = info !== null && !canManage;
 
   return (
     <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
@@ -163,46 +198,66 @@ export default function TerminalPanel() {
           <div className="min-w-0">
             <h2 className="font-display text-sm font-medium text-ink-300">Terminal</h2>
             <p className="text-xs text-ink-700 truncate">
-              {disabled
-                ? "Disabled"
-                : unauthorised
-                  ? "This device can't run commands"
-                  : info?.you?.device
-                    ? `Running as ${info.you.device}`
-                    : "No shell — arguments only"}
+              {notListed
+                ? "This device can't run commands"
+                : armed
+                  ? `Armed${info?.you?.device ? ` · ${info.you.device}` : ""} — no shell`
+                  : "Disarmed"}
             </p>
           </div>
         </div>
-        <button
-          onClick={() => void refresh()}
-          aria-label="Refresh terminal state"
-          title="Refresh"
-          className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
-        >
-          <RotateCcw size={14} />
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {canManage && (
+            <button
+              onClick={() => void setArmed(!armed)}
+              aria-pressed={armed}
+              aria-label={armed ? "Disarm the terminal" : "Arm the terminal"}
+              title={
+                armed
+                  ? "Disarm — no commands can be run until it's switched back on"
+                  : "Arm the terminal for this session. A server restart disarms it again."
+              }
+              className={`flex items-center gap-2 px-3 min-h-[44px] rounded-badge border text-xs transition-colors ${
+                armed
+                  ? "border-xp/40 bg-xp/10 text-xp hover:bg-xp/20"
+                  : "border-base-600 text-ink-500 hover:text-ink-100 hover:border-base-500"
+              }`}
+            >
+              <Power size={14} />
+              <span className="hidden sm:inline">{armed ? "Armed" : "Arm"}</span>
+            </button>
+          )}
+          <button
+            onClick={() => void refresh()}
+            aria-label="Refresh terminal state"
+            title="Refresh"
+            className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
+          >
+            <RotateCcw size={14} />
+          </button>
+        </div>
       </header>
 
-      {disabled && (
-        <p className="text-sm text-ink-700 leading-relaxed">
-          {info?.reason ??
-            "Start the server with OPERATOR_TERMINAL=1 to enable it."}{" "}
-          It is off by default so an upgrade can never quietly expose a shell.
-        </p>
-      )}
-
-      {unauthorised && (
+      {notListed && (
         <div className="flex items-start gap-2 p-3 rounded-badge border border-xp/30 bg-xp/5">
           <ShieldAlert size={14} className="text-xp shrink-0 mt-0.5" />
           <p className="text-xs text-ink-300 leading-relaxed">
             {info?.reason}. Being a known device on the tailnet gets you the app, not a shell — add
             this device to <span className="font-mono text-ink-500">OPERATOR_TERMINAL_DEVICES</span>{" "}
-            and restart the server.
+            and restart the server. That list is deliberately not editable from here, so a device
+            can never grant itself execution.
           </p>
         </div>
       )}
 
-      {info?.enabled && info.authorised && (
+      {canManage && !armed && (
+        <p className="text-sm text-ink-700 leading-relaxed">
+          Disarmed. Press <span className="text-ink-500">Arm</span> to enable it for this session —
+          a server restart disarms it again, so it is never left on by accident.
+        </p>
+      )}
+
+      {canManage && armed && (
         <>
           <div className="flex items-center gap-2 mb-2">
             <input

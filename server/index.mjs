@@ -30,7 +30,9 @@ import { recordRequest, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
 import { identify, tokenConfigured } from "./auth.mjs";
 import {
-  TERMINAL_ENABLED,
+  isEnabled,
+  setEnabled,
+  deviceMayManage,
   deviceAuthorised,
   describeRun,
   getRun,
@@ -328,20 +330,32 @@ const server = createServer(async (req, res) => {
     // known tailnet device gets you the app, not a shell.
 
     if (pathname === "/api/terminal/runs") {
-      if (!TERMINAL_ENABLED) {
-        return json(res, 200, {
-          enabled: false,
-          reason: "the terminal is disabled — start the server with OPERATOR_TERMINAL=1",
-          runs: [],
-        });
-      }
+      const manage = deviceMayManage(identity);
       const allowed = deviceAuthorised(identity);
       return json(res, 200, {
         ...listRuns(),
         authorised: allowed.ok,
+        // Whether this device may arm/disarm — the client shows the switch on
+        // this, not on `authorised`, or the switch would vanish when disarmed.
+        canManage: manage.ok,
         ...(allowed.ok ? {} : { reason: allowed.reason }),
         you: { device: identity?.device ?? null, method: identity?.method ?? null },
       });
+    }
+
+    // Arming is a separate permission from running: a listed device may switch
+    // the terminal on, but the list itself only comes from the environment.
+    if (pathname === "/api/terminal/enable" && req.method === "POST") {
+      const manage = deviceMayManage(identity);
+      if (!manage.ok) {
+        console.warn(
+          `[operator] terminal arm refused for ${identity?.device ?? identity?.client}: ${manage.reason}`
+        );
+        return json(res, 403, { error: "not authorised to arm the terminal", reason: manage.reason });
+      }
+      const body = await readBody(req);
+      const next = body?.enabled === true;
+      return json(res, 200, { enabled: setEnabled(next, identity) });
     }
 
     if (pathname === "/api/terminal/run" && req.method === "POST") {

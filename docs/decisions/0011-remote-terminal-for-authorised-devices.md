@@ -33,18 +33,39 @@ down.
 **Authorised devices may run commands remotely.** Authorisation is separate from
 authentication and deliberately narrower:
 
-| Gate | Controls | Default |
-|---|---|---|
-| `OPERATOR_TERMINAL=1` | Whether the feature exists at all | **off** |
-| `OPERATOR_TERMINAL_DEVICES` | Which tailnet devices may execute | **empty — nobody** |
-| `OPERATOR_TERMINAL_ALLOW` | Which executables may be launched | `claude,git,npm,npx,node,tsc,rg` |
+| Gate | Controls | Set from | Default |
+|---|---|---|---|
+| **Armed** | Whether commands can run right now | the app, by a listed device (or `OPERATOR_TERMINAL=1` at start) | **disarmed** |
+| `OPERATOR_TERMINAL_DEVICES` | Which tailnet devices may run *or* arm | **environment only** | **empty — nobody** |
+| `OPERATOR_TERMINAL_ALLOW` | Which executables may be launched | environment | `claude,git,npm,npx,node,tsc,rg` |
 
 Being a known tailnet device gets you the app. It does **not** get you a shell —
 that needs naming in `OPERATOR_TERMINAL_DEVICES`. Loopback is exempt: the machine
 itself can already open a real terminal, so gating it protects nothing.
 
-Off by default at two independent levels, so no upgrade can quietly expose a
-shell and no single mis-set variable is sufficient to open one.
+### Arming moved into the app, deliberately
+
+The first cut required `OPERATOR_TERMINAL=1` in the environment, and that was
+self-defeating: the feature exists for when the owner is *away* from the machine,
+but switching it on meant being *at* the machine. Requiring physical access to
+enable the thing built for not having physical access is not a security control,
+it is a bug. He asked for a button; he was right to.
+
+So *armed* is now runtime state, held **in memory**, toggled from the app by a
+listed device. A restart disarms it, so it is never silently left on.
+
+**The trade is explicit:** the real gate is now `OPERATOR_TERMINAL_DEVICES`
+alone. That list comes only from the environment and is deliberately **not
+editable from the app** — a device cannot grant itself execution, it can only
+switch on a capability it already has. This makes the claim above ("the boundary
+is authentication plus the device list") literally true rather than nearly true,
+since the second env gate was always going to be set by anyone actually using the
+feature.
+
+Verified: `carbon`, a tailnet device not on the list, is refused on arm, on run,
+and told why; an unlisted device sees `canManage: false`. A listed device can arm,
+run `claude --version` (returns `2.1.220`), and disarm. While disarmed, a listed
+device is refused with "the terminal is disarmed — switch it on first".
 
 ## The security boundary is authentication, not the allowlist
 

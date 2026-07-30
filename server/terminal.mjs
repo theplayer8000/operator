@@ -18,8 +18,11 @@
 //
 // What this file actually guarantees:
 //
-//   - Off unless OPERATOR_TERMINAL=1. No accidental exposure by upgrade.
-//   - Only devices named in OPERATOR_TERMINAL_DEVICES may run anything.
+//   - Disarmed unless armed. Off on every start unless OPERATOR_TERMINAL=1, and
+//     the armed state is in memory, so a restart disarms it again.
+//   - Only devices named in OPERATOR_TERMINAL_DEVICES may run anything, or arm
+//     it. That list comes from the environment and is not settable from the app,
+//     so a device can never grant itself execution.
 //   - **No shell.** argv array, `shell: false`. `&&`, `|`, `;`, backticks and
 //     redirection are inert text, so one input field cannot chain commands and
 //     the audit line is exactly what ran.
@@ -60,7 +63,42 @@ const execFileAsync = promisify(execFile);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-export const TERMINAL_ENABLED = process.env.OPERATOR_TERMINAL === "1";
+/**
+ * Whether the terminal is currently armed.
+ *
+ * Runtime state, not a constant, and **in memory only** — a restart returns it
+ * to the environment default, which is off. `OPERATOR_TERMINAL=1` starts it
+ * armed; otherwise an authorised device turns it on from the app.
+ *
+ * It became runtime state because the original design was self-defeating: the
+ * feature exists for when the owner is *away* from the machine, but enabling it
+ * required setting an environment variable *at* the machine. Requiring him to be
+ * at the keyboard to switch on the thing built for not being at the keyboard is
+ * not a security control, it is a bug.
+ *
+ * The trade this makes is deliberate and worth stating: the real gate is now
+ * `OPERATOR_TERMINAL_DEVICES` alone. That list is **not** settable from the app —
+ * only from the environment — so a device cannot grant itself execution. What a
+ * listed device can do is arm and disarm. ADR 0011 already says the boundary is
+ * authentication plus the device list rather than the command allowlist; this
+ * makes that literally true instead of nearly true.
+ */
+let enabled = process.env.OPERATOR_TERMINAL === "1";
+
+export function isEnabled() {
+  return enabled;
+}
+
+/** Arm or disarm. Caller must already have passed `deviceMayManage`. */
+export function setEnabled(next, identity) {
+  enabled = next === true;
+  console.log(
+    `[operator] terminal ${enabled ? "ARMED" : "disarmed"} by ${identity?.device ?? "unknown"}${
+      identity?.user ? ` (${identity.user})` : ""
+    }`
+  );
+  return enabled;
+}
 
 /**
  * Tailscale device names allowed to run commands, comma separated. Empty means
@@ -241,8 +279,7 @@ function publish(run, chunk) {
  * Whether a device may run commands. Separate from *authentication*: being a
  * known tailnet device gets you the app, not a shell.
  */
-export function deviceAuthorised(identity) {
-  if (!TERMINAL_ENABLED) return { ok: false, reason: "the terminal is disabled (OPERATOR_TERMINAL is not 1)" };
+export function deviceMayManage(identity) {
   // `local` is the machine itself; it is already able to open a real terminal,
   // so gating it would protect nothing.
   if (identity?.method === "local") return { ok: true };
@@ -254,6 +291,20 @@ export function deviceAuthorised(identity) {
       ? `device "${identity.device}" is not in OPERATOR_TERMINAL_DEVICES`
       : "no device identity — the terminal needs a named tailnet device",
   };
+}
+
+/**
+ * May this device *run* something? Being listed is necessary but not sufficient
+ * — the terminal also has to be armed. Kept separate from `deviceMayManage` so
+ * arming is possible while disarmed, which is the whole point of the toggle.
+ */
+export function deviceAuthorised(identity) {
+  const listed = deviceMayManage(identity);
+  if (!listed.ok) return listed;
+  if (!enabled) {
+    return { ok: false, reason: "the terminal is disarmed — switch it on first" };
+  }
+  return { ok: true };
 }
 
 /** Start a command. Returns the run record, or throws with a usable message. */
@@ -395,7 +446,7 @@ export function describeRun(run, { includeOutput = false } = {}) {
 
 export function listRuns() {
   return {
-    enabled: TERMINAL_ENABLED,
+    enabled,
     allowed: [...ALLOWED].sort(),
     authorisedDevices: [...ALLOWED_DEVICES].sort(),
     timeoutMs: TIMEOUT_MS,
