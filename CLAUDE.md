@@ -390,6 +390,31 @@ without being asked; localStorage can't hold binary files at any real size
 anyway, so this will need real design thought when it's actually built
 (likely just storing filenames/links, not file contents).
 
+## Open decisions waiting on the owner — raise these, don't guess
+
+Ask about anything here that touches what you're about to build. They are
+recorded because a previous session needed them and could not proceed without
+guessing; guessing is the failure mode this list exists to prevent.
+
+**Before building any of the AI workspace** (see
+[`docs/ai-workspace-design.md`](docs/ai-workspace-design.md)):
+
+1. **Job history** — should completed jobs survive a server restart, or is a live
+   view enough? Persisting means a storage slice and a retention rule.
+2. **Permission profiles** — which bundles are actually wanted? "Edit `src/`",
+   "run builds", "anything except git push" are guesses, not requirements.
+3. **Concurrency** — one job at a time, or several? One matches a single user on
+   a phone; several matters if a long build should run while he asks something
+   else.
+4. **Usage ceiling** — should a job stop at a token or cost limit? He is on Pro
+   with usage credits enabled, so overflow past a plan limit is real money
+   (£10.66 of £40 as of 2026-07-31). A counter can only report *Operator's own*
+   usage — there is no `claude usage` subcommand — so never present it as plan
+   usage.
+
+Plus the two renames in the next section, which have been waiting since before
+2026-07-30.
+
 ## Naming — pending, do not do unprompted
 
 The user has flagged wording changes they want **eventually**, not yet:
