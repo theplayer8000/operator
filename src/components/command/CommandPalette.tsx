@@ -16,6 +16,7 @@ const DESTINATIONS = [
   { to: "/journey", label: "Journey" },
   { to: "/statistics", label: "Statistics" },
   { to: "/log", label: "Activity Log" },
+  { to: "/chat", label: "Claude" },
   { to: "/dev", label: "Dev" },
   { to: "/updates", label: "Updates" },
   { to: "/settings", label: "Settings" },

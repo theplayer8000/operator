@@ -18,6 +18,7 @@ import {
   Scale,
   Compass,
   type LucideIcon,
+  MessageSquare,
 } from "lucide-react";
 
 type Status = "built" | "planned" | "concept";
@@ -64,6 +65,14 @@ const SECTIONS: Section[] = [
     icon: CalendarDays,
     status: "built",
     blurb: "The year on a calendar. What's coming, and what already happened.",
+  },
+  {
+    to: "/chat",
+    label: "Claude",
+    icon: MessageSquare,
+    status: "built",
+    blurb:
+      "Claude Code, working on this project and remembering between messages — pick it up here after leaving the desk.",
   },
   {
     to: "/homelab",

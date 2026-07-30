@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban, Check } from "lucide-react";
+import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban, Check, Power } from "lucide-react";
 
 interface ChatMessage {
   id: string;
@@ -167,6 +167,23 @@ export default function ClaudeChat() {
     }
   }
 
+  /**
+   * Arm from here as well as from the terminal panel.
+   *
+   * They share one flag server-side, but the chat now lives on its own page —
+   * sending someone to a different page to switch on the thing they are looking
+   * at is the same mistake as requiring an env var at the machine.
+   */
+  async function arm() {
+    setError(null);
+    await fetch("/api/terminal/enable", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    }).catch(() => {});
+    await poll();
+  }
+
   async function chooseModel(id: string) {
     setState((prev) => (prev ? { ...prev, model: id } : prev));
     await fetch("/api/chat/model", {
@@ -186,6 +203,8 @@ export default function ClaudeChat() {
   }
 
   const notAuthorised = state !== null && state.authorised === false;
+  // Listed but disarmed is fixable from here; not listed is not.
+  const canArm = notAuthorised && state?.canManage === true;
 
   return (
     <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
@@ -219,12 +238,22 @@ export default function ClaudeChat() {
       </header>
 
       {notAuthorised && (
-        <div className="flex items-start gap-2 p-3 rounded-badge border border-xp/30 bg-xp/5">
-          <ShieldAlert size={14} className="text-xp shrink-0 mt-0.5" />
-          <p className="text-xs text-ink-300 leading-relaxed">
-            {state?.reason}. Chat runs Claude Code with tool access, so it sits behind the same gate
-            as the terminal — arm it above, on a listed device.
+        <div className="p-3 rounded-badge border border-xp/30 bg-xp/5">
+          <p className="flex items-start gap-2 text-xs text-ink-300 leading-relaxed mb-3">
+            <ShieldAlert size={14} className="text-xp shrink-0 mt-0.5" />
+            <span>
+              {state?.reason}. Chat runs Claude Code with tool access, so it sits behind the same
+              gate as the terminal — being a known device gets you Operator, not a shell.
+            </span>
           </p>
+          {canArm && (
+            <button
+              onClick={() => void arm()}
+              className="flex items-center gap-2 px-3 min-h-[44px] rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 transition-colors"
+            >
+              <Power size={14} /> Arm it
+            </button>
+          )}
         </div>
       )}
 

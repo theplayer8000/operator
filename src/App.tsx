@@ -11,6 +11,7 @@ import Events from "@/pages/Events";
 import Updates from "@/pages/Updates";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
+import Chat from "@/pages/Chat";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/homelab" element={<Homelab />} />
         <Route path="/log" element={<ActivityLog />} />
         <Route path="/contents" element={<Contents />} />
+        <Route path="/chat" element={<Chat />} />
         <Route path="/dev" element={<Dev />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
         <Route path="/gym" element={<Gym />} />

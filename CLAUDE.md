@@ -258,7 +258,7 @@ src/
   pages/
     Dashboard.tsx, DailyRoutine.tsx, MissionBoard.tsx, MissionDetail.tsx,
     Homelab.tsx, Events.tsx, Settings.tsx, Updates.tsx, ActivityLog.tsx,
-    Contents.tsx, Dev.tsx,
+    Contents.tsx, Dev.tsx, Chat.tsx,
     ComingSoon.tsx           — placeholder for any route not yet built
 ```
 
@@ -345,7 +345,8 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **terminal**, and a **Claude chat** that remembers across messages. Both for authorised devices only and disarmed by default (ADR 0011) |
+| Claude | `/chat` | Built — a conversation with Claude Code that remembers across messages, by keeping its `session_id` and passing `--resume` (`server/workspace.mjs`). Model is selectable, Opus 5 by default. Print mode can't stop and ask, so a blocked tool is reported with the exact rule that would allow it and a one-tap grant. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, and a **terminal** for authorised devices, disarmed by default (ADR 0011) |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |
