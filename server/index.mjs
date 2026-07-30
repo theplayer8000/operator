@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
 import { recordRequest, listClients } from "./clients.mjs";
+import { claudeStatus } from "./status.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -223,6 +224,12 @@ const server = createServer(async (req, res) => {
   try {
     if (pathname === "/api/clients") {
       return json(res, 200, listClients());
+    }
+
+    // Owner-approved outbound call — see server/status.mjs for why it's here
+    // and not in the browser.
+    if (pathname === "/api/claude-status") {
+      return json(res, 200, await claudeStatus());
     }
 
     if (pathname === "/api/health") {

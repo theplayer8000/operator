@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Dumbbell, ChevronLeft, ChevronRight, RotateCcw, CalendarDays } from "lucide-react";
+import {
+  Dumbbell,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  CalendarDays,
+  SkipForward,
+  Undo2,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { useGym } from "@/hooks/useGym";
 import ConfirmButton from "@/components/ui/ConfirmButton";
@@ -13,12 +21,23 @@ import { fromDateKey, relativeDay, toDateKey } from "@/lib/time";
  * used one-handed, between sets, with a phone that may be on a bench.
  */
 export default function Gym() {
-  const { todayKey, sessionOn, isDone, toggleExercise, clearDay, progressOn } = useGym();
+  const {
+    todayKey,
+    sessionOn,
+    isDone,
+    toggleExercise,
+    clearDay,
+    progressOn,
+    isSkipped,
+    skipDay,
+    unskipDay,
+  } = useGym();
   const [dateKey, setDateKey] = useState(todayKey);
 
   const session = sessionOn(dateKey);
   const progress = progressOn(dateKey);
   const date = fromDateKey(dateKey);
+  const skipped = isSkipped(dateKey);
 
   function shiftDay(delta: number) {
     const d = fromDateKey(dateKey);
@@ -38,7 +57,8 @@ export default function Gym() {
             <h1 className="font-display text-lg text-ink-100 leading-tight">Gym</h1>
             <p className="text-xs text-ink-500">
               {session ? session.name : "Rest day"}
-              {progress && ` · ${progress.done}/${progress.total}`}
+              {session && skipped && " · Skipped"}
+              {!skipped && progress && ` · ${progress.done}/${progress.total}`}
             </p>
           </div>
         </div>
@@ -81,6 +101,26 @@ export default function Gym() {
             Nothing scheduled. Rest days are Monday and Thursday — both sit before a Darams
             morning, so they're the nights to get a long sleep.
           </p>
+        </div>
+      ) : skipped ? (
+        /*
+         * A skipped session states itself rather than looking like an untouched
+         * one. Tired, ill, or working late is a real answer — but "I decided not
+         * to" and "I forgot to open the app" should not read the same in three
+         * months' time, which is the whole reason this is recorded.
+         */
+        <div className="card-base p-5 sm:p-6 animate-fade-up text-center">
+          <p className="text-sm text-ink-300 mb-1">Skipped — {session.name}</p>
+          <p className="text-xs text-ink-700 leading-relaxed mb-4">
+            Logged as a session you didn't do, not one that was never scheduled. One skipped
+            night doesn't move the programme; the next one is still on.
+          </p>
+          <button
+            onClick={() => unskipDay(dateKey)}
+            className="inline-flex items-center gap-2 px-4 min-h-[44px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 hover:border-base-500 transition-colors"
+          >
+            <Undo2 size={13} /> Actually, I trained
+          </button>
         </div>
       ) : (
         <>
@@ -149,16 +189,25 @@ export default function Gym() {
             >
               <CalendarDays size={13} /> See it on the calendar
             </Link>
-            {progress && progress.done > 0 && (
-              <div className="flex items-center gap-2">
-                <RotateCcw size={13} className="text-ink-700" />
-                <ConfirmButton
-                  label="Clear today's ticks"
-                  onConfirm={() => clearDay(dateKey)}
-                  compact
-                />
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              {progress && progress.done > 0 && (
+                <div className="flex items-center gap-2">
+                  <RotateCcw size={13} className="text-ink-700" />
+                  <ConfirmButton
+                    label="Clear today's ticks"
+                    onConfirm={() => clearDay(dateKey)}
+                    compact
+                  />
+                </div>
+              )}
+              {/* No confirm: it's undone by one tap on the card that replaces this. */}
+              <button
+                onClick={() => skipDay(dateKey)}
+                className="inline-flex items-center gap-1.5 text-xs text-ink-500 hover:text-ink-300 transition-colors min-h-[44px]"
+              >
+                <SkipForward size={13} /> Skip this session
+              </button>
+            </div>
           </div>
         </>
       )}

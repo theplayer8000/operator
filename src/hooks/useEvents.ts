@@ -14,8 +14,12 @@ function occurrenceOn(event: CalendarEvent, date: string): EventOccurrence {
   return { ...event, id: `${event.id}@${date}`, date, seriesId: event.id };
 }
 
-/** Every day a series lands on, minus its skipped dates. */
-function expandSeries(event: CalendarEvent): EventOccurrence[] {
+/**
+ * Every day a series lands on. `want` picks which side of `skipDates` to
+ * return: the live occurrences (the default) or the skipped ones, which the
+ * calendar still needs so a skip can be undone from the day it happened on.
+ */
+function expandSeries(event: CalendarEvent, want: "live" | "skipped" = "live"): EventOccurrence[] {
   const rule = event.recurrence;
   if (!rule) return [];
 
@@ -24,7 +28,7 @@ function expandSeries(event: CalendarEvent): EventOccurrence[] {
 
   return dateKeysBetween(event.date, rule.until)
     .filter((key) => {
-      if (skipped.has(key)) return false;
+      if (skipped.has(key) !== (want === "skipped")) return false;
       const weekday = isoWeekday(key);
       return weekday !== null && wanted.has(weekday);
     })
@@ -72,6 +76,27 @@ export function useEvents() {
         ),
     [occurrences]
   );
+
+  /**
+   * date key → the occurrences skipped on that day.
+   *
+   * Skipping used to be one-way in the UI: the day it happened on stopped
+   * showing the event at all, so `unskipOccurrence` existed with nothing able
+   * to call it — a skipped shift was unrecoverable without editing the store by
+   * hand. These rows are what make it undoable.
+   */
+  const skippedByDay = useMemo(() => {
+    const map = new Map<string, EventOccurrence[]>();
+    for (const event of events) {
+      if (!event.recurrence || !event.skipDates?.length) continue;
+      for (const occurrence of expandSeries(event, "skipped")) {
+        const list = map.get(occurrence.date);
+        if (list) list.push(occurrence);
+        else map.set(occurrence.date, [occurrence]);
+      }
+    }
+    return map;
+  }, [events]);
 
   const years = useMemo(() => {
     const set = new Set(occurrences.map((e) => Number(e.date.slice(0, 4))).filter(Number.isFinite));
@@ -160,6 +185,7 @@ export function useEvents() {
     events,
     occurrences,
     byDay,
+    skippedByDay,
     upcoming,
     years,
     todayKey,

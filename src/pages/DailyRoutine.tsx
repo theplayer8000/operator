@@ -31,7 +31,7 @@ export default function DailyRoutine() {
         totalMinutes={totalMinutes}
       />
 
-      <RoutineTimeline schedule={schedule} />
+      <RoutineTimeline schedule={schedule} sections={sections} onToggleTask={toggleTask} />
 
       <div>
         {sections.map((section, i) => (

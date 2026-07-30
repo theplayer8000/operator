@@ -40,10 +40,34 @@ Tailscale — see [ADR 0006](docs/decisions/0006-json-file-storage-server.md).
 `localStorage` still exists, but only as an offline read-mirror.
 
 **Do not add:** cloud sync, a third-party backend, authentication against an
-external provider, or any network call to a host the owner doesn't own. Google
-Fonts in `index.html` is the one pre-existing exception. If a future request
-seems to need one of these, flag it back rather than adding it silently —
-self-hosted is a hard requirement, not a default.
+external provider, or any network call to a host the owner doesn't own. If a
+future request seems to need one of these, flag it back rather than adding it
+silently — self-hosted is a hard requirement, not a default.
+
+### External applications need the owner's explicit approval — every time
+
+Anything that reaches a host the owner doesn't control is **approved case by
+case, by him, in advance**. Not inferred from a similar integration already
+being here, not bundled into a larger feature, not added because it's "only a
+status check". Ask, name the host and what leaves the machine, and wait.
+
+Approved so far — this list is the whole set:
+
+| What | Host | Added |
+|---|---|---|
+| Google Fonts | `fonts.googleapis.com` | pre-existing, in `index.html` |
+| Claude service status | `status.claude.com` | v11, `server/status.mjs` |
+
+Two rules for the ones that exist:
+
+- **Fetch server-side, never from the browser.** `server/status.mjs` is the
+  pattern: the Node process makes the call, the client talks only to
+  `/api/*`. One machine — the owner's — contacts the third party, instead of
+  every device that opens a page. Over plain HTTP at a tailnet IP a browser
+  fetch would be mixed-content and fail anyway.
+- **Degrade to silence.** An external host being down must never break the
+  page that shows it. Cache, serve stale with the age stated, and say
+  "couldn't reach it".
 
 **The app must still work when the storage server is down** — degraded to the
 last known data with writes queued, never a blank screen.
@@ -105,6 +129,8 @@ server/
   index.mjs             — JSON storage API (no deps). GET/PUT/DELETE /api/state
   dev.mjs               — read-only repo browser for the Dev page
   homelab.mjs           — TCP reachability probes for the Homelab tiles
+  clients.mjs           — in-memory record of which devices are connected
+  status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
   dev.mjs               — starts the API and Vite together
 data/
@@ -215,6 +241,12 @@ Board does both, and the board has an "Archived" filter so archiving is
 genuinely reversible rather than a disappearance. There is **no undo**
 (**OPS-020**), which is why the confirm step is not optional.
 
+**Skipping is the exception, and only because it isn't destructive.** Skipping a
+calendar occurrence or a gym session is one tap with no confirm — the skipped
+thing stays on screen with an undo next to it. If you build another skip-like
+action, hold the same bargain: no confirm *only* where the undo is visible and
+adjacent. Otherwise it's a delete wearing a softer word, and it confirms.
+
 ### Responsive is not optional
 
 Operator is used from a phone. Every new surface must work there — see
@@ -228,16 +260,16 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Feature | Route(s) | Status |
 |---|---|---|
 | Dashboard | `/` | Built |
-| Daily Routine | `/routine` | Built |
+| Daily Routine | `/routine` | Built — seven fixed sections on a rail, plus a Day Schedule timeline. Steps are tickable from the schedule itself (tap a block to open it in place), and a day stepper shows the plan for any date. Off today the checkboxes are hidden on purpose: `done` is one flag per step and the daily reset overwrites it, so there is no per-date history to show — see `docs/data-model.md` before "fixing" that |
 | Mission Board | `/missions`, `/missions/:id` | Built |
-| Calendar | `/calendar` | Built — year calendar, 12 month grids, day panel for add/edit/delete, including moving an event's date. Start/finish time pickers, not a duration field. **Weekly recurrence** — one record per series, expanded at read time; deleting one occurrence skips that date rather than killing the rule. On phone, tapping a day opens the panel as a popup instead of a scroll-to block. Timed events sync read-only onto Daily Routine's Day Schedule. Dashboard's Upcoming Events reads it, and the clock opens it. Internally still `events.records` / `useEvents` / `CalendarEvent` — only the user-facing label and route changed, same as "Mission Board" over `missions.records` |
+| Calendar | `/calendar` | Built — year calendar, 12 month grids, day panel for add/edit/delete, including moving an event's date. Start/finish time pickers, not a duration field. **Weekly recurrence** — one record per series, expanded at read time; a single occurrence can be skipped (and un-skipped) without touching the rule, while delete takes the whole series. On phone, tapping a day opens the panel as a popup instead of a scroll-to block. Timed events sync read-only onto Daily Routine's Day Schedule. Dashboard's Upcoming Events reads it, and the clock opens it. Internally still `events.records` / `useEvents` / `CalendarEvent` — only the user-facing label and route changed, same as "Mission Board" over `missions.records` |
 | Updates | `/updates` | Built — shipped/pending log of Operator's own development, reviewable in-app. Distinct from Activity Log |
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status |
+| Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
-| Gym | `/gym` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |
 | Work | `/work` | Not built — `ComingSoon` placeholder |
 | Journey | `/journey` | Not built — `ComingSoon` placeholder. Nav entry reserved on request. |

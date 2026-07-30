@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
+import ClaudeStatus from "@/components/dev/ClaudeStatus";
 
 const DOC_SHORTCUTS = [
   { path: "CLAUDE.md", label: "CLAUDE.md" },
@@ -44,6 +45,7 @@ export default function Dev() {
       </div>
 
       <ConnectedClients />
+      <ClaudeStatus />
 
       {/* Repo status */}
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">

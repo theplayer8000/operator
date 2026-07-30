@@ -64,6 +64,9 @@ store.
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
 | `events.records` | `CalendarEvent[]` | `useEvents` | Yes |
 | `homelab.services` | `HomelabService[]` | `useHomelab` | Yes — the server also reads this slice to know what to probe |
+| `gym.sessions` | `GymSession[]` | `useGym` | Not yet — the programme is edited in source/seed |
+| `gym.completions` | `GymCompletions` (`{ [date]: exerciseId[] }`) | `useGym` | Yes — ticked per date, key dropped when a day empties |
+| `gym.skipped` | `string[]` (`YYYY-MM-DD`) | `useGym` | Yes — days scheduled and deliberately not trained |
 | `updates.entries` | `UpdateEntry[]` | `useUpdates` | Yes |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
 
@@ -141,6 +144,24 @@ cold start with the server down can hand the client pre-v2 sections with no
 `startTime`. Both `useRoutineData` and `RoutineSectionCard` defend against that
 — a missing start reads as 09:00 rather than crashing. Any future field added
 to a persisted shape needs the same treatment.
+
+**There is no per-date routine history, and this constrains the UI.**
+`RoutineTask.done` is a single current flag, and the daily reset
+(`useRoutineData`, **OPS-009**) overwrites it for every `repeatDaily` task once
+per local day. Yesterday's ticks are not archived anywhere — they are
+destroyed. So the Day Schedule's day stepper (v15) can show the *plan* for any
+date but only the *record* for today, and off today it hides the checkboxes
+rather than rendering ones that would either lie or write today's state under
+another day's heading.
+
+Gym is the contrast worth copying if this ever needs fixing: `gym.completions`
+is keyed by date, which is exactly why the Gym page can step back through real
+sessions. Giving the routine the same thing means a new `routine.completions`
+slice keyed by date, moving `done` out of the task, and retiring the reset
+(a date with no entry is simply untouched — nothing to roll back). That is an
+**additive** migration if the old `done` is left in place and ignored, and it
+changes what the reset means, so it is a decision to take deliberately rather
+than a refactor to slip in. Not currently requested.
 
 ### Mission Board
 
@@ -240,14 +261,32 @@ Three consequences the UI has to respect, all enforced in `DayPanel`:
   *anchor*, not that occurrence's day — writing an occurrence's date back would
   silently reshape every other occurrence. `commitEdit` omits `date` entirely
   when `seriesId` is set.
-- **Deleting an occurrence adds to `skipDates`, it doesn't delete the record.**
+- **Skipping an occurrence adds to `skipDates`, it doesn't delete the record.**
   That's annual leave, a swapped shift, a bank holiday — the action wanted
-  almost every time. Removing the whole series is deliberately not reachable in
-  one tap from a single day.
+  almost every time. It has its own control (v14); before that, *delete* on an
+  occurrence quietly meant skip, which left no way to remove a series at all.
+  Delete now means delete, behind the usual confirm.
+
+Skipping is the one destructive-looking action in Operator with **no confirm
+step**, and the exception is deliberate: `skippedByDay` re-renders the skipped
+occurrence on its own day with an undo, so nothing is lost to a mis-tap. That
+also means the general no-undo rule (**OPS-020**) does not apply here — if you
+ever make a skip unrecoverable, put the confirm back.
 
 Still not modelled, deliberately: **multi-day spans, reminders, monthly/yearly
 recurrence.** Weekly exists because there was a real case for it. Add the
 others the same way — when something actually needs them.
+
+### Gym
+
+`gym.completions` is keyed by local date, not a `done` flag on the exercise —
+so nothing needs resetting between sessions and last Tuesday stays readable.
+
+`gym.skipped` is **not** the same as skipping the gym block on the calendar,
+and the duplication is intended. The calendar's `skipDates` says *the block
+wasn't there*; `gym.skipped` says *the block was there and I didn't train*.
+Adherence has to distinguish a planned rest week from a dropped one. Writes stay
+inside each feature's own hook: `useGym` never touches `events.records`.
 
 ### Homelab
 

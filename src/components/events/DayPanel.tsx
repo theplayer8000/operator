@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Pencil, Check, X, Repeat } from "lucide-react";
+import { Plus, Pencil, Check, X, Repeat, SkipForward, Undo2 } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { formatHHMM, fromDateKey, parseHHMM, relativeDay } from "@/lib/time";
 import { EVENT_KIND_META, EVENT_KINDS } from "./eventMeta";
@@ -29,15 +29,19 @@ function rangeToDuration(startText: string, endText: string): number | undefined
 export default function DayPanel({
   dateKey,
   events,
+  skipped = [],
   onAdd,
   onUpdate,
   onDelete,
   onSkip,
+  onUnskip,
   onMoved,
   onClose,
 }: {
   dateKey: string;
   events: EventOccurrence[];
+  /** Occurrences of a series that were skipped on this day, so they can come back. */
+  skipped?: EventOccurrence[];
   onAdd: (input: {
     title: string;
     date: string;
@@ -48,10 +52,12 @@ export default function DayPanel({
   onUpdate: (id: string, patch: Partial<CalendarEvent>) => void;
   onDelete: (id: string) => void;
   /**
-   * Drop one day out of a repeating series. This is what deleting a single
-   * occurrence means — the rule survives, that date doesn't.
+   * Drop one day out of a repeating series — the rule survives, that date
+   * doesn't. Annual leave, a swapped shift, a session you didn't do.
    */
   onSkip: (seriesId: string, date: string) => void;
+  /** Put a skipped day back. */
+  onUnskip: (seriesId: string, date: string) => void;
   /** Called with the new date when an edit moves an event off this day. */
   onMoved?: (newDate: string) => void;
   /**
@@ -163,7 +169,7 @@ export default function DayPanel({
       </header>
 
       {events.length === 0 ? (
-        <p className="text-sm text-ink-700 mb-4">Nothing on this day yet.</p>
+        skipped.length === 0 && <p className="text-sm text-ink-700 mb-4">Nothing on this day yet.</p>
       ) : (
         <ul className="space-y-2 mb-4">
           {events.map((event) => {
@@ -252,7 +258,7 @@ export default function DayPanel({
                       <p className="text-[11px] text-rank">
                         <Repeat size={10} className="inline mr-1 -mt-0.5" />
                         Repeating — saving changes every occurrence. To drop
-                        just this day, cancel and use delete.
+                        just this day, cancel and use skip.
                       </p>
                     )}
                     <div className="flex items-center gap-2 pt-1">
@@ -317,22 +323,29 @@ export default function DayPanel({
                       <Pencil size={13} />
                     </button>
                     {/*
-                      On a repeating occurrence, delete skips this one day and
-                      leaves the rule alone — that's annual leave, and it's the
-                      action wanted 99% of the time. Removing the whole series
-                      is deliberately not a one-tap action from a single day.
+                      Skip is a single tap with no confirm, unlike every other
+                      destructive action here — because it's the one that isn't
+                      destructive. The skipped day reappears below with an undo,
+                      so the two-tap guard would be protecting nothing. Delete
+                      still takes the whole series and still confirms.
                     */}
+                    {event.seriesId && (
+                      <button
+                        onClick={() => onSkip(event.seriesId!, event.date)}
+                        aria-label={`Skip "${event.title}" on this day`}
+                        title="Skip just this day — the series keeps going"
+                        className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-rank transition-colors"
+                      >
+                        <SkipForward size={13} />
+                      </button>
+                    )}
                     <ConfirmButton
                       label={
                         event.seriesId
-                          ? `Skip "${event.title}" on this day`
+                          ? `Delete every occurrence of "${event.title}"`
                           : `Delete "${event.title}"`
                       }
-                      onConfirm={() =>
-                        event.seriesId
-                          ? onSkip(event.seriesId, event.date)
-                          : onDelete(event.id)
-                      }
+                      onConfirm={() => onDelete(event.id)}
                       compact
                     />
                   </div>
@@ -340,6 +353,40 @@ export default function DayPanel({
               </li>
             );
           })}
+        </ul>
+      )}
+
+      {/*
+        Skipped days, kept visible rather than vanished. A skip you can't see is
+        indistinguishable from an event that was never scheduled, which is how a
+        missed shift quietly becomes a missing shift.
+      */}
+      {skipped.length > 0 && (
+        <ul className="space-y-2 mb-4">
+          {skipped.map((event) => (
+            <li
+              key={event.id}
+              className="flex items-center gap-2 p-2 pl-3 rounded-badge border border-base-600 border-dashed bg-transparent"
+            >
+              <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-ink-700" aria-hidden />
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-ink-700 line-through truncate">
+                  {event.title}
+                </span>
+                <span className="block text-[11px] font-mono text-ink-700">
+                  Skipped · {EVENT_KIND_META[event.kind].label}
+                </span>
+              </span>
+              <button
+                onClick={() => event.seriesId && onUnskip(event.seriesId, event.date)}
+                aria-label={`Restore "${event.title}" on this day`}
+                title="Put this day back"
+                className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
+              >
+                <Undo2 size={13} />
+              </button>
+            </li>
+          ))}
         </ul>
       )}
 

@@ -59,6 +59,7 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "gym.sessions": [],
   // Keyed by date rather than a list, so its empty value is an object.
   "gym.completions": {},
+  "gym.skipped": [],
   "theme.accent": "gold",
 };
 
@@ -100,8 +101,8 @@ export const FEATURE_SLICES: FeatureSlice[] = [
   {
     label: "Gym",
     description:
-      "Session templates and every exercise you've ticked off. Clearing loses your training history.",
-    keys: ["gym.sessions", "gym.completions"],
+      "Session templates, every exercise you've ticked off, and which days you skipped. Clearing loses your training history.",
+    keys: ["gym.sessions", "gym.completions", "gym.skipped"],
   },
   {
     label: "Updates",

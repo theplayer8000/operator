@@ -49,6 +49,24 @@ Bar length is relative to the longest block rather than a literal 24h scale —
 at true scale a 2-minute step is a sub-pixel sliver and most of the height goes
 to the gap before work.
 
+**Steps are tickable from the Day Schedule itself** (v15). Tapping a block
+opens it in place and reveals its steps with working checkboxes — the schedule
+is where you look to know what you're meant to be doing, so it's where the
+tick belongs, rather than scrolling past the card to the section list below.
+One block open at a time; the section list is still the place to add, rename
+or re-estimate.
+
+**A day stepper moves the card off today** (v15), which answers "what does
+Tuesday look like". What actually changes per date is the calendar events
+synced in — which shift, whether there's a gym session — because the routine
+itself is the same every day by design. Off today the checkboxes are
+deliberately **gone rather than inert**: `routine.sections` holds one `done`
+flag per step and the daily reset overwrites it, so there is no per-date
+routine history to show. Gym stores `gym.completions` keyed by date precisely
+because it needed one; the routine has no equivalent, and inventing ticks for
+a past day would be a lie. Giving the routine real per-date history is a
+schema decision, not a UI one — see the note in `data-model.md`.
+
 Known gaps: the reset is mount-only and UTC-based, so a tab left open across
 midnight doesn't reset, and the day rolls at 01:00 local during BST
 (**OPS-009**).
@@ -139,12 +157,40 @@ Dates are stored as local `"YYYY-MM-DD"` keys, never timestamps. See the
 every event between midnight and 1am BST on the wrong day.
 
 **Repeating events** landed in v13 (weekly only), driven by the owner's work
-shifts. One record per series, expanded at read time; deleting a single
-occurrence adds a skip date rather than destroying the rule, which is how
-annual leave is handled. See `data-model.md` → Recurring events.
+shifts. One record per series, expanded at read time. **v14 split skip from
+delete**: skipping a single occurrence (annual leave, a swapped shift) adds a
+skip date and leaves the rule alone, is one tap with no confirm, and shows the
+skipped occurrence on its own day with an undo — deleting now removes the
+whole series and still confirms. Before v14, delete on an occurrence silently
+meant skip, which left no way to remove a series at all. See `data-model.md` →
+Recurring events.
 
 Known gaps: no multi-day spans, no reminders, no monthly/yearly recurrence.
 None should be faked with a loop over single days.
+
+### Gym — `/gym`
+
+Today's session as a one-handed, tickable checklist — a phone on a bench
+between sets is the design target, not a desk. A day stepper moves through
+past and future dates; each date shows its own session (`gym.completions`,
+keyed by date, so nothing needs resetting) or a rest day.
+
+Five sessions, named by push/pull structure, keyed by ISO weekday — the split
+itself is owner content in `reference/gym-programme.md` (phases, percentages,
+deloads, nutrition), not `/docs`. `gym.sessions` is source/seed today; no
+editor exists yet.
+
+**v14 added skip**, matching the pattern also added to Calendar occurrences
+the same milestone: a trained-but-skipped day (`gym.skipped`) is one tap with
+no confirm, states itself on the page rather than looking like an untouched
+session, and offers "Actually, I trained" to undo. Deliberately **not** the
+same thing as a rest day or a calendar skip — `gym.skipped` says the session
+was scheduled and deliberately not done, distinct from "nothing was
+scheduled". See `data-model.md` → Gym.
+
+Known gaps: no session-template editor; no history/adherence view over
+`gym.completions` and `gym.skipped` yet — the raw data exists, nothing charts
+it.
 
 ### Settings — `/settings`
 
@@ -220,7 +266,11 @@ table — routes know paths, not purpose, and purpose is the point of the page.
 ### Dev — `/dev`
 
 Repo status (branch, commit, subject), links out to GitHub, and a read-only
-browser over the project directory with shortcuts to the key docs.
+browser over the project directory with shortcuts to the key docs. Two live
+diagnostics sit above the repo browser: a **connected-clients monitor**
+(who's hit the server this session — device, request count, last endpoint,
+held in memory only) and **Claude status**, a read of Anthropic's public
+Statuspage.
 
 Served by `server/dev.mjs`, which is the only part of Operator that touches the
 filesystem beyond the data file. It is deliberately narrow: **reads only** (no
@@ -233,6 +283,13 @@ There is no authentication; the tailnet is the boundary
 ([ADR 0006](decisions/0006-json-file-storage-server.md)). **This must not be
 exposed beyond it.**
 
+**Claude status is the one outbound call Operator makes to a host the owner
+doesn't control** (`status.claude.com`), approved case-by-case per the
+"External applications" rule in `CLAUDE.md`. `server/status.mjs` fetches it
+server-side, caches for a minute, and degrades to a stated-stale response or
+"couldn't reach it" rather than ever breaking the page — see that file's
+header comment before adding a second outbound call anywhere else.
+
 ## Not built
 
 All seven have a route, a `ComingSoon` placeholder, a sidebar entry, and a
@@ -241,7 +298,6 @@ command-palette destination already wired.
 | Feature | Route | What it's for | Decide first |
 |---|---|---|---|
 | **Learning** | `/learning` | Skill/topic progress over time. `MissionRecord.relatedLearning` is free text waiting for it; the Related Knowledge tab already renders a `ReservedSection` pointing here | Its relationship to Knowledge Vault — are they one feature or two? |
-| **Gym** | `/gym` | Training log. `routine.sections` already has a `gym` block, but that is a daily checklist, not a training record — they are different features and should stay separate namespaces | Register (calm vs playful) |
 | **Forex** | `/forex` | Study/observation journal. Note the routine caption is "Study, don't trade" — this is a learning journal, not a P&L tracker | Whether Recharts is needed here; it is currently used in exactly one widget |
 | **Work** | `/work` | GEH NHS / Darams work tracking | Scope — this overlaps Mission Board's `career` category |
 | **Journey** | `/journey` | The long-term life roadmap that missions ladder up to. `MissionRecord.relatedJourneyMilestone` is free text waiting for it. Nav entry reserved on request | The top of the three-tier hierarchy — this one deserves real design thought, and it is the feature the whole philosophy points at |

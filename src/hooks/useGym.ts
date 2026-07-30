@@ -5,8 +5,9 @@ import { isoWeekday, toDateKey } from "@/lib/time";
 import type { GymCompletions, GymSession } from "@/lib/types";
 
 /**
- * Owns `gym.sessions` (the templates) and `gym.completions` (what's been
- * ticked, keyed by local date).
+ * Owns `gym.sessions` (the templates), `gym.completions` (what's been ticked,
+ * keyed by local date) and `gym.skipped` (dates trained on paper but not in
+ * practice).
  *
  * Separate from the Daily Routine's `gym` block on purpose: routine sections
  * are identical every day, and a training split isn't. Tuesday is Heavy Pull,
@@ -26,6 +27,17 @@ export function useGym() {
     "gym.completions",
     {}
   );
+  /**
+   * Dates the session was scheduled and deliberately not done.
+   *
+   * Deliberately *not* the same thing as skipping the gym block on the
+   * calendar. That says "the block wasn't there"; this says "the block was
+   * there and I didn't train". Adherence has to be able to tell those apart, or
+   * a rest week you planned reads identically to a week you dropped. Writes
+   * stay inside this hook either way — the Gym feature never reaches into
+   * `events.records`.
+   */
+  const [skipped, setSkipped] = useRemoteStorage<string[]>("gym.skipped", []);
 
   const byWeekday = useMemo(() => {
     const map = new Map<number, GymSession>();
@@ -70,6 +82,24 @@ export function useGym() {
     });
   }
 
+  function isSkipped(dateKey: string): boolean {
+    return skipped.includes(dateKey);
+  }
+
+  /**
+   * Mark a day as not-trained. Clears its ticks too — a session that's half
+   * ticked and also skipped is two answers to one question, and the tick state
+   * is the one that's just leftover.
+   */
+  function skipDay(dateKey: string) {
+    setSkipped((prev) => (prev.includes(dateKey) ? prev : [...prev, dateKey]));
+    clearDay(dateKey);
+  }
+
+  function unskipDay(dateKey: string) {
+    setSkipped((prev) => prev.filter((d) => d !== dateKey));
+  }
+
   /** Completed / total for a date. Returns null on a rest day. */
   function progressOn(dateKey: string): { done: number; total: number; percent: number } | null {
     const session = sessionOn(dateKey);
@@ -93,5 +123,8 @@ export function useGym() {
     toggleExercise,
     clearDay,
     progressOn,
+    isSkipped,
+    skipDay,
+    unskipDay,
   };
 }
