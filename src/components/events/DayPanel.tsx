@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Pencil, Check, X, Repeat, SkipForward, Undo2 } from "lucide-react";
+import { Plus, Pencil, Check, X, Repeat, SkipForward, Undo2, NotebookPen } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { formatHHMM, fromDateKey, parseHHMM, relativeDay } from "@/lib/time";
 import { EVENT_KIND_META, EVENT_KINDS } from "./eventMeta";
@@ -35,6 +35,7 @@ export default function DayPanel({
   onDelete,
   onSkip,
   onUnskip,
+  onNoteChange,
   onMoved,
   onClose,
 }: {
@@ -58,6 +59,12 @@ export default function DayPanel({
   onSkip: (seriesId: string, date: string) => void;
   /** Put a skipped day back. */
   onUnskip: (seriesId: string, date: string) => void;
+  /**
+   * Write a note against this one day of a series. Separate from `onUpdate`'s
+   * `notes`, which is the series note and lands on every occurrence — this is
+   * what happened on *this* shift.
+   */
+  onNoteChange: (seriesId: string, date: string, text: string) => void;
   /** Called with the new date when an edit moves an event off this day. */
   onMoved?: (newDate: string) => void;
   /**
@@ -80,6 +87,24 @@ export default function DayPanel({
   const [editFinish, setEditFinish] = useState("");
   const [editKind, setEditKind] = useState<EventKind>("other");
   const [editNotes, setEditNotes] = useState("");
+
+  /**
+   * Which occurrence's day-note is open, and its draft. Kept separate from the
+   * edit form above on purpose — a day note is not an edit of the series, and
+   * sharing state would make it far too easy to write one into the other.
+   */
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+
+  function openNote(event: EventOccurrence) {
+    setNoteFor(event.id);
+    setNoteDraft(event.occurrenceNote ?? "");
+  }
+
+  function commitNote(event: EventOccurrence) {
+    if (event.seriesId) onNoteChange(event.seriesId, event.date, noteDraft);
+    setNoteFor(null);
+  }
 
   const date = fromDateKey(dateKey);
   const longDate = date
@@ -309,7 +334,45 @@ export default function DayPanel({
                           {event.notes}
                         </span>
                       )}
+                      {/*
+                        This day's note, kept visually distinct from the series
+                        note above it. Same text size, but indented behind a
+                        rule and labelled — because "ward 4, ask for Sarah"
+                        (every shift) and "missed bays 3 and 7" (this shift)
+                        being indistinguishable is the whole problem this
+                        field exists to solve.
+                      */}
+                      {event.occurrenceNote && (
+                        <span className="block mt-1.5 pl-2 border-l-2 border-rank/40">
+                          <span className="block text-[10px] font-mono text-rank/80 uppercase tracking-wide">
+                            This day
+                          </span>
+                          <span className="block text-[11px] text-ink-300 leading-relaxed whitespace-pre-line">
+                            {event.occurrenceNote}
+                          </span>
+                        </span>
+                      )}
                     </span>
+                    {/*
+                      Only on a repeating occurrence. A one-off event has no
+                      series to differ from, so its `notes` field already means
+                      "this day" and a second one would be noise.
+                    */}
+                    {event.seriesId && (
+                      <button
+                        onClick={() => (noteFor === event.id ? setNoteFor(null) : openNote(event))}
+                        aria-label={`Note for "${event.title}" on this day`}
+                        aria-expanded={noteFor === event.id}
+                        title="Note for just this day"
+                        className={`w-9 h-9 shrink-0 flex items-center justify-center rounded-badge transition-colors ${
+                          event.occurrenceNote || noteFor === event.id
+                            ? "text-rank"
+                            : "text-ink-700 hover:text-ink-300"
+                        }`}
+                      >
+                        <NotebookPen size={13} />
+                      </button>
+                    )}
                     <button
                       onClick={() => startEdit(event)}
                       aria-label={`Edit "${event.title}"`}
@@ -348,6 +411,42 @@ export default function DayPanel({
                       onConfirm={() => onDelete(event.id)}
                       compact
                     />
+                  </div>
+                )}
+
+                {/*
+                  Day-note editor. Saves on blur as well as on the button, so
+                  typing a note and tapping away doesn't silently lose it —
+                  which on a phone, one-handed, mid-shift, is what will happen.
+                */}
+                {noteFor === event.id && (
+                  <div className="mt-2 pt-2 border-t border-base-600">
+                    <label className="block text-[10px] font-mono text-rank/80 uppercase tracking-wide mb-1">
+                      Note for {relativeDay(event.date).toLowerCase()} only
+                    </label>
+                    <textarea
+                      autoFocus
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      onBlur={() => commitNote(event)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setNoteFor(null);
+                      }}
+                      rows={3}
+                      placeholder="What happened on this one — areas missed, who to tell…"
+                      className="w-full bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-rank/50 resize-none"
+                    />
+                    <div className="flex items-center justify-between gap-2 mt-1.5">
+                      <span className="text-[10px] text-ink-700">
+                        Stays on this date. The series keeps its own note.
+                      </span>
+                      <button
+                        onClick={() => commitNote(event)}
+                        className="inline-flex items-center gap-1.5 px-3 min-h-[38px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 hover:border-base-500 transition-colors shrink-0"
+                      >
+                        <Check size={13} /> Save
+                      </button>
+                    </div>
                   </div>
                 )}
               </li>

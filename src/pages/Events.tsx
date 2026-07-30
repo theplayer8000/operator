@@ -17,6 +17,7 @@ export default function Events() {
     deleteEvent,
     skipOccurrence,
     unskipOccurrence,
+    setOccurrenceNote,
   } = useEvents();
 
   const [year, setYear] = useState(() => new Date().getFullYear());
@@ -193,6 +194,7 @@ export default function Events() {
                 onDelete={deleteEvent}
                 onSkip={skipOccurrence}
                 onUnskip={unskipOccurrence}
+                onNoteChange={setOccurrenceNote}
                 onMoved={(newDate) => {
                   setYear(Number(newDate.slice(0, 4)));
                   setSelected(newDate);

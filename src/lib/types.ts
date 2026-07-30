@@ -91,6 +91,22 @@ export interface CalendarEvent {
    * than destroying the rule.
    */
   skipDates?: string[];
+  /**
+   * Notes that belong to **one day** of a series, keyed by local date —
+   * *"the areas I missed on today's collection"*, not standing information
+   * about the shift. Only meaningful alongside `recurrence`.
+   *
+   * This exists because `notes` above is a property of the *series*: one stored
+   * record means editing it writes to every occurrence, which is right for
+   * "ward 4, ask for Sarah" and useless for anything that happened on a
+   * particular Thursday. The two are deliberately separate fields rather than
+   * one field with rules attached.
+   *
+   * Second per-date field on a series after `skipDates`, and the same shape:
+   * a key that isn't there means nothing was written that day. Blank notes
+   * delete their key rather than storing `""`.
+   */
+  occurrenceNotes?: Record<string, string>;
 }
 
 /**
@@ -104,6 +120,12 @@ export interface CalendarEvent {
 export interface EventOccurrence extends CalendarEvent {
   /** Set only on expanded occurrences of a recurring series. */
   seriesId?: ID;
+  /**
+   * This day's entry from the series' `occurrenceNotes`, resolved at expansion
+   * time so a consumer never has to index the map by date itself — and so
+   * `notes` (the series note) and this one can't get mixed up.
+   */
+  occurrenceNote?: string;
 }
 
 export interface QuickNote {

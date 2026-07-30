@@ -11,7 +11,18 @@ import type { CalendarEvent, EventKind, EventOccurrence, EventRecurrence } from 
  * through to.
  */
 function occurrenceOn(event: CalendarEvent, date: string): EventOccurrence {
-  return { ...event, id: `${event.id}@${date}`, date, seriesId: event.id };
+  const occurrenceNote = event.occurrenceNotes?.[date];
+  return {
+    ...event,
+    id: `${event.id}@${date}`,
+    date,
+    seriesId: event.id,
+    // Omit the key rather than setting it to undefined — this spreads over a
+    // CalendarEvent, and an explicit undefined in a spread overwrites (the
+    // OPS-002 trap). Nothing reads `occurrenceNotes` off an occurrence, so it
+    // is left on for free rather than stripped.
+    ...(occurrenceNote ? { occurrenceNote } : {}),
+  };
 }
 
 /**
@@ -178,6 +189,33 @@ export function useEvents() {
     );
   }
 
+  /**
+   * Write a note against **one day** of a series, leaving `notes` (the
+   * series-wide note) and every other occurrence alone.
+   *
+   * A blank note deletes its key rather than storing `""`, so an absent key
+   * always means "nothing written that day" — the same convention `skipDates`
+   * and `gym.completions` follow, and what keeps the map from filling with
+   * empty strings from opened-then-abandoned editors.
+   */
+  function setOccurrenceNote(seriesId: string, date: string, text: string) {
+    const realId = resolveId(seriesId);
+    const trimmed = text.trim();
+    setEvents((prev) =>
+      prev.map((e) => {
+        if (e.id !== realId) return e;
+        const current = e.occurrenceNotes ?? {};
+        if (!trimmed) {
+          if (!(date in current)) return e;
+          const { [date]: _dropped, ...rest } = current;
+          return { ...e, occurrenceNotes: rest };
+        }
+        if (current[date] === trimmed) return e;
+        return { ...e, occurrenceNotes: { ...current, [date]: trimmed } };
+      })
+    );
+  }
+
   const todayKey = toDateKey(new Date());
 
   return {
@@ -194,5 +232,6 @@ export function useEvents() {
     deleteEvent,
     skipOccurrence,
     unskipOccurrence,
+    setOccurrenceNote,
   };
 }

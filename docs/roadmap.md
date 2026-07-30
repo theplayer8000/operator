@@ -174,8 +174,26 @@ whole series and still confirms. Before v14, delete on an occurrence silently
 meant skip, which left no way to remove a series at all. See `data-model.md` →
 Recurring events.
 
+**Notes can belong to one occurrence, not just the series** (v18). A repeating
+event's `notes` is a property of the series — editing it writes to every
+occurrence, which is right for standing information and useless for what
+happened on a particular shift. So a repeating occurrence gets its own note
+button and its own note (`occurrenceNotes`, keyed by date), rendered under a
+"This day" rule so the two can't be mistaken for each other. Driven by a real
+need: *"im on a collection right now and theres a couple areas ive missed out i
+need to report to my supervisor."*
+
+**The Work page will read these, not own them.** The owner's preference is for
+shift notes to live on `/work` once that's built. Nothing needs to move — a
+shift *is* a calendar event, the note is per-occurrence data on that event, and
+Work reading `useEvents()` read-only is the pattern the Dashboard and Day
+Schedule already use. Copying them into a `work.*` slice would be a second
+stored copy of one fact, which is what ADR 0008 exists to prevent.
+
 Known gaps: no multi-day spans, no reminders, no monthly/yearly recurrence.
-None should be faked with a loop over single days.
+None should be faked with a loop over single days. Occurrence notes are only
+reachable from the day they belong to — there's no "all notes for this series"
+view, which is a thing the Work page would be the right home for.
 
 ### Gym — `/gym`
 

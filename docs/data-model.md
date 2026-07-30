@@ -287,6 +287,35 @@ occurrence on its own day with an undo, so nothing is lost to a mis-tap. That
 also means the general no-undo rule (**OPS-020**) does not apply here — if you
 ever make a skip unrecoverable, put the confirm back.
 
+**`occurrenceNotes` is the second per-date field on a series** (v18), and the
+reason it exists is that `notes` is a property of the *series*. One stored
+record means editing `notes` writes to every occurrence — right for standing
+information ("ward 4, ask for Sarah"), useless for what happened on a
+particular Thursday. So:
+
+| Field | Scope | Reach it via |
+|---|---|---|
+| `notes` | the whole series (or the single event, for a one-off) | the edit form |
+| `occurrenceNotes[date]` | **one day** of a series | the note button on that day's row |
+
+Same conventions as `skipDates`: keyed by local date, and a blank note **deletes
+its key** rather than storing `""`, so an absent key always means "nothing
+written that day". `occurrenceOn()` resolves the day's entry onto the expanded
+occurrence as `occurrenceNote`, so no consumer indexes the map by date itself —
+which is what stops the series note and the day note being confused for each
+other. The note button only appears on a repeating occurrence: a one-off's
+`notes` already means "this day", and a second field there would be noise.
+
+**This is stored on the calendar deliberately, and the Work page will read it,
+not own it.** The owner's intent is for shift notes to surface in Work
+(`/work`, unbuilt) once that exists. Nothing needs to move when it does — a
+shift *is* a calendar event, the note is per-occurrence data on that event, and
+Work reading `useEvents()` is the same sanctioned cross-feature read the
+Dashboard and Day Schedule already do. Writing still goes through `useEvents`.
+Do **not** copy these into a `work.*` slice; that would be the second stored
+copy of one fact, which is what [ADR 0008](decisions/0008-dashboard-reads-the-real-board.md)
+exists to prevent.
+
 Still not modelled, deliberately: **multi-day spans, reminders, monthly/yearly
 recurrence.** Weekly exists because there was a real case for it. Add the
 others the same way — when something actually needs them.
