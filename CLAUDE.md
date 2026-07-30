@@ -19,6 +19,7 @@ file states the rule and the document explains it.
 | [`docs/design-system.md`](docs/design-system.md) | Building any UI |
 | [`docs/adding-a-feature.md`](docs/adding-a-feature.md) | Building Learning, Gym, Forex, Work, Journey, Statistics, or Settings |
 | [`docs/roadmap.md`](docs/roadmap.md) | Planning; deciding what's next |
+| [`docs/ai-workspace-design.md`](docs/ai-workspace-design.md) | **Before touching the chat, terminal, or anything AI-facing.** The proposed job-based structure, why the current one has the limits it does, and the provider boundary future models plug into. Proposed, not built — needs the owner's approval |
 | [`docs/known-issues.md`](docs/known-issues.md) | **Before shipping anything** — two entries are active defects, not theory |
 | [`docs/development.md`](docs/development.md) | Running, verifying, or handing off work |
 | [`docs/decisions/`](docs/decisions/) | Before "fixing" something that looks wrong, or changing an established pattern |

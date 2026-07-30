@@ -66,3 +66,5 @@ changed* — resolves here as:
 
 Do not let a document become a changelog. Git holds the history; these describe
 the system as it stands now.
+
+- [`ai-workspace-design.md`](ai-workspace-design.md) — proposed job-based structure for the AI workspace: what the current chat cannot do, why, and the provider boundary future models plug into. **Proposed, not built.**
