@@ -58,6 +58,22 @@ Approved so far — this list is the whole set:
 | Google Fonts | `fonts.googleapis.com` | pre-existing, in `index.html` |
 | Claude service status | `status.claude.com` | v11, `server/status.mjs` |
 
+**AI model providers are approved in principle but not yet individually.** The
+AI Provider Manager was approved on 2026-07-30 (ADR 0009); approving the router
+did **not** approve its occupants. Each provider — Anthropic, OpenAI, anything
+later — needs its own named approval before integration, and then goes in the
+table above. Three hard conditions come with it:
+
+- **The frontend never talks to a provider.** Server-side only, same as
+  `server/status.mjs`.
+- **API keys never go in `data/operator.json`, in git, or to the client.** That
+  file is plaintext, served by an API with no auth — a key in it is a key
+  published to the tailnet. Environment variables in development; Docker
+  secrets or equivalent runtime config in production.
+- **The embedded terminal is local-machine only.** No execution over the
+  tailnet or any external network until real authentication and authorisation
+  exist. See ADR 0009 for the restrictions this was approved under.
+
 Two rules for the ones that exist:
 
 - **Fetch server-side, never from the browser.** `server/status.mjs` is the
@@ -122,6 +138,27 @@ Don't over-engineer. No premature abstraction, no generic "entity" system,
 no ORM-style data layer. Every feature so far is a flat array of typed
 objects in localStorage — keep doing that.
 
+### The one exception: boundaries that isolate infrastructure
+
+Approved 2026-07-30 — see [ADR 0009](docs/decisions/0009-permitted-abstraction-boundaries.md)
+for the full test and reasoning. The short version:
+
+**Permitted** — an abstraction that hides a *swappable external dependency*,
+has exactly one implementation today, exposes only the operations Operator
+actually performs, and doesn't force features to become generic to pass
+through it. Four are approved by name: **Storage Provider** (JSON → Postgres),
+**Search Service** (JSON scan → vector), **AI Provider Manager**, and
+**Deployment Configuration** (nothing hardcoded to this machine).
+
+**Still forbidden** — generic repositories, ORMs, entity systems, a
+client-side state library (ADR 0005 stands), anything justified by "we might
+need it", and *extending a permitted boundary because it's already there*. The
+Storage Provider does not grow a query language.
+
+These sit **below** the feature hooks, not between features and their data.
+`useMissionBoard` still owns `missions.records`; only what `remoteStore` talks
+to underneath changes.
+
 ## Folder map
 
 ```
@@ -133,6 +170,9 @@ server/
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
   dev.mjs               — starts the API and Vite together
+  backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
+                          never calls the API, so it works when everything is down.
+                          Scheduled by the OS, not by the app — see docs/development.md
 data/
   operator.json         — the store. gitignored; NOT backed up by git
 src/
@@ -331,8 +371,12 @@ browsers treat as insecure. `crypto.randomUUID`, `crypto.subtle`,
 `generateId()` from `lib/id.ts`, never `crypto.randomUUID()` directly. When a
 bug "only happens on the server", check this first.
 
-**`data/operator.json` is gitignored, so git is not a backup.** Once real data
-goes in, it needs a copy job.
+**`data/operator.json` is gitignored, so git is not a backup.** Real data is in
+it now, and v17 added the copy job: `npm run backup` (`scripts/backup.mjs`),
+scheduled via `schtasks`, keeping 60 restore points. **Still single-machine** —
+it protects against a bad write, a bad migration or a mistaken clear, not
+against losing the disk. Point `OPERATOR_BACKUP_DIR` at a NAS share when there
+is one. See [`docs/development.md`](docs/development.md#backups) and **OPS-017**.
 
 ## Verification before handing anything back
 

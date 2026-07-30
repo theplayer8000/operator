@@ -10,6 +10,8 @@ npm run dev:web          # Vite only, assumes the API is already running
 npm run server           # storage API only
 npm run build            # tsc -b && vite build
 npm run serve            # built app + API from one port — deployment mode
+npm run backup           # snapshot the store (skips if nothing changed)
+npm run backup:list      # show restore points, newest first
 npx tsc -b               # typecheck alone
 ```
 
@@ -34,6 +36,70 @@ taskkill //F //PID <pid>
 | `OPERATOR_PORT` | `5174` | Storage API port |
 | `OPERATOR_HOST` | `0.0.0.0` | Storage API bind address |
 | `OPERATOR_SERVE_DIST` | unset | `1` serves `dist/` too (same as `--serve-dist`) |
+| `OPERATOR_BACKUP_DIR` | `<home>/OperatorBackups` | Where snapshots go. **Point this at the NAS when there is one** — that's the whole migration |
+| `OPERATOR_BACKUP_KEEP` | `60` | Restore points to keep. Unchanged stores are skipped, so this is 60 *distinct states*, not 60 scheduler ticks |
+
+## Backups
+
+**This is infrastructure, not a feature** (owner's framing, 2026-07-30, when the
+store stopped holding demo data). `scripts/backup.mjs` has no dependencies,
+imports nothing from `src/` or `server/`, and never calls the API — it reads
+`data/operator.json` off disk, so it works when the server is down, when Vite
+is down, and when the app has never been opened. **Nothing about it depends on
+the Operator UI.** Settings > Export remains as a second, independent route.
+
+Reading the file directly is safe because the server writes via temp file +
+rename (atomic), so a reader sees either the whole old file or the whole new
+one.
+
+What it guarantees:
+
+- **It refuses to back up a broken store.** Unparseable JSON, a missing `state`
+  object, or an empty `state` are all rejected with exit 1 and the existing
+  restore points are left untouched — if the live store is broken, the last
+  good backup is the valuable thing.
+- **It reads back what it wrote** and hash-compares before pruning anything, so
+  there is never a window with no good copy.
+- **It skips an unchanged store**, so restore points track real edits rather
+  than scheduler ticks.
+- **Timestamps are local**, never `toISOString()` — an evening backup in BST
+  would otherwise be filed under tomorrow (the OPS-009 trap), and a backup with
+  the wrong date on it is one you reach for and get wrong.
+
+### Scheduling it (Windows)
+
+The script is the mechanism; the OS is the scheduler. Register it once — run
+this from the repo root, in a terminal, as the owner:
+
+```bash
+schtasks /create /tn "Operator Backup" /tr "cmd /c cd /d D:\Projects\Operator && node scripts\backup.mjs" /sc hourly /st 00:15 /f
+```
+
+Then confirm and force one run:
+
+```bash
+schtasks /query /tn "Operator Backup" /v /fo list
+schtasks /run /tn "Operator Backup"
+```
+
+Hourly is cheap because unchanged stores are skipped: a quiet day writes
+nothing and consumes no restore points. With `KEEP=60` that is the last 60
+times the data actually changed.
+
+### Restoring
+
+There is deliberately **no `--restore` flag**. Restoring overwrites live data,
+and a one-word command that does that is how the wrong file gets copied over
+the right one. Do it by hand:
+
+```bash
+npm run backup:list                      # pick a restore point
+npm run backup -- --force                # snapshot the current file first
+# stop the server, then copy the chosen file over data/operator.json, restart
+```
+
+Migrations run on load, so restoring an older-schema backup is fine — the
+server brings it up to the current version when it reads it.
 
 ## The verification gate
 

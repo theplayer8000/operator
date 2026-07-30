@@ -28,6 +28,7 @@ Routine feature work does not need an ADR. Following the recipe in
 | [0006](0006-json-file-storage-server.md) | JSON file storage server | Accepted | 2026-07-28 |
 | [0007](0007-homelab-server-side-probes.md) | Homelab status is probed server-side | Accepted | 2026-07-28 |
 | [0008](0008-dashboard-reads-the-real-board.md) | The Dashboard reads the real Mission Board | Accepted | 2026-07-28 |
+| [0009](0009-permitted-abstraction-boundaries.md) | Infrastructure abstractions permitted; frameworks not | Accepted | 2026-07-30 |
 
 Dates are when the decision was made in the codebase (from git history), not
 when it was written down.

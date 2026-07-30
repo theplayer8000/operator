@@ -17,7 +17,7 @@ owner).
 | [OPS-003](#ops-003) | No schema versioning or migration path | **High** | **Fixed** (v5) |
 | [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | **Fixed** (v5) |
 | [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
-| [OPS-017](#ops-017) | `data/operator.json` has no automatic backup | Medium | Partly addressed (v9) |
+| [OPS-017](#ops-017) | `data/operator.json` has no automatic backup | Medium | Automated (v17); still single-machine |
 | [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | Medium | Accepted |
 | [OPS-019](#ops-019) | Homelab status reports port-open, not health | Low | Accepted |
 | [OPS-020](#ops-020) | Deletes have a confirm step but no undo | Low | Open |
@@ -467,11 +467,26 @@ exists if the owner remembers to take one, and nothing is scheduled. The store
 now holds real data (9 missions, live routine), so this matters more than when
 it was logged.
 
-Still needed: a scheduled copy off this machine. `rsync` over SSH to the NAS on
-a timer is the obvious shape, and is independent of the app. Moving
-`OPERATOR_DATA` to a NAS mount improves durability but is still one copy — a
-copy job is the thing, not a relocation.
+**v17 automated it.** `scripts/backup.mjs` is a standalone, dependency-free
+snapshot job — reads the file off disk, refuses to copy a broken store, verifies
+what it wrote before pruning, skips unchanged stores, and keeps
+`OPERATOR_BACKUP_KEEP` (60) restore points in `OPERATOR_BACKUP_DIR`. It imports
+nothing from the app and never calls the API, so it survives the server being
+down. See [`development.md`](development.md#backups) for the `schtasks`
+registration and the restore procedure.
+
+**Two things keep this open rather than fixed:**
+
+1. **Backups are still on the same physical machine.** The default is
+   `<home>/OperatorBackups`, which protects against a bad write, a bad
+   migration, or a mistaken clear — not against losing the disk. There is no NAS
+   yet (confirmed with the owner, 2026-07-30); local was accepted as the interim.
+   Pointing `OPERATOR_BACKUP_DIR` at a NAS share is the whole remaining step.
+2. **The schedule is registered by the owner, not by the repo.** Until
+   `schtasks` has actually been run, the mechanism exists and nothing is
+   driving it. Check with `schtasks /query /tn "Operator Backup"`.
 
 There is also **no automatic pre-migration snapshot**: v8's schema migration ran
-against live data with nothing taken first. Taking an export before a migration
-is currently a habit, not a mechanism.
+against live data with nothing taken first. `npm run backup` before a migration
+is now a one-liner, but it is still a habit rather than a mechanism — the
+server does not snapshot before running `MIGRATIONS`.
