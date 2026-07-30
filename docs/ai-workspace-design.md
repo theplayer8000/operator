@@ -224,5 +224,17 @@ AI Provider Manager.
 3. **Concurrency** — one job at a time, or several? One is simpler and matches a
    single user on a phone; several matters if long builds should run while he
    asks something else.
-4. **Budgets** — should a job have a token or cost ceiling that stops it, given
-   plan usage is the real constraint rather than a bill?
+4. **Budgets** — should a job have a token or cost ceiling that stops it?
+
+   Worth answering now the picture is clear: the owner is on **Pro** with **usage
+   credits enabled**, so under plan limits usage costs nothing extra, and over
+   them it is charged against credits — **£10.66 of £40 spent this month**. So
+   the cost figure a job reports is not decorative once a limit is crossed.
+
+   A counter can total *Operator's own* usage honestly. It **cannot** read the
+   plan percentages: there is no `claude usage` subcommand and `/usage` is
+   interactive-only. Label it "Operator has used X", never "you are at N%" — a
+   number that looks like plan usage but only counts one client is worse than no
+   number. Note also that limits are temporarily boosted (Claude Code +50% to
+   19 Aug, Cowork +100% to 5 Aug), so nothing should be tuned to today's
+   headroom.
