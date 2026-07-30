@@ -175,14 +175,64 @@ export function tokenise(line) {
 
 const resolvedCache = new Map();
 
-/** Pull the real binary out of an npm-style `.cmd` shim. See the header. */
+/**
+ * Work out what a Windows `.cmd` shim actually launches.
+ *
+ * Two shapes exist and both matter:
+ *
+ *   claude.cmd → "%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe" %*
+ *   npm.cmd    → SET "NODE_EXE=%~dp0\node.exe"
+ *                SET "NPM_CLI_JS=%~dp0\node_modules\npm\bin\npm-cli.js"
+ *
+ * The first is a real binary. The second is a **script plus an interpreter** —
+ * missing that is why `npm run build` failed with "couldn't find an executable
+ * for npm" while npm was plainly installed and on PATH.
+ *
+ * Returns `{ exe, prefixArgs }`. For a script shim the interpreter is
+ * `process.execPath` — the exact node already running this server, rather than
+ * whichever one PATH happens to resolve to.
+ */
 function targetFromShim(shimPath) {
   try {
     const text = readFileSync(shimPath, "utf8");
-    const match = text.match(/"([^"]*\.exe)"/i);
-    if (!match) return null;
-    const candidate = match[1].replace(/%dp0%\\?/i, dirname(shimPath) + "\\");
-    return existsSync(candidate) ? candidate : null;
+    const dir = dirname(shimPath);
+
+    const candidates = [...text.matchAll(/"([^"]+)"/g)]
+      .map((m) => m[1])
+      // npm writes paths as SET "NAME=path", so the quoted string is not the
+      // path on its own — drop anything up to the first `=`.
+      .map((q) => {
+        const eq = q.indexOf("=");
+        return eq === -1 ? q : q.slice(eq + 1);
+      })
+      .map((q) =>
+        q.replace(/%~dp0\\?|%dp0%\\?/gi, dir + "\\").replace(/\\{2,}/g, "\\")
+      )
+      .filter((q) => /\.(exe|js)$/i.test(q));
+
+    const exes = candidates.filter((c) => /\.exe$/i.test(c) && existsSync(c));
+    const jss = candidates.filter((c) => /\.js$/i.test(c) && existsSync(c));
+
+    /*
+      A script wins over an exe when both are present, and this ordering is the
+      whole fix.
+
+      npm.cmd names *both* `node.exe` and `npm-cli.js`. Taking the exe first ran
+      `node run build` — node treating "run" as a module path — and failed with
+      `Cannot find module 'D:\Projects\Operator\run'`. In a script shim the exe
+      is the *interpreter*, not the target.
+
+      npm also names `npm-prefix.js` before `npm-cli.js`, so "first .js" is
+      wrong too; prefer the CLI entry point by name.
+    */
+    if (jss.length > 0) {
+      const js = jss.find((c) => /cli\.js$/i.test(c)) ?? jss[0];
+      return { exe: exes[0] ?? process.execPath, prefixArgs: [js] };
+    }
+
+    if (exes.length > 0) return { exe: exes[0], prefixArgs: [] };
+
+    return null;
   } catch {
     return null;
   }
@@ -201,8 +251,9 @@ async function resolveExecutable(name) {
 
   const override = process.env[`OPERATOR_TERMINAL_BIN_${key.toUpperCase()}`];
   if (override && existsSync(override)) {
-    resolvedCache.set(key, override);
-    return override;
+    const resolved = { exe: override, prefixArgs: [] };
+    resolvedCache.set(key, resolved);
+    return resolved;
   }
 
   const finder = process.platform === "win32" ? "where" : "which";
@@ -221,8 +272,9 @@ async function resolveExecutable(name) {
   // A real binary is always preferable to a shim.
   const exe = candidates.find((c) => /\.exe$/i.test(c));
   if (exe) {
-    resolvedCache.set(key, exe);
-    return exe;
+    const resolved = { exe, prefixArgs: [] };
+    resolvedCache.set(key, resolved);
+    return resolved;
   }
 
   // Otherwise dig the real target out of the .cmd shim — Node will not spawn
@@ -238,8 +290,9 @@ async function resolveExecutable(name) {
 
   // On POSIX an extensionless entry is a normal executable.
   if (process.platform !== "win32" && candidates.length > 0) {
-    resolvedCache.set(key, candidates[0]);
-    return candidates[0];
+    const resolved = { exe: candidates[0], prefixArgs: [] };
+    resolvedCache.set(key, resolved);
+    return resolved;
   }
 
   resolvedCache.set(key, null);
@@ -324,8 +377,8 @@ export async function startRun(line, identity) {
     );
   }
 
-  const executable = await resolveExecutable(name);
-  if (!executable) {
+  const resolved = await resolveExecutable(name);
+  if (!resolved) {
     throw new Error(
       `couldn't find an executable for "${name}" on this machine — set OPERATOR_TERMINAL_BIN_${name.toUpperCase()}`
     );
@@ -335,7 +388,10 @@ export async function startRun(line, identity) {
   const run = {
     id,
     argv,
-    executable,
+    executable: resolved.exe,
+    // A script shim (npm, npx) launches an interpreter plus a script; the
+    // caller's own arguments come after those.
+    prefixArgs: resolved.prefixArgs,
     cwd: ROOT,
     device: identity?.device ?? "unknown",
     user: identity?.user ?? null,
@@ -360,7 +416,7 @@ export async function startRun(line, identity) {
     `[operator] terminal run ${id} by ${run.device}${run.user ? ` (${run.user})` : ""}: ${argv.join(" ")}`
   );
 
-  const proc = spawn(executable, argv.slice(1), {
+  const proc = spawn(resolved.exe, [...resolved.prefixArgs, ...argv.slice(1)], {
     cwd: ROOT,
     shell: false, // load-bearing — see the header
     windowsHide: true,
