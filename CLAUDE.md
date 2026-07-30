@@ -81,7 +81,12 @@ table above. Three hard conditions come with it:
   allowing `claude` is allowing arbitrary execution, because Claude Code runs
   commands. Never relax the auth on the grounds that commands are restricted.
   There is deliberately **no shell** (argv only, `shell: false`); if you hit
-  `EINVAL` spawning a Windows `.cmd`, the answer is not `shell: true`.
+  `EINVAL` spawning a Windows `.cmd`, the answer is not `shell: true`. Pipes are
+  available by asking for a shell explicitly (`bash -c "…"`), which keeps the
+  audit line honest. The executable allowlist was **dropped** — it permitted
+  `claude` and `node` while blocking `curl`, which is friction wearing the
+  costume of security. `OPERATOR_TERMINAL_ALLOW` can narrow it again if a setup
+  ever wants that.
 
 Two rules for the ones that exist:
 

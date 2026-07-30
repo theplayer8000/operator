@@ -37,7 +37,7 @@ authentication and deliberately narrower:
 |---|---|---|---|
 | **Armed** | Whether commands can run right now | the app, by a listed device (or `OPERATOR_TERMINAL=1` at start) | **disarmed** |
 | `OPERATOR_TERMINAL_DEVICES` | Which tailnet devices may run *or* arm | **environment only** | **empty — nobody** |
-| `OPERATOR_TERMINAL_ALLOW` | Which executables may be launched | environment | `claude,git,npm,npx,node,tsc,rg` |
+| `OPERATOR_TERMINAL_ALLOW` | Optional narrowing of what may be launched | environment | **unset — unrestricted** |
 
 Being a known tailnet device gets you the app. It does **not** get you a shell —
 that needs naming in `OPERATOR_TERMINAL_DEVICES`. Loopback is exempt: the machine
@@ -66,6 +66,38 @@ Verified: `carbon`, a tailnet device not on the list, is refused on arm, on run,
 and told why; an unlisted device sees `canManage: false`. A listed device can arm,
 run `claude --version` (returns `2.1.220`), and disarm. While disarmed, a listed
 device is refused with "the terminal is disarmed — switch it on first".
+
+### The allowlist was dropped, as this ADR said it should be
+
+It originally defaulted to `claude,git,npm,npx,node,tsc,rg`. The owner pushed
+back — the terminal felt limited, and he wants Operator to eventually `ssh` into
+the EPYC box — and he was right, on this document's own reasoning.
+
+"What would change this" already named the trigger: *evidence that the allowlist
+is being treated as containment rather than a seatbelt — either drop it entirely
+so the boundary is unmistakable, or make it a real one.* A list that permitted
+`claude` and `node` while blocking `curl` was never containment: both of those
+run arbitrary code. It was friction that looked like security, which is worse
+than no list, because it invites exactly the reasoning this ADR warns against.
+
+So `OPERATOR_TERMINAL_ALLOW` is now **unset by default and unrestricted**, and
+can be set to narrow the terminal again for a setup that wants it — a shared
+machine, a device trusted less. When a restriction is in force, commands must be
+given by name so a path cannot evade it; unrestricted, an explicit path is taken
+as given, since running a script that is not on PATH is a normal thing to want
+and there is no list left to evade.
+
+**Nothing else is relaxed.** The gates that actually matter are untouched:
+armed-by-a-listed-device, and `shell: false`.
+
+**Pipes and redirection still require asking for a shell explicitly** — `bash -c
+"git log | wc -l"`. That is deliberate: the audit line then reads `bash -c …`,
+which is visibly a shell invocation, rather than every command silently becoming
+one. `shell: true` would make the log a lie about what ran, and that has been
+rejected three times in this file for the same reason.
+
+Verified after the change: `curl`, `where`, `ssh -V` and `powershell` all run and
+exit 0, having all been refused before.
 
 ## The security boundary is authentication, not the allowlist
 

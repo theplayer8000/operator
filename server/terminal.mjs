@@ -26,7 +26,8 @@
 //   - **No shell.** argv array, `shell: false`. `&&`, `|`, `;`, backticks and
 //     redirection are inert text, so one input field cannot chain commands and
 //     the audit line is exactly what ran.
-//   - Only allowlisted executables, resolved to real binaries up front.
+//   - Unrestricted by default. `OPERATOR_TERMINAL_ALLOW` can narrow it, but a
+//     command list was never the boundary — see the note on ALLOWED below.
 //   - Every run is audited: device, user, argv, exit code, duration.
 //   - Timeout and output cap, so a runaway can't fill memory or run forever.
 //
@@ -112,13 +113,28 @@ const ALLOWED_DEVICES = new Set(
     .filter(Boolean)
 );
 
-/** Executables that may be launched. Names only — never paths from the client. */
+/**
+ * Optional restriction on what may be launched. **Unset means unrestricted.**
+ *
+ * It used to default to a fixed list, and that was friction pretending to be
+ * security. ADR 0011 already said the boundary is authentication plus the device
+ * list, because allowing `claude` allows arbitrary execution anyway — Claude Code
+ * runs commands. A list that stops `curl` while permitting `claude` and `node`
+ * protects nothing and blocks real work; the ADR named exactly this as the
+ * trigger to drop it, so it is dropped rather than quietly kept.
+ *
+ * Set `OPERATOR_TERMINAL_ALLOW` to restrict again if a future setup wants a
+ * narrow terminal — a shared machine, or a device you trust less. It is an
+ * opt-in seatbelt now, not a load-bearing wall, and nothing should be relaxed
+ * elsewhere on the grounds that it exists.
+ */
 const ALLOWED = new Set(
-  (process.env.OPERATOR_TERMINAL_ALLOW ?? "claude,git,npm,npx,node,tsc,rg,ls,dir,cat,pwd")
+  (process.env.OPERATOR_TERMINAL_ALLOW ?? "")
     .split(",")
     .map((c) => c.trim().toLowerCase())
     .filter(Boolean)
 );
+const RESTRICTED = ALLOWED.size > 0;
 
 const TIMEOUT_MS = Number(process.env.OPERATOR_TERMINAL_TIMEOUT_MS ?? 15 * 60_000) || 15 * 60_000;
 /** Per-run output ceiling. A build log is large; a runaway loop is unbounded. */
@@ -366,18 +382,25 @@ export async function startRun(line, identity) {
   if (argv.length === 0) throw new Error("nothing to run");
 
   const name = basename(argv[0]).replace(/\.(exe|cmd|bat|ps1)$/i, "").toLowerCase();
-  if (name !== argv[0].toLowerCase()) {
-    // A bare name is looked up here; a path would let the client choose the
-    // binary and sidestep the allowlist entirely.
-    throw new Error(`run commands by name, not by path — got "${argv[0]}"`);
-  }
-  if (!ALLOWED.has(name)) {
-    throw new Error(
-      `"${name}" is not allowed. Permitted: ${[...ALLOWED].sort().join(", ")} (set OPERATOR_TERMINAL_ALLOW to change)`
-    );
+  const isPath = name !== argv[0].toLowerCase();
+
+  if (RESTRICTED) {
+    // While a restriction is in force, a path would sidestep it — the name is
+    // the thing being checked, so the name has to be what gets resolved.
+    if (isPath) throw new Error(`run commands by name, not by path — got "${argv[0]}"`);
+    if (!ALLOWED.has(name)) {
+      throw new Error(
+        `"${name}" is not in OPERATOR_TERMINAL_ALLOW. Permitted: ${[...ALLOWED].sort().join(", ")}`
+      );
+    }
   }
 
-  const resolved = await resolveExecutable(name);
+  // An explicit path is taken as given when unrestricted — running a script that
+  // isn't on PATH is a normal thing to want, and there is no list left to evade.
+  const resolved =
+    !RESTRICTED && isPath && existsSync(argv[0])
+      ? { exe: argv[0], prefixArgs: [] }
+      : await resolveExecutable(name);
   if (!resolved) {
     throw new Error(
       `couldn't find an executable for "${name}" on this machine — set OPERATOR_TERMINAL_BIN_${name.toUpperCase()}`
@@ -539,6 +562,7 @@ export function listRuns() {
   return {
     enabled,
     cwd: ROOT,
+    restricted: RESTRICTED,
     allowed: [...ALLOWED].sort(),
     authorisedDevices: [...ALLOWED_DEVICES].sort(),
     timeoutMs: TIMEOUT_MS,
