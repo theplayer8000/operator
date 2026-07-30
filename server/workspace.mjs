@@ -40,7 +40,9 @@
 // move.
 
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
 
@@ -51,6 +53,92 @@ const MAX_REPLY_BYTES = 400_000;
 const TIMEOUT_MS = Number(process.env.OPERATOR_CHAT_TIMEOUT_MS ?? 10 * 60_000) || 10 * 60_000;
 /** Transcript kept per conversation. Older turns stay in Claude Code's own history. */
 const MAX_MESSAGES = 200;
+
+// --- permissions ----------------------------------------------------------
+//
+// Print mode cannot stop and ask. When Claude wants a tool it is not allowed to
+// use, the turn simply ends with a polite "needs your approval" and a
+// `permission_denials` entry — and from a phone that is a dead end, because the
+// approval prompt it refers to only exists in an interactive terminal.
+//
+// So instead of pretending to be interactive, this reports **what** was wanted
+// and **the exact rule that would allow it**, and offers to write that rule to
+// `.claude/settings.local.json` — the same file the interactive prompt writes
+// to when you approve something at the desk.
+//
+// Granting a Claude permission is strictly less powerful than what an authorised
+// device can already do through the terminal, so this sits behind the same gate
+// and adds no new capability. It is a shortcut, not a hole.
+
+const SETTINGS_FILE = join(ROOT, ".claude", "settings.local.json");
+
+/**
+ * Turn a raw denial into something showable, plus the rule that would permit it.
+ *
+ * Rules are generated **exact**, not wildcarded: `Bash(git push --dry-run)`
+ * rather than `Bash(git push:*)`. An exact rule allows the thing that was
+ * actually asked for and nothing else; broadening it is a decision the owner can
+ * make by editing the file, and should not be made for him by a button on a
+ * phone.
+ */
+function describeDenial(d) {
+  const tool = d?.tool_name ?? d?.tool ?? null;
+  if (!tool) return null;
+  const input = d?.tool_input ?? {};
+  // Bash is the common case and its `command` is what the rule keys on. Other
+  // tools key on a path, so fall back to whichever identifying field exists.
+  const subject =
+    typeof input.command === "string"
+      ? input.command
+      : typeof input.file_path === "string"
+        ? input.file_path
+        : typeof input.path === "string"
+          ? input.path
+          : "";
+  return {
+    tool,
+    subject,
+    description: typeof input.description === "string" ? input.description : "",
+    rule: subject ? `${tool}(${subject})` : tool,
+  };
+}
+
+/** Rules currently allowed, so the UI can avoid offering one that already exists. */
+async function readSettings() {
+  if (!existsSync(SETTINGS_FILE)) return { permissions: { allow: [] } };
+  try {
+    const parsed = JSON.parse(await readFile(SETTINGS_FILE, "utf8"));
+    if (!parsed.permissions) parsed.permissions = {};
+    if (!Array.isArray(parsed.permissions.allow)) parsed.permissions.allow = [];
+    return parsed;
+  } catch (err) {
+    // Never overwrite a file we could not parse — the owner has hand-edited
+    // this one and losing it would be worse than refusing.
+    throw new Error(`.claude/settings.local.json is unreadable: ${err.message}`);
+  }
+}
+
+/** Append one rule to the allow list. Idempotent. */
+export async function allowRule(rule, identity) {
+  const clean = String(rule ?? "").trim();
+  if (!clean) throw new Error("no rule given");
+  if (clean.length > 2000) throw new Error("rule is implausibly long");
+
+  const settings = await readSettings();
+  if (settings.permissions.allow.includes(clean)) {
+    return { added: false, rule: clean, reason: "already allowed" };
+  }
+  settings.permissions.allow.push(clean);
+
+  await mkdir(dirname(SETTINGS_FILE), { recursive: true });
+  const tmp = `${SETTINGS_FILE}.tmp`;
+  await writeFile(tmp, JSON.stringify(settings, null, 2), "utf8");
+  const { rename } = await import("node:fs/promises");
+  await rename(tmp, SETTINGS_FILE);
+
+  console.log(`[operator] permission allowed by ${identity?.device ?? "unknown"}: ${clean}`);
+  return { added: true, rule: clean };
+}
 
 /**
  * One conversation at a time.
@@ -259,9 +347,7 @@ export async function send(text, identity) {
           // What Claude wanted to do and was not allowed to. Print mode cannot
           // stop and ask, so without surfacing this the refusal is invisible.
           denials: Array.isArray(parsed.permission_denials)
-            ? parsed.permission_denials
-                .map((d) => d?.tool_name ?? d?.tool ?? null)
-                .filter(Boolean)
+            ? parsed.permission_denials.map(describeDenial).filter(Boolean)
             : [],
         });
       }

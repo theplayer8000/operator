@@ -123,6 +123,33 @@ There is no interactive input here — this is not a PTY — so EOF immediately 
 the honest behaviour. Verified: `cat` with no arguments now exits 0 at once
 instead of hanging.
 
+## Permission denials are reported, not confirmed
+
+`claude -p` cannot stop and ask. When it wants a tool it is not allowed to use,
+the turn ends with a polite *"needs your approval"* and a `permission_denials`
+entry — and from a phone that is a dead end, because the approval prompt it
+refers to only exists in an interactive terminal at the desk.
+
+Rather than pretend to be interactive, the chat reports **what** was wanted and
+**the exact rule that would allow it**, with a one-tap Allow that appends that
+rule to `.claude/settings.local.json` — the same file the interactive prompt
+writes to. Verified end to end: `git push --dry-run` blocked, Allow tapped,
+re-asked, ran and returned "Everything up-to-date" with zero denials.
+
+Two choices inside that:
+
+- **Rules are exact, never wildcarded.** `Bash(git push --dry-run)`, not
+  `Bash(git push:*)`. An exact rule permits the thing actually asked for and
+  nothing else; broadening it is a decision the owner makes by editing the file,
+  not one a button on a phone makes for him.
+- **This grants nothing new.** An authorised device can already run anything
+  through the terminal, so writing a Claude permission is strictly less
+  powerful. It is a shortcut, not a hole — and it sits behind the same gate.
+
+A real round-trip approval (Claude asks, the phone answers, the same turn
+continues) needs `--input-format stream-json` and a process held open across
+turns. That is a different process model and a separate decision.
+
 ## Two implementation decisions worth keeping
 
 **No PTY.** A real one means `node-pty`, a native module requiring build tools —

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban } from "lucide-react";
+import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban, Check } from "lucide-react";
 
 interface ChatMessage {
   id: string;
@@ -10,7 +10,14 @@ interface ChatMessage {
   costUsd?: number | null;
   durationMs?: number | null;
   model?: string;
-  denials?: string[];
+  denials?: Denial[];
+}
+
+interface Denial {
+  tool: string;
+  subject: string;
+  description: string;
+  rule: string;
 }
 
 interface ChatState {
@@ -47,6 +54,7 @@ export default function ClaudeChat() {
   const listRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
   const inFlightRef = useRef(false);
+  const [allowed, setAllowed] = useState<Record<string, string>>({});
 
   const poll = useCallback(async () => {
     /*
@@ -129,6 +137,33 @@ export default function ClaudeChat() {
       await poll();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  /**
+   * Write the rule that would have permitted a blocked tool.
+   *
+   * Print mode can't stop and ask, so a denial is otherwise a dead end from a
+   * phone — the approval prompt Claude refers to only exists in an interactive
+   * terminal at the desk. This writes the same rule that prompt would, to the
+   * same file. Nothing new is granted: an authorised device can already run
+   * anything through the terminal.
+   */
+  async function allow(rule: string) {
+    setAllowed((prev) => ({ ...prev, [rule]: "working" }));
+    try {
+      const res = await fetch("/api/chat/allow", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rule }),
+      });
+      const body = (await res.json()) as { added?: boolean; error?: string; reason?: string };
+      setAllowed((prev) => ({
+        ...prev,
+        [rule]: res.ok ? (body.added ? "allowed" : (body.reason ?? "already allowed")) : (body.error ?? "failed"),
+      }));
+    } catch (err) {
+      setAllowed((prev) => ({ ...prev, [rule]: (err as Error).message }));
     }
   }
 
@@ -230,12 +265,41 @@ export default function ClaudeChat() {
                       {m.model && ` · ${m.model.replace("claude-", "")}`}
                     </span>
                   )}
-                  {m.role === "assistant" && (m.denials?.length ?? 0) > 0 && (
-                    <span className="flex items-center gap-1.5 text-[10px] text-xp mt-1">
-                      <Ban size={10} />
-                      wanted to use {m.denials?.join(", ")} and was blocked
-                    </span>
-                  )}
+                  {m.role === "assistant" &&
+                    m.denials?.map((d) => (
+                      <div
+                        key={d.rule}
+                        className="mt-2 p-3 rounded-badge border border-xp/30 bg-xp/5 text-left"
+                      >
+                        <p className="flex items-center gap-1.5 text-[11px] text-xp mb-1">
+                          <Ban size={11} className="shrink-0" />
+                          Needed permission — it couldn&apos;t ask, so it stopped
+                        </p>
+                        <p className="text-xs text-ink-300 mb-1 break-words">
+                          <span className="font-mono text-ink-500">{d.tool}</span>
+                          {d.subject && <span className="font-mono"> — {d.subject}</span>}
+                        </p>
+                        {d.description && (
+                          <p className="text-[11px] text-ink-700 mb-2">{d.description}</p>
+                        )}
+                        <p className="text-[10px] font-mono text-ink-700 mb-2 break-all">
+                          rule: {d.rule}
+                        </p>
+                        {allowed[d.rule] ? (
+                          <p className="flex items-center gap-1.5 text-[11px] text-vital-up">
+                            <Check size={11} />
+                            {allowed[d.rule]} — ask again and it&apos;ll go through
+                          </p>
+                        ) : (
+                          <button
+                            onClick={() => void allow(d.rule)}
+                            className="px-3 min-h-[38px] rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 transition-colors"
+                          >
+                            Allow this
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 </div>
               ))}
               {state?.busy && (
@@ -299,8 +363,9 @@ export default function ClaudeChat() {
             Runs Claude Code against this project and remembers across messages — the same
             conversation you can pick up at the desk. It has tool access, so it can read and change
             files, but it <strong className="font-normal text-ink-500">can&apos;t stop and ask you
-            anything</strong>: print mode is one-way, so a tool it isn&apos;t allowed to use is
-            blocked and reported rather than confirmed with you. Transcript is in memory; Claude
+            anything</strong>: print mode is one-way. When it needs a permission it stops and tells
+            you which one — tap Allow to write that rule to{" "}
+            <span className="font-mono">.claude/settings.local.json</span> and ask again. Transcript is in memory; Claude
             keeps the real session, so &ldquo;New chat&rdquo; starts a fresh one rather than
             deleting anything.
           </p>
