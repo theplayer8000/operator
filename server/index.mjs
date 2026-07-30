@@ -379,6 +379,13 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    if (pathname === "/api/chat/model" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      const body = await readBody(req);
+      return json(res, 200, { model: chat.setModel(body?.model) });
+    }
+
     if (pathname === "/api/chat/new" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {

@@ -60,12 +60,26 @@ const MAX_MESSAGES = 200;
  * adding to a list. The previous `session_id` is not destroyed — Claude Code
  * still holds it on disk — so nothing is truly lost.
  */
+/**
+ * Models the chat may use. Claude Code takes `--model`, verified returning
+ * `modelUsage: ["claude-opus-5"]`, so this is a real switch rather than a label.
+ * Opus 5 is the default because the owner asked for it; the cheaper option is
+ * there for quick questions where the difference does not earn its latency.
+ */
+export const MODELS = [
+  { id: "claude-opus-5", label: "Opus 5" },
+  { id: "claude-sonnet-5", label: "Sonnet 5" },
+];
+const DEFAULT_MODEL = MODELS[0].id;
+
 let conversation = newConversation();
 let messageSeq = 0;
+
 
 function newConversation() {
   return {
     provider: "claude-code",
+    model: DEFAULT_MODEL,
     sessionId: null,
     messages: [],
     busy: false,
@@ -76,9 +90,17 @@ function newConversation() {
   };
 }
 
+export function setModel(id) {
+  const found = MODELS.find((m) => m.id === id);
+  if (found) conversation.model = found.id;
+  return conversation.model;
+}
+
 export function reset(identity) {
+  const keepModel = conversation.model;
   if (conversation.proc) conversation.proc.kill();
   conversation = newConversation();
+  conversation.model = keepModel;
   console.log(`[operator] chat reset by ${identity?.device ?? "unknown"}`);
   return state();
 }
@@ -106,6 +128,8 @@ export function state(since = 0) {
   const from = Number.isFinite(since) && since > 0 ? since : 0;
   return {
     provider: conversation.provider,
+    model: conversation.model,
+    models: MODELS,
     sessionId: conversation.sessionId,
     busy: conversation.busy,
     turns: conversation.turns,
@@ -143,6 +167,8 @@ export async function send(text, identity) {
     "-p",
     ...(conversation.sessionId ? ["--resume", conversation.sessionId] : []),
     prompt,
+    "--model",
+    conversation.model,
     "--output-format",
     "json",
   ];
@@ -224,8 +250,19 @@ export async function send(text, identity) {
         push("assistant", reply || (stderr.trim() || "Claude returned nothing."), { error: true });
       } else {
         push("assistant", reply, {
+          // Reported by Claude Code as the API-equivalent cost. On a
+          // subscription login (no ANTHROPIC_API_KEY set) this is plan usage,
+          // not a charge — the UI must not render it as money.
           costUsd: typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : null,
           durationMs: typeof parsed.duration_api_ms === "number" ? parsed.duration_api_ms : null,
+          model: conversation.model,
+          // What Claude wanted to do and was not allowed to. Print mode cannot
+          // stop and ask, so without surfacing this the refusal is invisible.
+          denials: Array.isArray(parsed.permission_denials)
+            ? parsed.permission_denials
+                .map((d) => d?.tool_name ?? d?.tool ?? null)
+                .filter(Boolean)
+            : [],
         });
       }
       resolveTurn(state());

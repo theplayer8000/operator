@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, Send, Plus, ShieldAlert, Loader2 } from "lucide-react";
+import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban } from "lucide-react";
 
 interface ChatMessage {
   id: string;
@@ -9,10 +9,14 @@ interface ChatMessage {
   error?: boolean;
   costUsd?: number | null;
   durationMs?: number | null;
+  model?: string;
+  denials?: string[];
 }
 
 interface ChatState {
   provider?: string;
+  model?: string;
+  models?: { id: string; label: string }[];
   sessionId?: string | null;
   busy: boolean;
   turns?: number;
@@ -42,8 +46,20 @@ export default function ClaudeChat() {
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const sinceRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   const poll = useCallback(async () => {
+    /*
+      Two polls must never be in flight at once.
+
+      Without this guard every message appeared two or three times on the
+      owner's phone — React's StrictMode fires the mount effect twice, both
+      polls read `sinceRef` before either had advanced it, and each appended the
+      whole transcript. The screenshot showed one question and one answer
+      rendered twice over, which also reads as being charged twice.
+    */
+    if (inFlightRef.current) return null;
+    inFlightRef.current = true;
     try {
       const res = await fetch(`/api/chat?since=${sinceRef.current}`, {
         headers: { accept: "application/json" },
@@ -53,17 +69,23 @@ export default function ClaudeChat() {
         return null;
       }
       const body = (await res.json()) as ChatState;
-      setState((prev) => {
-        // `since` returns only what's new, so append rather than replace —
-        // otherwise every poll would redraw (and scroll) the whole transcript.
-        const merged = [...(prev?.messages ?? []), ...(body.messages ?? [])];
-        return { ...body, messages: merged };
-      });
       if (body.latest) sinceRef.current = body.latest;
+      setState((prev) => {
+        // Append what's new, then de-duplicate by id. The guard above prevents
+        // the common case; this makes a repeat impossible rather than unlikely,
+        // which matters because the failure is silent and looks like a charge.
+        const byId = new Map<string, ChatMessage>();
+        for (const m of [...(prev?.messages ?? []), ...(body.messages ?? [])]) {
+          byId.set(m.id, m);
+        }
+        return { ...body, messages: [...byId.values()] };
+      });
       return body;
     } catch (err) {
       setError((err as Error).message);
       return null;
+    } finally {
+      inFlightRef.current = false;
     }
   }, []);
 
@@ -99,27 +121,25 @@ export default function ClaudeChat() {
         setError(body.reason ?? body.error ?? `server returned ${res.status}`);
         return;
       }
-      // Show it immediately rather than waiting a poll cycle — on a phone the
-      // gap reads as the app having dropped the message.
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              busy: true,
-              messages: [
-                ...prev.messages,
-                { id: `local-${Date.now()}`, role: "user", text, at: new Date().toISOString() },
-              ],
-            }
-          : prev
-      );
-      // The optimistic copy above and the server's own will both arrive; skip
-      // the server's echo of this turn by advancing past it on the next poll.
-      const fresh = await poll();
-      if (fresh) sinceRef.current = fresh.latest ?? sinceRef.current;
+      // No optimistic copy: the server records the user message synchronously
+      // before spawning, so one poll shows it with the server's own id. A local
+      // placeholder would carry a fake id that can't de-duplicate against it —
+      // which is exactly how the triple-render happened.
+      setState((prev) => (prev ? { ...prev, busy: true } : prev));
+      await poll();
     } catch (err) {
       setError((err as Error).message);
     }
+  }
+
+  async function chooseModel(id: string) {
+    setState((prev) => (prev ? { ...prev, model: id } : prev));
+    await fetch("/api/chat/model", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: id }),
+    }).catch(() => {});
+    await poll();
   }
 
   async function startNew() {
@@ -153,10 +173,12 @@ export default function ClaudeChat() {
             onClick={() => void startNew()}
             aria-label="Start a new conversation"
             title="Start a new conversation"
-            className="flex items-center gap-2 px-3 min-h-[44px] shrink-0 rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
+            className="flex items-center gap-1.5 px-3 min-h-[44px] shrink-0 rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
           >
             <Plus size={14} />
-            <span className="hidden sm:inline">New</span>
+            {/* Labelled at every width. As a bare "+" on a phone nobody can
+                tell whether it adds a message, a file, or wipes the thread. */}
+            New chat
           </button>
         )}
       </header>
@@ -191,10 +213,27 @@ export default function ClaudeChat() {
                   >
                     {m.text}
                   </span>
-                  {m.role === "assistant" && !m.error && m.durationMs != null && (
-                    <span className="block text-[10px] font-mono text-ink-700 mt-1">
-                      {(m.durationMs / 1000).toFixed(1)}s
-                      {m.costUsd != null && ` · $${m.costUsd.toFixed(4)}`}
+                  {m.role === "assistant" && !m.error && (
+                    <span
+                      className="block text-[10px] font-mono text-ink-700 mt-1"
+                      /* The figure Claude Code reports is the API-equivalent
+                         cost. On a subscription login it is plan usage, not a
+                         charge — showing "$0.4472" next to a reply read as a
+                         bill, so it moves to the tooltip and says what it is. */
+                      title={
+                        m.costUsd != null
+                          ? `≈$${m.costUsd.toFixed(4)} of equivalent API usage — counted against your plan, not billed separately`
+                          : undefined
+                      }
+                    >
+                      {m.durationMs != null && `${(m.durationMs / 1000).toFixed(1)}s`}
+                      {m.model && ` · ${m.model.replace("claude-", "")}`}
+                    </span>
+                  )}
+                  {m.role === "assistant" && (m.denials?.length ?? 0) > 0 && (
+                    <span className="flex items-center gap-1.5 text-[10px] text-xp mt-1">
+                      <Ban size={10} />
+                      wanted to use {m.denials?.join(", ")} and was blocked
                     </span>
                   )}
                 </div>
@@ -208,6 +247,25 @@ export default function ClaudeChat() {
           )}
 
           {error && <p className="text-xs text-vital-down mb-3 break-words">{error}</p>}
+
+          {(state?.models?.length ?? 0) > 1 && (
+            <div className="flex items-center gap-1.5 mb-2">
+              {state?.models?.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => void chooseModel(m.id)}
+                  disabled={state?.busy}
+                  className={`px-3 min-h-[38px] rounded-badge border text-xs transition-colors ${
+                    state?.model === m.id
+                      ? "border-xp/40 bg-xp/10 text-xp"
+                      : "border-base-600 text-ink-500 hover:text-ink-300"
+                  } disabled:opacity-50`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-end gap-2">
             <textarea
@@ -238,10 +296,13 @@ export default function ClaudeChat() {
           </div>
 
           <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
-            Runs Claude Code against this project, and remembers across messages — the same
+            Runs Claude Code against this project and remembers across messages — the same
             conversation you can pick up at the desk. It has tool access, so it can read and change
-            files. Transcript is held in memory; Claude keeps the real session, so &ldquo;New&rdquo;
-            starts a fresh one rather than deleting anything.
+            files, but it <strong className="font-normal text-ink-500">can&apos;t stop and ask you
+            anything</strong>: print mode is one-way, so a tool it isn&apos;t allowed to use is
+            blocked and reported rather than confirmed with you. Transcript is in memory; Claude
+            keeps the real session, so &ldquo;New chat&rdquo; starts a fresh one rather than
+            deleting anything.
           </p>
         </>
       )}
