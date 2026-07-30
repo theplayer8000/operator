@@ -42,6 +42,7 @@ import {
   stopRun,
   subscribe,
 } from "./terminal.mjs";
+import * as chat from "./workspace.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 
 const gzip = promisify(gzipCb);
@@ -342,6 +343,48 @@ const server = createServer(async (req, res) => {
         ...(allowed.ok ? {} : { reason: allowed.reason }),
         you: { device: identity?.device ?? null, method: identity?.method ?? null },
       });
+    }
+
+    // --- chat with Claude Code ---
+    //
+    // Same gate as the terminal on purpose: `claude -p` has tool access, so this
+    // is arbitrary execution by another route, not "only chat".
+
+    if (pathname === "/api/chat") {
+      const allowed = deviceAuthorised(identity);
+      return json(res, 200, {
+        ...(allowed.ok
+          ? chat.state(Number(url.searchParams.get("since") ?? 0))
+          : { messages: [], busy: false }),
+        authorised: allowed.ok,
+        canManage: deviceMayManage(identity).ok,
+        ...(allowed.ok ? {} : { reason: allowed.reason }),
+      });
+    }
+
+    if (pathname === "/api/chat/send" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      }
+      const body = await readBody(req);
+      try {
+        // Deliberately not awaited: a reply can take a minute, well past any
+        // sensible HTTP timeout on a phone. The client polls /api/chat.
+        const started = chat.send(body?.text, identity);
+        started.catch((err) => console.error("[operator] chat turn failed:", err.message));
+        return json(res, 202, { accepted: true });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    if (pathname === "/api/chat/new" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      }
+      return json(res, 200, chat.reset(identity));
     }
 
     // Arming is a separate permission from running: a listed device may switch

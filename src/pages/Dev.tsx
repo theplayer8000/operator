@@ -12,6 +12,7 @@ import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
 import ClaudeStatus from "@/components/dev/ClaudeStatus";
 import TerminalPanel from "@/components/dev/TerminalPanel";
+import ClaudeChat from "@/components/dev/ClaudeChat";
 
 const DOC_SHORTCUTS = [
   { path: "CLAUDE.md", label: "CLAUDE.md" },
@@ -55,6 +56,8 @@ export default function Dev() {
           </p>
         </div>
       </div>
+
+      <ClaudeChat />
 
       <TerminalPanel />
 

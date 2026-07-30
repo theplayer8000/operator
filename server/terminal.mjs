@@ -245,7 +245,7 @@ function targetFromShim(shimPath) {
  * request cannot point at an arbitrary binary. An explicit override is available
  * per command (`OPERATOR_TERMINAL_BIN_CLAUDE=...`) for unusual installs.
  */
-async function resolveExecutable(name) {
+export async function resolveExecutable(name) {
   const key = name.toLowerCase();
   if (resolvedCache.has(key)) return resolvedCache.get(key);
 

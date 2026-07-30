@@ -199,7 +199,10 @@ server/
   auth.mjs              — who is calling. Tailscale device identity + token fallback.
                           Gates every /api/ route — see ADR 0010 before touching it
   terminal.mjs          — runs commands for authorised devices. No shell (argv only),
-                          off unless OPERATOR_TERMINAL=1 — see ADR 0011
+                          disarmed by default — see ADR 0011
+  workspace.mjs         — a conversation with Claude Code that remembers, by keeping
+                          its session_id and passing --resume. Same gate as the
+                          terminal: `claude -p` has tool access, so it is execution
   clients.mjs           — in-memory record of which devices are connected
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
@@ -342,7 +345,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, and a **terminal** for authorised devices (off by default; ADR 0011) |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **terminal**, and a **Claude chat** that remembers across messages. Both for authorised devices only and disarmed by default (ADR 0011) |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |

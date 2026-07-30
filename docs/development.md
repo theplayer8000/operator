@@ -46,6 +46,7 @@ taskkill //F //PID <pid>
 | `OPERATOR_TERMINAL_ALLOW` | `claude,git,npm,npx,node,tsc,rg,ls,dir,cat,pwd` | Executables that may be launched, by name. Never add `cmd`, `powershell`, `sh` or `bash` — that hands back the shell the design exists to avoid |
 | `OPERATOR_TERMINAL_TIMEOUT_MS` | `900000` (15m) | Per-run wall clock before the process is killed |
 | `OPERATOR_TERMINAL_MAX_BYTES` | `2000000` | Per-run output ceiling |
+| `OPERATOR_CHAT_TIMEOUT_MS` | `600000` (10m) | How long one chat turn may take before Claude is killed |
 | `OPERATOR_TERMINAL_BIN_<NAME>` | unset | Explicit path for one command, e.g. `OPERATOR_TERMINAL_BIN_CLAUDE`, for unusual installs |
 
 ## Backups
