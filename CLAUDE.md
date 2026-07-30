@@ -70,9 +70,15 @@ table above. Three hard conditions come with it:
   file is plaintext, served by an API with no auth — a key in it is a key
   published to the tailnet. Environment variables in development; Docker
   secrets or equivalent runtime config in production.
-- **The embedded terminal is local-machine only.** No execution over the
-  tailnet or any external network until real authentication and authorisation
-  exist. See ADR 0009 for the restrictions this was approved under.
+- **The embedded terminal runs for named devices** ([ADR 0011](docs/decisions/0011-remote-terminal-for-authorised-devices.md),
+  amending ADR 0009's local-only restriction now that authentication exists).
+  Off unless `OPERATOR_TERMINAL=1`, and then only for devices listed in
+  `OPERATOR_TERMINAL_DEVICES` — being a known tailnet device gets you the app,
+  not a shell. **The boundary is authentication, not the command allowlist:**
+  allowing `claude` is allowing arbitrary execution, because Claude Code runs
+  commands. Never relax the auth on the grounds that commands are restricted.
+  There is deliberately **no shell** (argv only, `shell: false`); if you hit
+  `EINVAL` spawning a Windows `.cmd`, the answer is not `shell: true`.
 
 Two rules for the ones that exist:
 
@@ -190,6 +196,8 @@ server/
   homelab.mjs           — TCP reachability probes for the Homelab tiles
   auth.mjs              — who is calling. Tailscale device identity + token fallback.
                           Gates every /api/ route — see ADR 0010 before touching it
+  terminal.mjs          — runs commands for authorised devices. No shell (argv only),
+                          off unless OPERATOR_TERMINAL=1 — see ADR 0011
   clients.mjs           — in-memory record of which devices are connected
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
@@ -332,7 +340,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, and a **terminal** for authorised devices (off by default; ADR 0011) |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |

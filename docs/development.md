@@ -41,6 +41,12 @@ taskkill //F //PID <pid>
 | `OPERATOR_BACKUP_INTERVAL_MS` | `3600000` (1h) | How often the storage server takes a backup. Floor is 60000 |
 | `OPERATOR_TOKEN` | unset | Bearer token accepted as a fallback when the caller isn't on the tailnet. Needed for the future public-domain setup; not needed for phone-over-Tailscale |
 | `OPERATOR_TAILSCALE_BIN` | `tailscale` | Path to the tailscale binary, if it isn't on `PATH` |
+| `OPERATOR_TERMINAL` | unset | `1` enables the Dev-page terminal. Off by default — an upgrade must never quietly expose a shell |
+| `OPERATOR_TERMINAL_DEVICES` | empty | Comma-separated tailnet device names allowed to run commands. Empty means nobody; loopback is always allowed |
+| `OPERATOR_TERMINAL_ALLOW` | `claude,git,npm,npx,node,tsc,rg` | Executables that may be launched, by name |
+| `OPERATOR_TERMINAL_TIMEOUT_MS` | `900000` (15m) | Per-run wall clock before the process is killed |
+| `OPERATOR_TERMINAL_MAX_BYTES` | `2000000` | Per-run output ceiling |
+| `OPERATOR_TERMINAL_BIN_<NAME>` | unset | Explicit path for one command, e.g. `OPERATOR_TERMINAL_BIN_CLAUDE`, for unusual installs |
 
 ## Backups
 

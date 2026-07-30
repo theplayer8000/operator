@@ -29,6 +29,16 @@ import { checkServices } from "./homelab.mjs";
 import { recordRequest, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
 import { identify, tokenConfigured } from "./auth.mjs";
+import {
+  TERMINAL_ENABLED,
+  deviceAuthorised,
+  describeRun,
+  getRun,
+  listRuns,
+  startRun,
+  stopRun,
+  subscribe,
+} from "./terminal.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 
 const gzip = promisify(gzipCb);
@@ -284,8 +294,10 @@ const server = createServer(async (req, res) => {
       with the reason — because it is how a client discovers whether it needs a
       token at all.
     */
+    let identity = null;
     if (pathname.startsWith("/api/")) {
       const who = await identify(req);
+      identity = who;
 
       if (pathname === "/api/auth/whoami") {
         return json(res, who.ok ? 200 : 401, {
@@ -307,6 +319,96 @@ const server = createServer(async (req, res) => {
           hint: "Operator answers to devices on the owner's tailnet, or to a request carrying OPERATOR_TOKEN as a bearer token.",
         });
       }
+    }
+
+    // --- terminal (ADR 0011) ---
+    //
+    // Authentication above got the caller this far; `deviceAuthorised` is the
+    // separate question of whether *this device* may execute anything. Being a
+    // known tailnet device gets you the app, not a shell.
+
+    if (pathname === "/api/terminal/runs") {
+      if (!TERMINAL_ENABLED) {
+        return json(res, 200, {
+          enabled: false,
+          reason: "the terminal is disabled — start the server with OPERATOR_TERMINAL=1",
+          runs: [],
+        });
+      }
+      const allowed = deviceAuthorised(identity);
+      return json(res, 200, {
+        ...listRuns(),
+        authorised: allowed.ok,
+        ...(allowed.ok ? {} : { reason: allowed.reason }),
+        you: { device: identity?.device ?? null, method: identity?.method ?? null },
+      });
+    }
+
+    if (pathname === "/api/terminal/run" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        console.warn(
+          `[operator] terminal refused for ${identity?.device ?? identity?.client}: ${allowed.reason}`
+        );
+        return json(res, 403, { error: "not authorised to run commands", reason: allowed.reason });
+      }
+      const body = await readBody(req);
+      const line = typeof body?.command === "string" ? body.command.trim() : "";
+      if (!line) return json(res, 400, { error: "expected { command: string }" });
+      try {
+        const run = await startRun(line, identity);
+        return json(res, 200, describeRun(run));
+      } catch (err) {
+        // A rejected command is a user-facing message, not a server fault.
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    if (pathname === "/api/terminal/stop" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      }
+      const result = stopRun(url.searchParams.get("id") ?? "");
+      return json(res, result.ok ? 200 : 400, result);
+    }
+
+    if (pathname === "/api/terminal/stream") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      }
+      const run = getRun(url.searchParams.get("id") ?? "");
+      if (!run) return json(res, 404, { error: "no such run" });
+
+      /*
+        Plain chunked text, not SSE.
+
+        The client reads this with `response.body.getReader()`, which — unlike
+        EventSource — can carry an Authorization header, so the same code path
+        works once this is behind a token on a real domain. Output already
+        produced is replayed first, so refreshing the page or coming back after
+        the phone locks does not lose the log: a stream with no replay is the
+        thing that makes a mobile console frustrating.
+      */
+      res.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      });
+      res.write(run.output.join(""));
+
+      if (run.proc === null) {
+        res.end();
+        return;
+      }
+
+      const unsubscribe = subscribe(run, (chunk) => {
+        if (chunk === null) res.end();
+        else res.write(chunk);
+      });
+      req.on("close", unsubscribe);
+      return;
     }
 
     if (pathname === "/api/clients") {

@@ -30,6 +30,7 @@ Routine feature work does not need an ADR. Following the recipe in
 | [0008](0008-dashboard-reads-the-real-board.md) | The Dashboard reads the real Mission Board | Accepted | 2026-07-28 |
 | [0009](0009-permitted-abstraction-boundaries.md) | Infrastructure abstractions permitted; frameworks not | Accepted | 2026-07-30 |
 | [0010](0010-tailnet-identity-authentication.md) | The API authenticates: Tailscale identity + token | Accepted | 2026-07-30 |
+| [0011](0011-remote-terminal-for-authorised-devices.md) | Terminal runs for authorised devices, not just locally | Accepted | 2026-07-30 |
 
 Dates are when the decision was made in the codebase (from git history), not
 when it was written down.
