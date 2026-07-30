@@ -39,6 +39,8 @@ taskkill //F //PID <pid>
 | `OPERATOR_BACKUP_DIR` | `<home>/OperatorBackups` | Where snapshots go. **Point this at the NAS when there is one** — that's the whole migration |
 | `OPERATOR_BACKUP_KEEP` | `60` | Restore points to keep. Unchanged stores are skipped, so this is 60 *distinct states*, not 60 scheduler ticks |
 | `OPERATOR_BACKUP_INTERVAL_MS` | `3600000` (1h) | How often the storage server takes a backup. Floor is 60000 |
+| `OPERATOR_TOKEN` | unset | Bearer token accepted as a fallback when the caller isn't on the tailnet. Needed for the future public-domain setup; not needed for phone-over-Tailscale |
+| `OPERATOR_TAILSCALE_BIN` | `tailscale` | Path to the tailscale binary, if it isn't on `PATH` |
 
 ## Backups
 

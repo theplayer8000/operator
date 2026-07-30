@@ -39,6 +39,24 @@ export default defineConfig({
       "/api": {
         target: `http://localhost:${API_PORT}`,
         changeOrigin: true,
+        /*
+          `xfwd` is load-bearing for authentication, not a nicety.
+
+          The proxy connects to the API over loopback, so without a forwarded
+          address the API cannot tell a phone on the tailnet from the machine
+          it is running on — every proxied request looks local. `server/auth.mjs`
+          treats bare loopback as "sat at the keyboard" and trusts it, so with
+          `xfwd` off, port 5173 becomes a complete bypass: anything on the LAN
+          that can reach Vite gets the store, because Vite launders its address
+          into loopback on the way through.
+
+          With this on, the API sees the real client in X-Forwarded-For and
+          holds it to the same rules as any direct peer. Do not remove it.
+
+          `npm run serve` has no proxy at all and is the safer path when away
+          from the machine — see the header of server/auth.mjs.
+        */
+        xfwd: true,
       },
     },
   },

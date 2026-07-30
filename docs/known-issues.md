@@ -18,7 +18,7 @@ owner).
 | [OPS-004](#ops-004) | Feature hooks don't share memory across instances | Medium | **Fixed** (v5) |
 | [OPS-016](#ops-016) | New mission lost when created — write dropped on unmount | **High** | **Fixed** (v5) |
 | [OPS-017](#ops-017) | `data/operator.json` has no automatic backup | Medium | Automated (v17); still single-machine |
-| [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | Medium | Accepted |
+| [OPS-018](#ops-018) | Dev browser exposes the repo over HTTP with no auth | **High** (was Medium) | **Fixed** (v19) |
 | [OPS-019](#ops-019) | Homelab status reports port-open, not health | Low | Accepted |
 | [OPS-020](#ops-020) | Deletes have a confirm step but no undo | Low | Open |
 | [OPS-022](#ops-022) | Vite dev server served every file under the project root | **High** | **Fixed** (v7) |
@@ -334,16 +334,30 @@ mutator-then-navigate pattern is safe now but was not before.
 
 ## OPS-018
 
-**Dev browser exposes the repo over HTTP with no auth** · Medium · Accepted
+**Dev browser exposes the repo over HTTP with no auth** · **High** · **Fixed** (v19)
+
+> **The accepted-risk rationale below was false, and this was worse than
+> "Medium".** It read *"accepted because the tailnet is the security boundary"* —
+> but the server binds `0.0.0.0`, Windows Firewall allows inbound Node on the
+> **Private** profile, and `curl http://192.168.1.100:5174/api/state` returned the
+> entire store from the LAN. The tailnet was never the boundary; every interface
+> was. This exposed the store as well as the repo, so it was never only a Dev-page
+> issue.
+>
+> **Fixed in v19** by authenticating every `/api/` route — see
+> [ADR 0010](decisions/0010-tailnet-identity-authentication.md). Tailscale device
+> identity (resolved via the local daemon), a bearer token fallback, and loopback
+> for the machine itself. Two near-misses found while testing are documented in
+> that ADR: the Vite proxy laundering the client address into loopback, and
+> `X-Forwarded-For` append semantics making the leftmost entry spoofable.
+>
+> The rationale is now true rather than assumed — but **it depends on
+> `xfwd: true` staying on the Vite proxy**. Remove it and port 5173 becomes a
+> full bypass again.
 
 `server/dev.mjs` serves the project directory read-only at `/api/dev/*`. It is
 sandboxed — traversal outside the repo root is rejected, and `node_modules`,
-`.git`, `dist` and `data` are excluded — but there is **no authentication**, in
-line with the rest of the API.
-
-Accepted because the tailnet is the security boundary. It becomes a real
-problem the moment Operator is reachable from anywhere else, which is a good
-reason it should not be.
+`.git`, `dist` and `data` are excluded.
 
 Verified at implementation: `..`, `../../../Windows`, `data`, `node_modules`
 and an absolute-ish sibling path were all rejected.

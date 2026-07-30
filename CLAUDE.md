@@ -88,6 +88,28 @@ Two rules for the ones that exist:
 **The app must still work when the storage server is down** — degraded to the
 last known data with writes queued, never a blank screen.
 
+### The API is authenticated — don't add an unauthenticated route
+
+Every route under `/api/` requires an identified caller (v19,
+[ADR 0010](docs/decisions/0010-tailnet-identity-authentication.md)): a device on
+the owner's tailnet (resolved by asking the **local** `tailscale` daemon), a
+bearer token matching `OPERATOR_TOKEN`, or loopback. Static assets stay open so
+the app can load. New `/api/` routes are gated automatically — the check sits in
+front of the router, so you get this for free and must not route around it.
+
+Two things here are load-bearing and easy to break:
+
+- **`xfwd: true` on the Vite proxy** (`vite.config.ts`). Without it the API sees
+  every proxied request as loopback and trusts it — port 5173 becomes a complete
+  bypass for anything on the LAN.
+- **The rightmost `X-Forwarded-For` entry is the real one.** `xfwd` appends, so
+  the leftmost entry is whatever the client claimed. Reading it authenticated a
+  LAN peer as the owner's iPhone in testing.
+
+`OPS-018` used to accept no-auth on the grounds that "the tailnet is the security
+boundary". That was false — the server binds `0.0.0.0` and the store was readable
+from the LAN. It is true *now*, and only while the two points above hold.
+
 ## Tech stack
 
 React 18 + TypeScript + Vite + Tailwind + React Router v6 + Recharts +
@@ -166,6 +188,8 @@ server/
   index.mjs             — JSON storage API (no deps). GET/PUT/DELETE /api/state
   dev.mjs               — read-only repo browser for the Dev page
   homelab.mjs           — TCP reachability probes for the Homelab tiles
+  auth.mjs              — who is calling. Tailscale device identity + token fallback.
+                          Gates every /api/ route — see ADR 0010 before touching it
   clients.mjs           — in-memory record of which devices are connected
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/

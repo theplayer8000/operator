@@ -28,6 +28,7 @@ import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
 import { recordRequest, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
+import { identify, tokenConfigured } from "./auth.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 
 const gzip = promisify(gzipCb);
@@ -271,6 +272,43 @@ const server = createServer(async (req, res) => {
   if (pathname !== "/api/clients") recordRequest(req);
 
   try {
+    /*
+      Authentication gate — everything under /api/ (v19).
+
+      Static assets are deliberately *not* gated: the browser has to be able to
+      load the app before it can present a token, and the bundle carries no
+      data. Every route that reads or writes the store, browses the repo, or
+      probes the network sits behind this.
+
+      /api/auth/whoami is answered either way — 200 with the identity, or 401
+      with the reason — because it is how a client discovers whether it needs a
+      token at all.
+    */
+    if (pathname.startsWith("/api/")) {
+      const who = await identify(req);
+
+      if (pathname === "/api/auth/whoami") {
+        return json(res, who.ok ? 200 : 401, {
+          ...who,
+          tokenConfigured: tokenConfigured(),
+        });
+      }
+
+      if (!who.ok) {
+        // Log denials — on a tailnet this should be rare enough that any entry
+        // is worth reading, and it is the only record of something on the LAN
+        // reaching for the store.
+        console.warn(
+          `[operator] refused ${req.method} ${pathname} from ${who.client ?? who.peer}: ${who.reason}`
+        );
+        return json(res, 401, {
+          error: "not authorised",
+          reason: who.reason,
+          hint: "Operator answers to devices on the owner's tailnet, or to a request carrying OPERATOR_TOKEN as a bearer token.",
+        });
+      }
+    }
+
     if (pathname === "/api/clients") {
       return json(res, 200, listClients());
     }
