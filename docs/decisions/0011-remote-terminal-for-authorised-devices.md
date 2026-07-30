@@ -111,6 +111,18 @@ how an old run is re-opened. The streaming endpoint stays for `curl`.
 The lesson generalises: **this feature is used from a phone, so "works on the
 desktop" is not evidence it works.** Verify on the device it is for.
 
+## The child gets no stdin
+
+`stdio: ["ignore", "pipe", "pipe"]`, not the default. With the default `pipe`
+the child receives a pipe nobody ever writes to or closes, so anything reading
+stdin blocks until the 15-minute timeout. It surfaced as `claude -p` printing
+*"no stdin data received in 3s"* before doing any work; a bare `cat` would have
+hung outright and looked like the terminal was broken.
+
+There is no interactive input here — this is not a PTY — so EOF immediately is
+the honest behaviour. Verified: `cat` with no arguments now exits 0 at once
+instead of hanging.
+
 ## Two implementation decisions worth keeping
 
 **No PTY.** A real one means `node-pty`, a native module requiring build tools —

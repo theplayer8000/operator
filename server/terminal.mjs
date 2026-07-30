@@ -364,6 +364,18 @@ export async function startRun(line, identity) {
     cwd: ROOT,
     shell: false, // load-bearing — see the header
     windowsHide: true,
+    /*
+      stdin is closed, not piped.
+
+      With the default (`pipe`) the child gets a pipe nobody ever writes to or
+      closes, so anything that reads stdin blocks until the 15-minute timeout.
+      It showed up as `claude -p` printing "no stdin data received in 3s" before
+      doing anything, and a bare `cat` would have hung outright.
+
+      There is no interactive input here — this is not a PTY — so the honest
+      thing is EOF immediately.
+    */
+    stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
   });
   run.proc = proc;
