@@ -23,6 +23,7 @@ interface RunsBody {
   allowed?: string[];
   authorisedDevices?: string[];
   runs: RunSummary[];
+  cwd?: string;
   you?: { device: string | null; method: string | null };
 }
 
@@ -74,11 +75,17 @@ export default function TerminalPanel() {
   }, [refresh]);
 
   /**
-   * Read a run's output. Uses `fetch` + a stream reader rather than
-   * `EventSource` because EventSource cannot send an Authorization header, and
-   * this has to keep working once Operator is behind a token on a real domain.
-   * The server replays everything already produced before tailing, so this is
-   * also how a finished run is re-read.
+   * Read a run's output by polling, not streaming.
+   *
+   * The first version used `fetch` + `response.body.getReader()`. It worked on
+   * the desktop and failed on the owner's iPhone: `git status --short` ran and
+   * exited 0, but no text ever arrived. A terminal whose output silently never
+   * appears is worse than no terminal, and the phone is the primary client — so
+   * this polls `/api/terminal/output?from=` and appends what is new.
+   *
+   * Polling is also what makes re-opening an old run work, and what survives the
+   * phone locking mid-run: the server holds the whole buffer, so the next poll
+   * catches up rather than losing the gap.
    */
   const attach = useCallback(
     async (id: string) => {
@@ -91,21 +98,30 @@ export default function TerminalPanel() {
       setStreaming(true);
       setError(null);
 
+      let offset = 0;
       try {
-        const res = await fetch(`/api/terminal/stream?id=${encodeURIComponent(id)}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { reason?: string; error?: string };
-          throw new Error(body.reason ?? body.error ?? `stream returned ${res.status}`);
-        }
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("this browser can't stream the output");
-        const decoder = new TextDecoder();
         for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          setOutput((prev) => prev + decoder.decode(value, { stream: true }));
+          if (controller.signal.aborted) return;
+          const res = await fetch(
+            `/api/terminal/output?id=${encodeURIComponent(id)}&from=${offset}`,
+            { signal: controller.signal, headers: { accept: "application/json" } }
+          );
+          if (!res.ok) {
+            const body = (await res.json().catch(() => ({}))) as {
+              reason?: string;
+              error?: string;
+            };
+            throw new Error(body.reason ?? body.error ?? `server returned ${res.status}`);
+          }
+          const body = (await res.json()) as {
+            output: string;
+            offset: number;
+            running: boolean;
+          };
+          if (body.output) setOutput((prev) => prev + body.output);
+          offset = body.offset;
+          if (!body.running) break;
+          await new Promise((r) => setTimeout(r, 600));
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") setError((err as Error).message);
@@ -296,9 +312,12 @@ export default function TerminalPanel() {
           </div>
 
           <p className="text-[11px] text-ink-700 mb-3 leading-relaxed">
-            No shell: <span className="font-mono">&amp;&amp;</span>,{" "}
+            Runs in <span className="font-mono text-ink-500">{info.cwd ?? "the repo root"}</span>. No
+            shell, so <span className="font-mono">&amp;&amp;</span>,{" "}
             <span className="font-mono">|</span> and <span className="font-mono">;</span> are passed
-            through as plain arguments, not run. Allowed:{" "}
+            through as plain arguments rather than run, and shell built-ins don&apos;t exist — use{" "}
+            <span className="font-mono">ls</span> rather than a bare{" "}
+            <span className="font-mono">dir</span>. Allowed:{" "}
             <span className="font-mono text-ink-500">{(info.allowed ?? []).join(" ")}</span>
           </p>
 

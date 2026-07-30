@@ -43,7 +43,7 @@ taskkill //F //PID <pid>
 | `OPERATOR_TAILSCALE_BIN` | `tailscale` | Path to the tailscale binary, if it isn't on `PATH` |
 | `OPERATOR_TERMINAL` | unset | `1` starts the terminal **armed**. Otherwise it starts disarmed and a listed device arms it from the Dev page. The armed state is in memory, so a restart disarms it |
 | `OPERATOR_TERMINAL_DEVICES` | empty | Comma-separated tailnet device names allowed to run commands **and to arm it**. Empty means nobody; loopback is always allowed. Environment only — never make this app-editable |
-| `OPERATOR_TERMINAL_ALLOW` | `claude,git,npm,npx,node,tsc,rg` | Executables that may be launched, by name |
+| `OPERATOR_TERMINAL_ALLOW` | `claude,git,npm,npx,node,tsc,rg,ls,dir,cat,pwd` | Executables that may be launched, by name. Never add `cmd`, `powershell`, `sh` or `bash` — that hands back the shell the design exists to avoid |
 | `OPERATOR_TERMINAL_TIMEOUT_MS` | `900000` (15m) | Per-run wall clock before the process is killed |
 | `OPERATOR_TERMINAL_MAX_BYTES` | `2000000` | Per-run output ceiling |
 | `OPERATOR_TERMINAL_BIN_<NAME>` | unset | Explicit path for one command, e.g. `OPERATOR_TERMINAL_BIN_CLAUDE`, for unusual installs |

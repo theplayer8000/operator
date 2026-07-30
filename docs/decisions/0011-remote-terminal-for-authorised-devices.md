@@ -95,6 +95,22 @@ What the implementation does genuinely guarantee:
 - **Timeout and output cap** (15 min, 2 MB), so a runaway can neither spin
   forever nor exhaust memory.
 
+## Output is polled, not streamed
+
+The first cut streamed with `fetch` + `response.body.getReader()`. It worked on
+the desktop and **failed on the owner's iPhone**: `git status --short` ran from
+`tosins-iphone` and exited 0, but no text ever appeared. The run was fine; the
+transport was not.
+
+A terminal whose output silently never arrives is worse than no terminal, and the
+phone is the primary client — so the client polls
+`GET /api/terminal/output?id=&from=` and appends what is new. The server holds
+each run's whole buffer, so this also survives the phone locking mid-run and is
+how an old run is re-opened. The streaming endpoint stays for `curl`.
+
+The lesson generalises: **this feature is used from a phone, so "works on the
+desktop" is not evidence it works.** Verify on the device it is for.
+
 ## Two implementation decisions worth keeping
 
 **No PTY.** A real one means `node-pty`, a native module requiring build tools —
@@ -133,8 +149,16 @@ device.** It is why the terminal is off by default and why enabling it is a
 deliberate act rather than a shipped default.
 
 **Not addressed.** No per-command confirmation, and no working directory other
-than the repo root. Both are easy to add if the owner wants them; neither is
-pretended to exist.
+than the repo root — the panel states the directory rather than letting you
+change it. Both are easy to add if the owner wants them; neither is pretended to
+exist.
+
+**Shell built-ins do not exist here**, which surprises people: `dir` on Windows is
+a `cmd.exe` built-in, not a program, so with no shell there is nothing to spawn.
+On this machine Git for Windows supplies real `ls` and `dir` binaries, so both
+are in the default allowlist — but the general rule stands, and the panel says
+so. `cmd` is deliberately **not** allowlisted: adding it would hand back the
+shell this design exists to avoid.
 
 ## What would change this
 

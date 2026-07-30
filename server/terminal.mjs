@@ -114,7 +114,7 @@ const ALLOWED_DEVICES = new Set(
 
 /** Executables that may be launched. Names only — never paths from the client. */
 const ALLOWED = new Set(
-  (process.env.OPERATOR_TERMINAL_ALLOW ?? "claude,git,npm,npx,node,tsc,rg")
+  (process.env.OPERATOR_TERMINAL_ALLOW ?? "claude,git,npm,npx,node,tsc,rg,ls,dir,cat,pwd")
     .split(",")
     .map((c) => c.trim().toLowerCase())
     .filter(Boolean)
@@ -265,7 +265,7 @@ function publish(run, chunk) {
     run.truncated = true;
   }
   run.bytes += Buffer.byteLength(text, "utf8");
-  run.output.push(text);
+  run.text += text;
   for (const fn of run.subscribers) {
     try {
       fn(text);
@@ -344,7 +344,10 @@ export async function startRun(line, identity) {
     endedAt: null,
     exitCode: null,
     signal: null,
-    output: [],
+    // One accumulating string rather than chunks: the poll endpoint serves
+    // `text.slice(from)`, and an offset into an array of chunks would be a
+    // second thing to keep consistent for no gain.
+    text: "",
     bytes: 0,
     truncated: false,
     subscribers: new Set(),
@@ -440,13 +443,34 @@ export function describeRun(run, { includeOutput = false } = {}) {
     signal: run.signal,
     running: run.proc !== null,
     truncated: run.truncated,
-    ...(includeOutput ? { output: run.output.join("") } : {}),
+    ...(includeOutput ? { output: run.text } : {}),
+  };
+}
+
+/**
+ * Output from a character offset, for polling clients.
+ *
+ * Polling exists because streaming did not survive contact with the owner's
+ * phone: `git status --short` ran from his iPhone and exited 0, but no text
+ * ever appeared — the run was fine, the transport was not. A terminal whose
+ * output silently never arrives is worse than no terminal, so the client polls
+ * this instead of reading a stream. The stream endpoint stays for `curl`.
+ */
+export function readOutput(run, from = 0) {
+  const start = Number.isFinite(from) && from > 0 ? Math.min(from, run.text.length) : 0;
+  return {
+    output: run.text.slice(start),
+    offset: run.text.length,
+    running: run.proc !== null,
+    exitCode: run.exitCode,
+    truncated: run.truncated,
   };
 }
 
 export function listRuns() {
   return {
     enabled,
+    cwd: ROOT,
     allowed: [...ALLOWED].sort(),
     authorisedDevices: [...ALLOWED_DEVICES].sort(),
     timeoutMs: TIMEOUT_MS,

@@ -30,6 +30,7 @@ import { recordRequest, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
 import { identify, tokenConfigured } from "./auth.mjs";
 import {
+  readOutput,
   isEnabled,
   setEnabled,
   deviceMayManage,
@@ -387,6 +388,16 @@ const server = createServer(async (req, res) => {
       return json(res, result.ok ? 200 : 400, result);
     }
 
+    if (pathname === "/api/terminal/output") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) {
+        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      }
+      const run = getRun(url.searchParams.get("id") ?? "");
+      if (!run) return json(res, 404, { error: "no such run" });
+      return json(res, 200, readOutput(run, Number(url.searchParams.get("from") ?? 0)));
+    }
+
     if (pathname === "/api/terminal/stream") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {
@@ -410,7 +421,7 @@ const server = createServer(async (req, res) => {
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
       });
-      res.write(run.output.join(""));
+      res.write(run.text);
 
       if (run.proc === null) {
         res.end();
