@@ -29,6 +29,9 @@ export interface FileView {
  * Kept out of remoteStore deliberately: this is transient inspection state,
  * not app data, and it should not end up in the store or an export.
  */
+const NOT_AUTHORISED =
+  "This device isn't authorised. Open Operator on the Tailscale address rather than a LAN one.";
+
 export function useDevBrowser() {
   const [meta, setMeta] = useState<RepoMeta | null>(null);
   const [path, setPath] = useState(".");
@@ -36,10 +39,19 @@ export function useDevBrowser() {
   const [file, setFile] = useState<FileView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [unauthorised, setUnauthorised] = useState(false);
 
   useEffect(() => {
     fetch("/api/dev/meta")
-      .then((r) => r.json())
+      .then((r) => {
+        // A refusal is not a missing checkout and not a dead server. Without
+        // this the Dev page blamed both for what was actually a 401.
+        if (r.status === 401) {
+          setUnauthorised(true);
+          return null;
+        }
+        return r.json();
+      })
       .then(setMeta)
       .catch(() => setMeta(null));
   }, []);
@@ -50,7 +62,13 @@ export function useDevBrowser() {
     setError(null);
 
     fetch(`/api/dev/tree?path=${encodeURIComponent(path)}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (r.status === 401) {
+          if (!cancelled) setUnauthorised(true);
+          return { error: NOT_AUTHORISED };
+        }
+        return r.json();
+      })
       .then((body) => {
         if (cancelled) return;
         if (body.error) setError(body.error);
@@ -68,6 +86,12 @@ export function useDevBrowser() {
     setError(null);
     try {
       const res = await fetch(`/api/dev/file?path=${encodeURIComponent(rel)}`);
+      if (res.status === 401) {
+        setUnauthorised(true);
+        setError(NOT_AUTHORISED);
+        setFile(null);
+        return;
+      }
       const body = await res.json();
       if (body.error) {
         setError(body.error);
@@ -91,5 +115,5 @@ export function useDevBrowser() {
       ? []
       : path.split("/").map((name, i, all) => ({ name, path: all.slice(0, i + 1).join("/") }));
 
-  return { meta, path, crumbs, items, file, error, loading, openFile, openDir, setFile };
+  return { meta, path, crumbs, items, file, error, loading, unauthorised, openFile, openDir, setFile };
 }

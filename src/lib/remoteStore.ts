@@ -11,7 +11,14 @@
 
 import { clearMirror, readStorage, removeStorage, writeStorage } from "./storage";
 
-export type StoreStatus = "loading" | "online" | "offline";
+/**
+ * `unauthorised` is distinct from `offline` on purpose. A 401 and a dead server
+ * both stop the data arriving, but they need opposite responses — one is "go
+ * and start the server", the other is "you're on the wrong address". Collapsing
+ * them into "offline" sent the owner hunting for a crashed process while the
+ * server was running fine and deliberately refusing him.
+ */
+export type StoreStatus = "loading" | "online" | "offline" | "unauthorised";
 
 type Listener = () => void;
 
@@ -47,8 +54,42 @@ function setStatus(next: StoreStatus) {
 
 // --- loading --------------------------------------------------------------
 
+/** Thrown on a 401 so callers can tell "refused" from "unreachable". */
+export class ApiAuthError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(reason || "not authorised");
+    this.name = "ApiAuthError";
+    this.reason = reason;
+  }
+}
+
+let authReason = "";
+
+/** Why the server refused this device, if it did. Empty when it didn't. */
+export function getAuthReason(): string {
+  return authReason;
+}
+
+/**
+ * Read a 401 body for the server's own explanation. Best effort — the reason is
+ * for the owner's benefit, so a missing one must not mask the 401 itself.
+ */
+async function authErrorFrom(res: Response): Promise<ApiAuthError> {
+  let reason = "";
+  try {
+    const body = (await res.json()) as { reason?: string; error?: string };
+    reason = body.reason ?? body.error ?? "";
+  } catch {
+    /* non-JSON body — the status is the signal */
+  }
+  authReason = reason;
+  return new ApiAuthError(reason);
+}
+
 async function fetchState(): Promise<Record<string, unknown>> {
   const res = await fetch(API, { headers: { accept: "application/json" } });
+  if (res.status === 401) throw await authErrorFrom(res);
   if (!res.ok) throw new Error(`GET ${API} → ${res.status}`);
   const body = (await res.json()) as { state?: Record<string, unknown> };
   return body.state ?? {};
@@ -105,8 +146,13 @@ export function load(): Promise<void> {
       await flushPending();
       touched.forEach(notify);
     } catch (err) {
-      console.warn("[operator] storage server unreachable, using local mirror:", err);
-      setStatus("offline");
+      if (err instanceof ApiAuthError) {
+        console.warn("[operator] storage server refused this device:", err.reason);
+        setStatus("unauthorised");
+      } else {
+        console.warn("[operator] storage server unreachable, using local mirror:", err);
+        setStatus("offline");
+      }
     }
   })();
 
@@ -145,14 +191,24 @@ async function push(key: string, value: unknown) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ value }),
     });
+    if (res.status === 401) throw await authErrorFrom(res);
     if (!res.ok) throw new Error(`PUT ${key} → ${res.status}`);
     pending.delete(key);
     setStatus("online");
     await flushPending();
   } catch (err) {
-    console.warn(`[operator] write queued, server unreachable:`, err);
+    // Queue either way — a refused device may be on the wrong address and about
+    // to move to the right one, and losing the edit in the meantime would be the
+    // worst outcome. But say which it was, because "start the server" and
+    // "you're on the wrong URL" are different actions.
     pending.set(key, value);
-    setStatus("offline");
+    if (err instanceof ApiAuthError) {
+      console.warn(`[operator] write queued, server refused this device:`, err.reason);
+      setStatus("unauthorised");
+    } else {
+      console.warn(`[operator] write queued, server unreachable:`, err);
+      setStatus("offline");
+    }
   }
 }
 

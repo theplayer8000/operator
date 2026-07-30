@@ -253,3 +253,21 @@ export async function identify(req) {
 export function tokenConfigured() {
   return TOKEN.length > 0;
 }
+
+/**
+ * The address a request should be *attributed* to — the same value `identify()`
+ * judges, minus the judging.
+ *
+ * `clients.mjs` used `req.socket.remoteAddress` directly, so every device coming
+ * through the Vite proxy was logged as `127.0.0.1`. On the Dev page's connected
+ * clients list that showed the owner's iPhone as loopback, which is actively
+ * misleading for a panel whose whole job is answering "which device is this?".
+ * Same rightmost-entry, trusted-from-loopback-only rule as above — see the
+ * header for why the leftmost entry must never be used.
+ */
+export function resolveClientAddress(req) {
+  const peer = normaliseIp(req.socket?.remoteAddress);
+  if (!isLoopback(peer)) return peer;
+  const forwarded = forwardedClient(req);
+  return forwarded === "" ? peer : forwarded;
+}

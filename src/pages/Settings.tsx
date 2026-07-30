@@ -16,6 +16,12 @@ const STATUS_META = {
   loading: { label: "Connecting…", dot: "bg-ink-700", text: "text-ink-500" },
   online: { label: "Online", dot: "bg-vital-up ring-2 ring-vital-up/20", text: "text-ink-300" },
   offline: { label: "Offline — using local mirror", dot: "bg-vital-down", text: "text-vital-down" },
+  // Refused, not down — see the note in StorageStatus.tsx.
+  unauthorised: {
+    label: "Not authorised — use the Tailscale address",
+    dot: "bg-xp",
+    text: "text-xp",
+  },
 } as const;
 
 export default function Settings() {

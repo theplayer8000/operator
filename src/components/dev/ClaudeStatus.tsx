@@ -75,6 +75,9 @@ export default function ClaudeStatus() {
     setLoading(true);
     try {
       const res = await fetch("/api/claude-status", { headers: { accept: "application/json" } });
+      // A 401 is this server refusing *us*, which says nothing about Anthropic.
+      // The old copy blamed the box's internet connection for it.
+      if (res.status === 401) throw new Error("NOT_AUTHORISED");
       if (!res.ok) throw new Error(`server returned ${res.status}`);
       setBody((await res.json()) as StatusBody);
       setError(null);
@@ -123,9 +126,19 @@ export default function ClaudeStatus() {
 
       {!reachable ? (
         <p className="text-sm text-ink-700 leading-relaxed">
-          {error ?? body?.error}
-          {" — "}
-          which usually means this box has no route out, not that Claude is down.
+          {error === "NOT_AUTHORISED" ? (
+            <>
+              This device isn&apos;t authorised to ask, so Claude&apos;s status is unknown — open
+              Operator on the Tailscale address rather than a LAN one. Nothing here says anything
+              about whether Claude is up.
+            </>
+          ) : (
+            <>
+              {error ?? body?.error}
+              {" — "}
+              which usually means this box has no route out, not that Claude is down.
+            </>
+          )}
         </p>
       ) : !body ? (
         <p className="text-sm text-ink-700">Checking…</p>

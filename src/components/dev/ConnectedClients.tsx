@@ -42,6 +42,10 @@ export default function ConnectedClients() {
     setLoading(true);
     try {
       const res = await fetch("/api/clients", { headers: { accept: "application/json" } });
+      if (res.status === 401)
+        throw new Error(
+          "this device isn't authorised — open Operator on the Tailscale address, not a LAN one"
+        );
       if (!res.ok) throw new Error(`server returned ${res.status}`);
       const body = (await res.json()) as { clients: ClientRow[] };
       setRows(body.clients);

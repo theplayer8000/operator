@@ -25,8 +25,19 @@ function formatBytes(n: number) {
 }
 
 export default function Dev() {
-  const { meta, path, crumbs, items, file, error, loading, openFile, openDir, setFile } =
-    useDevBrowser();
+  const {
+    meta,
+    path,
+    crumbs,
+    items,
+    file,
+    error,
+    loading,
+    unauthorised,
+    openFile,
+    openDir,
+    setFile,
+  } = useDevBrowser();
 
   const parent = path === "." ? null : crumbs.slice(0, -1).map((c) => c.name).join("/") || ".";
 
@@ -100,7 +111,9 @@ export default function Dev() {
           </>
         ) : (
           <p className="text-sm text-ink-700">
-            No git metadata — the storage server may be down, or this isn't a git checkout.
+            {unauthorised
+              ? "This device isn't authorised, so the repo status is hidden. Open Operator on the Tailscale address rather than a LAN one."
+              : "No git metadata — the storage server may be down, or this isn't a git checkout."}
           </p>
         )}
       </section>

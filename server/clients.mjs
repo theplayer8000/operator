@@ -6,6 +6,8 @@
 // when something breaks — "is my phone even reaching the server?" — which
 // previously could only be guessed at.
 //
+
+import { resolveClientAddress } from "./auth.mjs";
 // Everything here is in memory and dies with the process. It is deliberately
 // not persisted: it's a live diagnostic, not history, and writing device
 // fingerprints into the store would be a privacy cost with no upside on a
@@ -52,14 +54,17 @@ function describe(userAgent) {
   return `${device} · ${browser}`;
 }
 
-/** Strip IPv6-mapped IPv4 ("::ffff:100.x.y.z") down to the readable form. */
-function normaliseIp(raw) {
-  if (!raw) return "unknown";
-  return raw.startsWith("::ffff:") ? raw.slice(7) : raw;
-}
-
 export function recordRequest(req) {
-  const ip = normaliseIp(req.socket?.remoteAddress);
+  /*
+    Attribute to the address auth judges, not the socket peer.
+
+    This used to read `req.socket.remoteAddress`, which meant every device
+    arriving through the Vite proxy was recorded as 127.0.0.1 — the owner's
+    iPhone showed up as loopback on the very panel built to answer "which device
+    is this?". `resolveClientAddress` applies the same trusted-from-loopback,
+    rightmost-entry rule as the auth check, so the two always agree.
+  */
+  const ip = resolveClientAddress(req) || "unknown";
   const userAgent = req.headers["user-agent"] ?? "";
   const key = `${ip}|${userAgent}`;
   const now = Date.now();

@@ -1,6 +1,12 @@
 import { useSyncExternalStore } from "react";
-import { Database, CloudOff, RefreshCw, Loader2 } from "lucide-react";
-import { getStatus, hasPendingWrites, retry, subscribeStatus } from "@/lib/remoteStore";
+import { Database, CloudOff, RefreshCw, Loader2, ShieldAlert } from "lucide-react";
+import {
+  getAuthReason,
+  getStatus,
+  hasPendingWrites,
+  retry,
+  subscribeStatus,
+} from "@/lib/remoteStore";
 
 /**
  * Where the data currently lives, always visible.
@@ -23,6 +29,30 @@ export default function StorageStatus() {
         <Loader2 size={13} className="animate-spin" />
         <span className="hidden sm:inline">Connecting</span>
       </span>
+    );
+  }
+
+  /*
+    A refusal is not an outage, and showing it as one costs real time: the
+    owner's phone was on the LAN address rather than the Tailscale one, every
+    /api call 401'd, and the app said the datastore was inaccessible — so he
+    went looking for a crashed server that was running perfectly and refusing
+    him on purpose. Different cause, different fix, different badge.
+  */
+  if (status === "unauthorised") {
+    const reason = getAuthReason();
+    return (
+      <button
+        onClick={() => void retry()}
+        title={`This device isn't authorised${reason ? ` — ${reason}` : ""}. Open Operator on the Tailscale address rather than a LAN one. Changes are held locally meanwhile. Click to retry.`}
+        className="flex items-center gap-2 px-2.5 py-1.5 rounded-badge border border-xp/40 bg-xp/10 text-xp text-xs hover:bg-xp/20 transition-colors"
+      >
+        <ShieldAlert size={13} />
+        <span className="hidden sm:inline">
+          {queued ? "Not authorised — queued" : "Not authorised"}
+        </span>
+        <RefreshCw size={12} />
+      </button>
     );
   }
 
