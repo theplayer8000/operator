@@ -60,7 +60,8 @@ store.
 | ~~`dashboard.productivityHistory`~~ | — | — | **Retired v9** — the card charting it was seven fixed numbers presented as a trend. Replaced by `MissionStatusChart` |
 | ~~`dashboard.events`~~ | — | — | **Retired v10** — Events is a real feature now; the widget reads `events.records` |
 | `routine.sections` | `RoutineSection[]` | `useRoutineData` | Yes |
-| `routine.lastReset` | `string` (`YYYY-MM-DD`) | `useRoutineData` | Internal marker |
+| `routine.completions` | `RoutineCompletions` (`{ [date]: taskId[] }`) | `useRoutineData` | Yes — ticked per date, key dropped when a day empties |
+| `routine.lastReset` | `string` (`YYYY-MM-DD`) | *none — retired in v3* | Orphan; kept only so a clear removes it |
 | `missions.records` | `MissionRecord[]` | `useMissionBoard` | Yes, incl. archive + delete |
 | `events.records` | `CalendarEvent[]` | `useEvents` | Yes |
 | `homelab.services` | `HomelabService[]` | `useHomelab` | Yes — the server also reads this slice to know what to probe |
@@ -145,23 +146,36 @@ cold start with the server down can hand the client pre-v2 sections with no
 — a missing start reads as 09:00 rather than crashing. Any future field added
 to a persisted shape needs the same treatment.
 
-**There is no per-date routine history, and this constrains the UI.**
-`RoutineTask.done` is a single current flag, and the daily reset
-(`useRoutineData`, **OPS-009**) overwrites it for every `repeatDaily` task once
-per local day. Yesterday's ticks are not archived anywhere — they are
-destroyed. So the Day Schedule's day stepper (v15) can show the *plan* for any
-date but only the *record* for today, and off today it hides the checkboxes
-rather than rendering ones that would either lie or write today's state under
-another day's heading.
+**Routine completion is keyed by date (schema v3), and the nightly reset is
+gone.** `routine.completions` is `{ [dateKey]: taskId[] }` — the same shape as
+`gym.completions`, for the same reason. A date with no entry is simply a date
+nothing was ticked on, so there is nothing to roll back, no marker to keep, and
+last Tuesday stays readable.
 
-Gym is the contrast worth copying if this ever needs fixing: `gym.completions`
-is keyed by date, which is exactly why the Gym page can step back through real
-sessions. Giving the routine the same thing means a new `routine.completions`
-slice keyed by date, moving `done` out of the task, and retiring the reset
-(a date with no entry is simply untouched — nothing to roll back). That is an
-**additive** migration if the old `done` is left in place and ignored, and it
-changes what the reset means, so it is a decision to take deliberately rather
-than a refactor to slip in. Not currently requested.
+Before v3 completion was a single `done` flag per step and a nightly effect
+flipped every repeating step back to `false`. **OPS-009** fixed *when* that ran
+(it compared UTC and only ran on mount); it could not fix the deeper problem,
+which was that the reset **destroyed the record rather than archiving it** — the
+routine had no history at all, only current state overwritten each midnight.
+Removing the reset is what made a day stepper on `/routine` meaningful.
+
+Two consequences the UI has to respect:
+
+- **`RoutineTask.done` is still the truth for one-off steps**, and only those. A
+  step with `repeatDaily: false` is done once and stays done on every date, so
+  its state belongs to the step, not to a day. For a repeating step the field is
+  **ignored** — read `routine.completions`. `useRoutineData.isDoneOn` is the one
+  place that decides this; don't read `task.done` directly.
+- **`routine.lastReset` is retired.** No reader remains. It stays in
+  `BLANK_VALUES` only so a Settings clear takes it out of existing stores
+  instead of leaving an orphan.
+
+The v2 → v3 migration credits anything already ticked to **today** rather than
+discarding it. That is a guess about when it happened, but it is the only date
+the old shape supports, and the old reset means a `done: true` can only have
+been set since the last local midnight. It builds the date from local parts,
+never `toISOString()` (OPS-009). `done` is left on the task untouched —
+additive only.
 
 ### Mission Board
 

@@ -48,9 +48,13 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "dashboard.missions": [], // v9
   "dashboard.events": [], // v10 — replaced by events.records
   "routine.sections": seedRoutineSections.map((s) => ({ ...s, tasks: [], notes: "" })),
+  // Keyed by date rather than a list, so its empty value is an object — same
+  // as gym.completions.
+  "routine.completions": {},
+  // Retired in v16 with the nightly reset it guarded (schema v3 keys completions
+  // by date, so there is nothing to roll back). Kept here so a clear takes it
+  // out of existing stores rather than leaving an orphan.
   // Local date, not toISOString() — see the OPS-009 note on useRoutineData.
-  // This one had the same bug and would have set the wrong day for up to an
-  // hour after a clear, exactly the window OPS-009 fixed for the reset itself.
   "routine.lastReset": toDateKey(new Date()),
   "missions.records": [],
   "homelab.services": [],
@@ -80,8 +84,8 @@ export const FEATURE_SLICES: FeatureSlice[] = [
   {
     label: "Daily Routine",
     description:
-      "Every step and note. The seven sections and their start times stay — there's no way to recreate a section.",
-    keys: ["routine.sections", "routine.lastReset"],
+      "Every step and note, and which steps you ticked on which day. The seven sections and their start times stay — there's no way to recreate a section.",
+    keys: ["routine.sections", "routine.completions", "routine.lastReset"],
   },
   {
     label: "Mission Board",

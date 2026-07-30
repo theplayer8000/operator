@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from "react";
 import { useRemoteStorage } from "./useRemoteStorage";
 import { generateId } from "@/lib/id";
 import { parseHHMM, toDateKey } from "@/lib/time";
 import { seedRoutineSections } from "@/lib/seed";
 import type {
+  RoutineCompletions,
   RoutineSection,
   RoutineSectionKey,
   RoutineTask,
@@ -19,74 +19,79 @@ import type {
 const FALLBACK_START = 9 * 60;
 
 /**
- * Same pattern as useDashboardData: one localStorage-backed slice
- * ("routine.sections"), plus a small "routine.lastReset" marker used to
- * roll repeating tasks back to incomplete once per calendar day.
+ * Owns `routine.sections` (the template — the shape of a day) and
+ * `routine.completions` (what was ticked, keyed by local date).
+ *
+ * **The nightly reset is gone as of v16, and its absence is the feature.**
+ * Completion used to be a single `done` flag per step, flipped back for every
+ * repeating step once per calendar day — so the routine had no history at all,
+ * only current state that was overwritten each midnight (see **OPS-009**, which
+ * fixed *when* that reset ran but not the fact that it destroyed the record).
+ * Keying by date means a date with no entry is simply a date nothing was ticked
+ * on: there is nothing to roll back, no marker to keep, and last Tuesday stays
+ * readable. `gym.completions` established the shape; this is the same thing.
+ *
+ * `RoutineTask.done` is still the truth for **one-off** steps, which is why it
+ * survives: a step that doesn't repeat is done once and stays done, so its
+ * state belongs to the step rather than to a date. For repeating steps it is
+ * ignored.
  */
 export function useRoutineData() {
   const [sections, setSections] = useRemoteStorage<RoutineSection[]>(
     "routine.sections",
     seedRoutineSections
   );
-  const [lastReset, setLastReset] = useRemoteStorage<string>(
-    "routine.lastReset",
-    toDateKey(new Date())
+  const [completions, setCompletions] = useRemoteStorage<RoutineCompletions>(
+    "routine.completions",
+    {}
   );
 
+  const todayKey = toDateKey(new Date());
+
+  /** Whether a step counts as done on a given date. */
+  function isDoneOn(dateKey: string, task: RoutineTask): boolean {
+    if (!task.repeatDaily) return task.done;
+    return (completions[dateKey] ?? []).includes(task.id);
+  }
+
   /**
-   * The daily reset — **OPS-009**, fixed in v10. It had two defects:
+   * Tick or untick a step on a date.
    *
-   * 1. It compared `new Date().toISOString().slice(0, 10)`, which is the *UTC*
-   *    day. Between midnight and 01:00 during BST that reports yesterday, so
-   *    the routine rolled an hour late for half the year. `toDateKey` reads the
-   *    local parts instead — verified against `TZ=Europe/London`.
-   * 2. It ran on mount only, so a tab left open across midnight never reset.
-   *    Now it re-checks whenever the tab becomes visible or regains focus,
-   *    which is the case that actually happens: a phone in a pocket overnight.
-   *
-   * `lastReset` is the guard, so re-checking often is free — the work only
-   * happens when the stored day differs from today.
+   * Two stores, because the two kinds of step mean different things. A
+   * repeating step is a fact about a day, so it goes in `completions` under
+   * that date. A one-off is a fact about the step, so it stays on the task and
+   * the date is irrelevant — ticking "work at Darams" on Tuesday and looking
+   * at Friday should still show it done.
    */
-  useEffect(() => {
-    function rollIfNewDay() {
-      const today = toDateKey(new Date());
-      if (lastReset === today) return;
-
+  function toggleTask(dateKey: string, sectionKey: RoutineSectionKey, task: RoutineTask) {
+    if (!task.repeatDaily) {
       setSections((prev) =>
-        prev.map((s) => ({
-          ...s,
-          tasks: s.tasks.map((t) => (t.repeatDaily ? { ...t, done: false } : t)),
-        }))
+        prev.map((s) =>
+          s.key !== sectionKey
+            ? s
+            : {
+                ...s,
+                tasks: s.tasks.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t)),
+              }
+        )
       );
-      setLastReset(today);
+      return;
     }
 
-    rollIfNewDay();
+    setCompletions((prev) => {
+      const current = prev[dateKey] ?? [];
+      const next = current.includes(task.id)
+        ? current.filter((id) => id !== task.id)
+        : [...current, task.id];
 
-    function onVisible() {
-      if (!document.hidden) rollIfNewDay();
-    }
-
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastReset]);
-
-  function toggleTask(sectionKey: RoutineSectionKey, taskId: string) {
-    setSections((prev) =>
-      prev.map((s) =>
-        s.key !== sectionKey
-          ? s
-          : {
-              ...s,
-              tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, done: !t.done } : t)),
-            }
-      )
-    );
+      // Drop the key rather than storing an empty array, so an untouched day
+      // leaves no trace — same as gym.completions.
+      if (next.length === 0) {
+        const { [dateKey]: _dropped, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [dateKey]: next };
+    });
   }
 
   function addTask(sectionKey: RoutineSectionKey, title: string, estimatedMinutes = 10) {
@@ -172,25 +177,35 @@ export function useRoutineData() {
     setSections((prev) => prev.map((s) => (s.key === sectionKey ? { ...s, notes } : s)));
   }
 
-  const totalTasks = sections.reduce((sum, s) => sum + s.tasks.length, 0);
-  const doneTasks = sections.reduce((sum, s) => sum + s.tasks.filter((t) => t.done).length, 0);
-  const totalMinutes = sections.reduce(
-    (sum, s) => sum + s.tasks.reduce((a, t) => a + t.estimatedMinutes, 0),
-    0
-  );
-  const doneMinutes = sections.reduce(
-    (sum, s) => sum + s.tasks.filter((t) => t.done).reduce((a, t) => a + t.estimatedMinutes, 0),
-    0
-  );
-  const overallPercent = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100);
+  /**
+   * Totals for one date. Every number the page shows is now date-scoped —
+   * "0/19 steps" is a statement about a day, and before v16 it silently meant
+   * "today" because today was the only day that existed.
+   */
+  function statsFor(dateKey: string) {
+    const all = sections.flatMap((s) => s.tasks);
+    const done = all.filter((t) => isDoneOn(dateKey, t));
+    const totalTasks = all.length;
+    return {
+      totalTasks,
+      doneTasks: done.length,
+      totalMinutes: all.reduce((a, t) => a + t.estimatedMinutes, 0),
+      doneMinutes: done.reduce((a, t) => a + t.estimatedMinutes, 0),
+      overallPercent: totalTasks === 0 ? 0 : Math.round((done.length / totalTasks) * 100),
+    };
+  }
 
   /**
    * The day laid out on a clock. Derived, never stored — a block's end moves
    * when tasks are added or re-estimated, and storing it would let the two
    * drift. Sorted by start time rather than by array order, because the day is
    * the sections' times, not the order they happen to sit in the array.
+   *
+   * Takes a date because `doneTasks` is per-date now. Not memoised: it is seven
+   * sections of arithmetic, and memoising on a changing date key would cost
+   * more than it saves.
    */
-  const schedule = useMemo<ScheduleBlock[]>(() => {
+  function scheduleFor(dateKey: string): ScheduleBlock[] {
     const blocks = sections
       // A section with no steps has nothing to do in it, so it's noise on the
       // schedule — it still renders as a card on /routine, where you can add
@@ -207,7 +222,7 @@ export function useRoutineData() {
           start,
           end: start + durationMinutes,
           durationMinutes,
-          doneTasks: s.tasks.filter((t) => t.done).length,
+          doneTasks: s.tasks.filter((t) => isDoneOn(dateKey, t)).length,
           totalTasks: s.tasks.length,
           overlapsPrevious: false,
         };
@@ -223,11 +238,15 @@ export function useRoutineData() {
     }
 
     return blocks;
-  }, [sections]);
+  }
 
   return {
     sections,
-    schedule,
+    completions,
+    todayKey,
+    isDoneOn,
+    scheduleFor,
+    statsFor,
     setStartTime,
     toggleTask,
     addTask,
@@ -235,10 +254,5 @@ export function useRoutineData() {
     deleteTask,
     toggleRepeat,
     setNotes,
-    overallPercent,
-    doneTasks,
-    totalTasks,
-    doneMinutes,
-    totalMinutes,
   };
 }

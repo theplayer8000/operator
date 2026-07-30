@@ -219,7 +219,13 @@ to leave with a comment. The Confetti one is straightforwardly fixable.
 
 ## OPS-009
 
-**Daily reset is mount-only and UTC-based** · Low · **Fixed** (v10)
+**Daily reset is mount-only and UTC-based** · Low · **Fixed** (v10), **moot** (v16)
+
+> **Moot as of v16.** The reset this describes no longer exists.
+> `routine.completions` is keyed by date (schema v3), so a date with no entry is
+> simply a date nothing was ticked on — there is nothing to roll back and no
+> midnight boundary to get wrong. The wider lesson at the bottom of this entry
+> still stands and still applies to every date-keyed slice.
 
 Two defects in the same effect. `useRoutineData` compared
 `new Date().toISOString().slice(0, 10)` — the **UTC** day — so between midnight

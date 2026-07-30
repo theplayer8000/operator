@@ -5,8 +5,14 @@
 // instead of being trapped in one browser profile. See docs/decisions/0006.
 //
 //   GET  /api/state          → { schemaVersion, updatedAt, state }
-//   PUT  /api/state/<key>    → body is the raw value for that slice
-//   PUT  /api/state          → body is a whole { key: value } map (import/migrate)
+//   PUT  /api/state/<key>    → body is { "value": <the slice> } — an ENVELOPE,
+//                              not the bare value. The handler reads
+//                              `body?.value ?? null`, so a bare array or object
+//                              silently stores **null** and wipes the slice.
+//                              This comment used to say "the raw value", which
+//                              is how that mistake gets made.
+//   PUT  /api/state          → body is a whole { key: value } map (import/migrate),
+//                              bare — no envelope. Yes, the two differ.
 //   GET  /api/health         → { ok: true }
 //
 // In production it also serves the built app from dist/.
@@ -35,7 +41,7 @@ const DIST_DIR = join(ROOT, "dist");
 const SERVE_DIST =
   process.env.OPERATOR_SERVE_DIST === "1" || process.argv.includes("--serve-dist");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // --- store ----------------------------------------------------------------
 
@@ -80,6 +86,48 @@ const MIGRATIONS = [
         ? { ...section, startTime: DEFAULT_SECTION_START[section.key] ?? "09:00" }
         : section
     );
+    return store;
+  },
+
+  // 2 → 3: routine completions move from a `done` flag on each task to
+  // `routine.completions`, keyed by local date — the shape gym.completions
+  // already uses. Before this, a nightly reset flipped `done` back for every
+  // repeating step, so completion was never history, only current state.
+  //
+  // Anything already ticked is credited to *today* rather than thrown away.
+  // That is a guess about when it happened, but it is the only date the old
+  // shape supports and it is right far more often than it is wrong: the reset
+  // means a `done: true` can only have been set since the last local midnight.
+  //
+  // `done` is deliberately left as-is on the task. It stays the truth for
+  // one-off (non-repeating) steps, and for repeating ones it is simply no
+  // longer read — additive only, per docs/data-model.md.
+  (store) => {
+    const sections = store.state?.["routine.sections"];
+    if (!Array.isArray(sections)) return store;
+
+    const ticked = [];
+    for (const section of sections) {
+      if (!section || !Array.isArray(section.tasks)) continue;
+      for (const task of section.tasks) {
+        if (task && task.done === true && task.repeatDaily !== false) ticked.push(task.id);
+      }
+    }
+    if (ticked.length === 0) return store;
+
+    // Local date parts, never toISOString() — that is UTC and would file an
+    // evening's ticks under tomorrow (OPS-009).
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}`;
+
+    const existing = store.state["routine.completions"];
+    const completions = existing && typeof existing === "object" && !Array.isArray(existing)
+      ? { ...existing }
+      : {};
+    completions[today] = [...new Set([...(completions[today] ?? []), ...ticked])];
+    store.state["routine.completions"] = completions;
     return store;
   },
 ];

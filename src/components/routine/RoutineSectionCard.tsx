@@ -12,12 +12,13 @@ import {
   ChevronRight,
 } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
-import type { RoutineSection, RoutineSectionKey } from "@/lib/types";
+import type { RoutineSection, RoutineSectionKey, RoutineTask } from "@/lib/types";
 import { ROUTINE_META } from "./routineMeta";
 
 export default function RoutineSectionCard({
   section,
   isLast,
+  isDone,
   onToggleTask,
   onAddTask,
   onEditTask,
@@ -28,7 +29,13 @@ export default function RoutineSectionCard({
 }: {
   section: RoutineSection;
   isLast: boolean;
-  onToggleTask: (key: RoutineSectionKey, taskId: string) => void;
+  /**
+   * Whether a step is done **on the date the page is showing**. Already bound
+   * to that date by the page, so this component never handles a date itself
+   * and cannot read the wrong day.
+   */
+  isDone: (task: RoutineTask) => boolean;
+  onToggleTask: (key: RoutineSectionKey, task: RoutineTask) => void;
   onAddTask: (key: RoutineSectionKey, title: string) => void;
   onEditTask: (
     key: RoutineSectionKey,
@@ -48,7 +55,7 @@ export default function RoutineSectionCard({
   const { icon: Icon, caption } = ROUTINE_META[section.key];
 
   const totalMinutes = section.tasks.reduce((a, t) => a + t.estimatedMinutes, 0);
-  const doneCount = section.tasks.filter((t) => t.done).length;
+  const doneCount = section.tasks.filter((t) => isDone(t)).length;
   const complete = section.tasks.length > 0 && doneCount === section.tasks.length;
 
   function submit() {
@@ -225,19 +232,19 @@ export default function RoutineSectionCard({
                 className="group flex items-center gap-1 pl-2 rounded-badge hover:bg-base-700/50 transition-colors"
               >
                 <button
-                  onClick={() => onToggleTask(section.key, t.id)}
+                  onClick={() => onToggleTask(section.key, t)}
                   className="flex flex-1 min-w-0 items-center gap-2.5 min-h-[44px] text-left"
                 >
                   <span
                     className={`w-5 h-5 rounded-[6px] border flex items-center justify-center shrink-0 transition-colors ${
-                      t.done ? "bg-xp border-xp" : "border-base-500 group-hover:border-ink-500"
+                      isDone(t) ? "bg-xp border-xp" : "border-base-500 group-hover:border-ink-500"
                     }`}
                   >
-                    {t.done && <span className="w-2 h-2 bg-base-950 rounded-[2px]" />}
+                    {isDone(t) && <span className="w-2 h-2 bg-base-950 rounded-[2px]" />}
                   </span>
                   <span
                     className={`flex-1 text-sm truncate ${
-                      t.done ? "line-through text-ink-700" : "text-ink-300"
+                      isDone(t) ? "line-through text-ink-700" : "text-ink-300"
                     }`}
                   >
                     {t.title}
@@ -253,6 +260,11 @@ export default function RoutineSectionCard({
                   opacity-0 group-hover:opacity-100, which made it invisible
                   and unreachable on touch — a core workflow that required a
                   desktop, contradicting vision.md.
+
+                  The two states also mean different *storage* since v16, not
+                  just different styling: a repeating step is ticked per date in
+                  `routine.completions`, while a one-off carries its own `done`
+                  and stays done on every date once ticked. Hence the titles.
                 */}
                 <button
                   onClick={() => onToggleRepeat(section.key, t.id)}
@@ -260,7 +272,7 @@ export default function RoutineSectionCard({
                   className={`shrink-0 w-11 h-11 flex items-center justify-center transition-colors ${
                     t.repeatDaily ? "text-rank" : "text-ink-700 hover:text-ink-500"
                   }`}
-                  title={t.repeatDaily ? "Repeats daily" : "One-off today"}
+                  title={t.repeatDaily ? "Repeats daily — ticked per day" : "One-off — stays done"}
                 >
                   <Repeat size={14} />
                 </button>

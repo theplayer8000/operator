@@ -15,7 +15,11 @@ import { formatHHMM, minutesIntoDay, formatDuration, longDate } from "@/lib/time
  */
 export default function CurrentTime() {
   const now = useNow(1000);
-  const { schedule } = useRoutineData();
+  // Always today's schedule: "what am I meant to be doing right now" is a
+  // question about the present, so this widget never follows /routine's date
+  // stepper. It only reads the block times anyway, which are the same every day.
+  const { scheduleFor, todayKey } = useRoutineData();
+  const schedule = scheduleFor(todayKey);
 
   const nowMinutes = minutesIntoDay(now);
   const current = schedule.find((b) => nowMinutes >= b.start && nowMinutes < b.end);

@@ -23,6 +23,7 @@ import type {
   EventOccurrence,
   RoutineSection,
   RoutineSectionKey,
+  RoutineTask,
   ScheduleBlock,
 } from "@/lib/types";
 
@@ -51,34 +52,39 @@ type Row =
  * not the planning conflict the `overlapsPrevious` warning is for — that
  * warning stays scoped to routine blocks only.
  *
- * **A day stepper moves the whole card off today**, and what it can honestly
- * show changes with it. The routine itself is the same every day — that's the
- * premise of the feature — so what actually differs per date is the calendar
- * events synced in: which shift, whether there's a gym session. That's the
- * question "what does Tuesday look like" is really asking.
+ * **A day stepper moves the whole card off any given date**, and since v16 the
+ * ticks move with it: `routine.completions` is keyed by date, so a past day
+ * shows what was actually done on it rather than today's state under another
+ * day's heading. The date is owned by the page, because the section cards below
+ * are scoped to it too.
  *
- * What it deliberately does *not* show on another day is tick state.
- * `routine.sections` stores one `done` flag per step, and the daily reset
- * overwrites it — there is no per-date routine history to read (Gym has
- * `gym.completions` for exactly this reason; the routine has no equivalent).
- * So off today, steps render as a plan and the checkboxes are gone rather than
- * present-and-lying — the same call `CLAUDE.md` makes about not shipping the
- * accent picker while the accent is inert.
+ * What stays today-only is the *clock*: the "on now" highlight and the dimming
+ * of finished blocks. Those are facts about the present, not about the date
+ * being viewed, so on any other day they're suppressed rather than computed
+ * against a `now` that doesn't belong to it.
  */
 export default function RoutineTimeline({
   schedule,
   sections,
+  dateKey,
+  todayKey,
+  onDateChange,
+  isDone,
   onToggleTask,
 }: {
   schedule: ScheduleBlock[];
   sections: RoutineSection[];
-  onToggleTask: (key: RoutineSectionKey, taskId: string) => void;
+  dateKey: string;
+  todayKey: string;
+  onDateChange: (dateKey: string) => void;
+  /** Bound to `dateKey` by the page — this component never handles a date. */
+  isDone: (task: RoutineTask) => boolean;
+  onToggleTask: (key: RoutineSectionKey, task: RoutineTask) => void;
 }) {
   const now = useNow(30_000);
   const nowMinutes = minutesIntoDay(now);
-  const { byDay, todayKey } = useEvents();
+  const { byDay } = useEvents();
 
-  const [dateKey, setDateKey] = useState(todayKey);
   /**
    * One block open at a time. The schedule's job is the shape of the day; a
    * card with all seven blocks expanded is the section list below it, which
@@ -112,7 +118,7 @@ export default function RoutineTimeline({
     const d = fromDateKey(dateKey);
     if (!d) return;
     d.setDate(d.getDate() + delta);
-    setDateKey(toDateKey(d));
+    onDateChange(toDateKey(d));
     setOpenKey(null);
   }
 
@@ -172,7 +178,7 @@ export default function RoutineTimeline({
           </button>
           <button
             onClick={() => {
-              setDateKey(todayKey);
+              onDateChange(todayKey);
               setOpenKey(null);
             }}
             disabled={isToday}
@@ -335,9 +341,7 @@ export default function RoutineTimeline({
                       {formatDuration(block.durationMinutes)}
                     </span>
                     <span className="block font-mono text-[11px] text-ink-700">
-                      {isToday
-                        ? `${block.doneTasks}/${block.totalTasks}`
-                        : `${block.totalTasks} step${block.totalTasks === 1 ? "" : "s"}`}
+                      {block.doneTasks}/{block.totalTasks}
                     </span>
                   </span>
 
@@ -351,56 +355,36 @@ export default function RoutineTimeline({
 
                 {isOpen && section && (
                   <ul className="pb-1.5 pl-2 pr-2 space-y-0.5">
-                    {section.tasks.map((task) =>
-                      isToday ? (
-                        <li key={task.id} className="group flex items-center gap-1 pl-2">
-                          <button
-                            onClick={() => onToggleTask(section.key, task.id)}
-                            className="flex flex-1 min-w-0 items-center gap-2.5 min-h-[44px] text-left"
-                          >
-                            <span
-                              className={`w-5 h-5 rounded-[6px] border flex items-center justify-center shrink-0 transition-colors ${
-                                task.done
-                                  ? "bg-xp border-xp"
-                                  : "border-base-500 group-hover:border-ink-500"
-                              }`}
-                            >
-                              {task.done && <span className="w-2 h-2 bg-base-950 rounded-[2px]" />}
-                            </span>
-                            <span
-                              className={`flex-1 text-sm truncate ${
-                                task.done ? "line-through text-ink-700" : "text-ink-300"
-                              }`}
-                            >
-                              {task.title}
-                            </span>
-                          </button>
-                          {task.estimatedMinutes > 0 && (
-                            <span className="text-[11px] font-mono text-ink-700 shrink-0">
-                              {task.estimatedMinutes}m
-                            </span>
-                          )}
-                        </li>
-                      ) : (
-                        <li
-                          key={task.id}
-                          className="flex items-center gap-2.5 pl-2 min-h-[36px]"
+                    {section.tasks.map((task) => (
+                      <li key={task.id} className="group flex items-center gap-1 pl-2">
+                        <button
+                          onClick={() => onToggleTask(section.key, task)}
+                          className="flex flex-1 min-w-0 items-center gap-2.5 min-h-[44px] text-left"
                         >
                           <span
-                            className="w-1.5 h-1.5 rounded-full bg-base-500 shrink-0 ml-[7px]"
-                            aria-hidden
-                          />
-                          <span className="flex-1 text-sm text-ink-500 truncate">
+                            className={`w-5 h-5 rounded-[6px] border flex items-center justify-center shrink-0 transition-colors ${
+                              isDone(task)
+                                ? "bg-xp border-xp"
+                                : "border-base-500 group-hover:border-ink-500"
+                            }`}
+                          >
+                            {isDone(task) && <span className="w-2 h-2 bg-base-950 rounded-[2px]" />}
+                          </span>
+                          <span
+                            className={`flex-1 text-sm truncate ${
+                              isDone(task) ? "line-through text-ink-700" : "text-ink-300"
+                            }`}
+                          >
                             {task.title}
                           </span>
-                          {task.estimatedMinutes > 0 && (
-                            <span className="text-[11px] font-mono text-ink-700 shrink-0">
-                              {task.estimatedMinutes}m
-                            </span>
-                          )}
-                        </li>
-                      )
-                    )}
+                        </button>
+                        {task.estimatedMinutes > 0 && (
+                          <span className="text-[11px] font-mono text-ink-700 shrink-0">
+                            {task.estimatedMinutes}m
+                          </span>
+                        )}
+                      </li>
+                    ))}
                   </ul>
                 )}
               </li>
@@ -419,8 +403,9 @@ export default function RoutineTimeline({
 
       {!isToday && (
         <p className="text-[11px] text-ink-700 mt-3 pt-3 border-t border-base-600 leading-relaxed">
-          The plan for this day. Your routine is the same every day, so what changes is the
-          calendar — ticking off steps only applies to today, and isn't kept per date.
+          Ticks are kept per day, so this is what you actually did on{" "}
+          {relativeDay(dateKey).toLowerCase()} — not today's marks under another date. Your routine
+          steps are the same every day; what changes is the calendar.
         </p>
       )}
 

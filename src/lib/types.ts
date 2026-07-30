@@ -135,10 +135,32 @@ export type RoutineSectionKey =
 export interface RoutineTask {
   id: ID;
   title: string;
+  /**
+   * **Only meaningful when `repeatDaily` is false.** A one-off step is done
+   * once and stays done, so its state belongs to the step rather than to a
+   * date.
+   *
+   * For a repeating step this field is **ignored** — the truth lives in
+   * `routine.completions`, keyed by date (schema v3). Before v3 this was the
+   * only record of completion and a nightly reset flipped it back, which is
+   * why there is no routine history older than v3: it was overwritten daily,
+   * not archived. Left in place rather than removed, per the additive-only
+   * rule in docs/data-model.md.
+   */
   done: boolean;
   estimatedMinutes: number;
   repeatDaily: boolean;
 }
+
+/**
+ * date key (`"YYYY-MM-DD"`) → the IDs of repeating steps ticked on that date.
+ *
+ * Same shape as `GymCompletions`, for the same reason: a date with no entry is
+ * simply a date nothing was ticked on, so there is nothing to reset and last
+ * Tuesday stays readable. Task IDs are unique across sections, so the section
+ * does not need to be part of the key.
+ */
+export type RoutineCompletions = Record<string, ID[]>;
 
 export interface RoutineSection {
   key: RoutineSectionKey;

@@ -56,20 +56,29 @@ tick belongs, rather than scrolling past the card to the section list below.
 One block open at a time; the section list is still the place to add, rename
 or re-estimate.
 
-**A day stepper moves the card off today** (v15), which answers "what does
-Tuesday look like". What actually changes per date is the calendar events
-synced in — which shift, whether there's a gym session — because the routine
-itself is the same every day by design. Off today the checkboxes are
-deliberately **gone rather than inert**: `routine.sections` holds one `done`
-flag per step and the daily reset overwrites it, so there is no per-date
-routine history to show. Gym stores `gym.completions` keyed by date precisely
-because it needed one; the routine has no equivalent, and inventing ticks for
-a past day would be a lie. Giving the routine real per-date history is a
-schema decision, not a UI one — see the note in `data-model.md`.
+**A day stepper scopes the whole page to one date** (v15, completed in v16),
+which answers "what does Tuesday look like" and "what did I actually do on
+Monday". The date lives on the page rather than in the schedule card, because
+the summary and every section card are scoped to it too — stepping the schedule
+while the cards below showed today would be two days on one screen.
 
-Known gaps: the reset is mount-only and UTC-based, so a tab left open across
-midnight doesn't reset, and the day rolls at 01:00 local during BST
-(**OPS-009**).
+**Ticks are stored per date** (`routine.completions`, schema v3) and the nightly
+reset is gone with the flag it used to clear. v15 shipped the stepper with the
+checkboxes hidden off today, because at that point there was genuinely no
+per-date record to show and inventing one would have been a lie; v16 gave it a
+real one, so they work on every date. What stays today-only is the *clock* — the
+"on now" highlight and the dimming of finished blocks are facts about the
+present, not about the date being viewed.
+
+Section start times, step titles and estimates are still day-agnostic: editing
+them edits the template for every day, because the routine being the same every
+day is the premise of the feature. Only completion is per-date. See
+`data-model.md` → Daily Routine for the one-off vs repeating distinction, which
+is the part that trips people up.
+
+Known gaps: no history view over `routine.completions` — the per-date data now
+exists and nothing charts it, the same gap Gym has. (**OPS-009** is moot as of
+v16: the reset it described no longer exists.)
 
 ### Mission Board — `/missions`, `/missions/:id`
 
