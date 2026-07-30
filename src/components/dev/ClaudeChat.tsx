@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban, Check, Power } from "lucide-react";
+import Markdown from "@/components/ui/Markdown";
 
 interface ChatMessage {
   id: string;
@@ -267,15 +268,18 @@ export default function ClaudeChat() {
               {state?.messages.map((m) => (
                 <div key={m.id} className={m.role === "user" ? "text-right" : ""}>
                   <span
-                    className={`inline-block max-w-[92%] text-left px-3 py-2 rounded-badge text-sm leading-relaxed whitespace-pre-wrap break-words ${
+                    className={`inline-block max-w-[92%] text-left px-3 py-2 rounded-badge text-sm leading-relaxed break-words ${
                       m.role === "user"
-                        ? "bg-base-700/60 text-ink-100"
+                        ? "bg-base-700/60 text-ink-100 whitespace-pre-wrap"
                         : m.error
-                          ? "border border-vital-down/40 bg-vital-down/10 text-vital-down"
+                          ? "border border-vital-down/40 bg-vital-down/10 text-vital-down whitespace-pre-wrap"
                           : "border border-base-600 text-ink-300"
                     }`}
                   >
-                    {m.text}
+                    {/* Only Claude's replies are markdown. What the owner typed
+                        is shown exactly as typed — rendering his own asterisks
+                        as bold would be the app editing his words. */}
+                    {m.role === "assistant" && !m.error ? <Markdown text={m.text} /> : m.text}
                   </span>
                   {m.role === "assistant" && !m.error && (
                     <span
