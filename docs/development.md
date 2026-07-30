@@ -38,6 +38,7 @@ taskkill //F //PID <pid>
 | `OPERATOR_SERVE_DIST` | unset | `1` serves `dist/` too (same as `--serve-dist`) |
 | `OPERATOR_BACKUP_DIR` | `<home>/OperatorBackups` | Where snapshots go. **Point this at the NAS when there is one** — that's the whole migration |
 | `OPERATOR_BACKUP_KEEP` | `60` | Restore points to keep. Unchanged stores are skipped, so this is 60 *distinct states*, not 60 scheduler ticks |
+| `OPERATOR_BACKUP_INTERVAL_MS` | `3600000` (1h) | How often the storage server takes a backup. Floor is 60000 |
 
 ## Backups
 
@@ -66,25 +67,33 @@ What it guarantees:
   would otherwise be filed under tomorrow (the OPS-009 trap), and a backup with
   the wrong date on it is one you reach for and get wrong.
 
-### Scheduling it (Windows)
+### Scheduling — the storage server runs it
 
-The script is the mechanism; the OS is the scheduler. Register it once — run
-this from the repo root, in a terminal, as the owner:
+**The schedule lives in the app, not in the OS** (owner's choice, 2026-07-30).
+`server/index.mjs` calls `runBackup()` once on startup and then every
+`OPERATOR_BACKUP_INTERVAL_MS` (default 1 hour, floor 1 minute). Nothing to
+register; starting the server starts the backups, and moving to the EPYC box
+carries the schedule with it instead of leaving a `schtasks` entry behind on a
+machine that no longer holds the data.
+
+Hourly is cheap because unchanged stores are skipped inside `runBackup()`: a
+quiet hour costs one file read and no restore point. With `KEEP=60` that is the
+last 60 times the data actually *changed*, not the last 60 ticks.
+
+The startup run is deliberate — a restart is usually either a deploy or a
+crash, and both are moments you want a copy from.
+
+**The import goes one way only** (server → script, never the reverse), so the
+script stays standalone: `npm run backup` still works with the server down,
+which is exactly when a server-driven timer can't help you. A failing backup is
+caught and logged, never allowed to take the storage server down.
+
+If you ever want an OS-level schedule as well — belt and braces, or because the
+server isn't always up — this still works:
 
 ```bash
 schtasks /create /tn "Operator Backup" /tr "cmd /c cd /d D:\Projects\Operator && node scripts\backup.mjs" /sc hourly /st 00:15 /f
 ```
-
-Then confirm and force one run:
-
-```bash
-schtasks /query /tn "Operator Backup" /v /fo list
-schtasks /run /tn "Operator Backup"
-```
-
-Hourly is cheap because unchanged stores are skipped: a quiet day writes
-nothing and consumes no restore points. With `KEEP=60` that is the last 60
-times the data actually changed.
 
 ### Restoring
 

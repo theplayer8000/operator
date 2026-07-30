@@ -28,6 +28,7 @@ import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
 import { recordRequest, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
+import { runBackup } from "../scripts/backup.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -359,8 +360,58 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// --- scheduled backups ---------------------------------------------------
+//
+// The owner chose "run it through the server" over registering an OS task
+// (2026-07-30). That keeps the schedule with the app rather than with this
+// machine, so moving to the EPYC box carries it along instead of leaving a
+// `schtasks` entry behind on a PC that no longer holds the data.
+//
+// `scripts/backup.mjs` stays standalone and dependency-free — the import goes
+// one way only (server → script, never the reverse), so `npm run backup` still
+// works with the server down. That matters: a server-driven timer cannot back
+// up a server that isn't running, which is exactly when you'd want a copy.
+//
+// Unchanged stores are skipped inside runBackup(), so a quiet hour costs one
+// file read and no restore point.
+const BACKUP_EVERY_MS = Math.max(
+  60_000,
+  Number(process.env.OPERATOR_BACKUP_INTERVAL_MS ?? 60 * 60_000) || 60 * 60_000
+);
+
+async function scheduledBackup(reason) {
+  try {
+    const result = await runBackup();
+    if (result.status === "written") {
+      console.log(
+        `[operator] backup (${reason}): ${result.name} — ${result.kept} restore point(s)`
+      );
+    } else if (result.status !== "skipped") {
+      // Refusals are the interesting case: the store is unreadable or empty and
+      // the existing restore points were deliberately left alone.
+      console.error(`[operator] backup (${reason}) ${result.status}: ${result.reason}`);
+    }
+  } catch (err) {
+    // A failing backup must never take the storage server down with it.
+    console.error(`[operator] backup (${reason}) threw: ${err.message}`);
+  }
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`[operator] storage server on http://localhost:${PORT}`);
   console.log(`[operator] data file: ${DATA_FILE}`);
   if (SERVE_DIST) console.log(`[operator] serving app from ${DIST_DIR}`);
+
+  // One on boot — a restart is usually either a deploy or a crash, and both are
+  // moments you want a copy from. Then on the interval.
+  void scheduledBackup("startup");
+  const timer = setInterval(
+    () => void scheduledBackup("scheduled"),
+    BACKUP_EVERY_MS
+  );
+  // Don't hold the event loop open on shutdown.
+  timer.unref();
+  console.log(
+    `[operator] backups every ${Math.round(BACKUP_EVERY_MS / 60000)} min (unchanged stores skipped)`
+  );
 });

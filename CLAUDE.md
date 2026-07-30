@@ -171,8 +171,9 @@ server/
 scripts/
   dev.mjs               — starts the API and Vite together
   backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
-                          never calls the API, so it works when everything is down.
-                          Scheduled by the OS, not by the app — see docs/development.md
+                          never calls the API, so `npm run backup` works when
+                          everything is down. index.mjs imports runBackup() and runs
+                          it hourly — the import goes one way only. docs/development.md
 data/
   operator.json         — the store. gitignored; NOT backed up by git
 src/
@@ -372,8 +373,9 @@ browsers treat as insecure. `crypto.randomUUID`, `crypto.subtle`,
 bug "only happens on the server", check this first.
 
 **`data/operator.json` is gitignored, so git is not a backup.** Real data is in
-it now, and v17 added the copy job: `npm run backup` (`scripts/backup.mjs`),
-scheduled via `schtasks`, keeping 60 restore points. **Still single-machine** —
+it now, and v17 added the copy job: `scripts/backup.mjs`, run
+hourly by the storage server itself (and by hand with `npm run backup`), keeping
+60 restore points. **Still single-machine** —
 it protects against a bad write, a bad migration or a mistaken clear, not
 against losing the disk. Point `OPERATOR_BACKUP_DIR` at a NAS share when there
 is one. See [`docs/development.md`](docs/development.md#backups) and **OPS-017**.

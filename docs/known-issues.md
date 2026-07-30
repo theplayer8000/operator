@@ -482,9 +482,11 @@ registration and the restore procedure.
    migration, or a mistaken clear — not against losing the disk. There is no NAS
    yet (confirmed with the owner, 2026-07-30); local was accepted as the interim.
    Pointing `OPERATOR_BACKUP_DIR` at a NAS share is the whole remaining step.
-2. **The schedule is registered by the owner, not by the repo.** Until
-   `schtasks` has actually been run, the mechanism exists and nothing is
-   driving it. Check with `schtasks /query /tn "Operator Backup"`.
+2. **Backups only run while the storage server runs.** The schedule lives in
+   `server/index.mjs` (owner's choice over an OS task, so it follows the app to
+   the EPYC box). If the server is down for a week, no snapshots are taken that
+   week — though a store that isn't being written isn't accumulating changes to
+   lose either. `npm run backup` remains the manual path and needs no server.
 
 There is also **no automatic pre-migration snapshot**: v8's schema migration ran
 against live data with nothing taken first. `npm run backup` before a migration

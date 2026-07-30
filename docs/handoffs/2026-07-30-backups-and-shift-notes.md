@@ -113,9 +113,11 @@ TypeScript cannot catch.
 
 **Resolved:** OPS-017's automation half.
 
-**Introduced:** clearing the last note leaves `occurrenceNotes: {}` rather than
-removing the field. Harmless (the field is optional and an empty map reads as
-"no notes"), and not worth a migration to tidy.
+**Introduced:** none. (An earlier draft of this handoff claimed clearing the
+last note left `occurrenceNotes: {}` behind — verified on disk after a server
+restart and that is wrong: the field is absent entirely, which is the intended
+convention. Either behaves identically anyway, since every read goes through
+`event.occurrenceNotes?.[date]`.)
 
 ## Outstanding issues
 

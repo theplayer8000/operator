@@ -102,6 +102,73 @@ function validate(text) {
   return null;
 }
 
+/**
+ * Take a backup. Returns a result object rather than printing, so the storage
+ * server can call this on a timer without writing to its own stdout format.
+ *
+ * `status` is one of: "written" | "skipped" | "refused" | "missing" | "failed".
+ * Only "written" means a new restore point exists.
+ */
+export async function runBackup({ force = false } = {}) {
+  if (!existsSync(DATA_FILE)) {
+    return { status: "missing", reason: `no store at ${DATA_FILE}` };
+  }
+
+  const text = await readFile(DATA_FILE, "utf8");
+
+  const problem = validate(text);
+  if (problem) {
+    // Refuse rather than propagate. If the live store is broken, the last good
+    // backup is the valuable thing and must not be pruned to make room for a
+    // copy of the breakage.
+    return { status: "refused", reason: problem };
+  }
+
+  await mkdir(BACKUP_DIR, { recursive: true });
+  const existing = await listBackups();
+
+  // Skip an unchanged store, so restore points track real edits rather than
+  // scheduler ticks.
+  if (!force && existing.length > 0) {
+    const newest = join(BACKUP_DIR, existing[0]);
+    const previous = await readFile(newest, "utf8").catch(() => null);
+    if (previous !== null && hash(previous) === hash(text)) {
+      return { status: "skipped", since: existing[0] };
+    }
+  }
+
+  const name = `${PREFIX}${stamp(new Date())}${SUFFIX}`;
+  const target = join(BACKUP_DIR, name);
+  await writeFile(target, text, "utf8");
+
+  // Read back what actually landed on disk, not what we think we wrote.
+  const readBack = await readFile(target, "utf8");
+  const wrote = validate(readBack);
+  if (wrote || hash(readBack) !== hash(text)) {
+    await unlink(target).catch(() => {});
+    return { status: "failed", reason: wrote ?? "content mismatch", name };
+  }
+
+  // Prune only after the new one is verified, so there is never a window with
+  // no good copy.
+  const all = await listBackups();
+  const stale = all.slice(KEEP);
+  for (const old of stale) {
+    await unlink(join(BACKUP_DIR, old)).catch(() => {});
+  }
+
+  return {
+    status: "written",
+    name,
+    target,
+    bytes: Buffer.byteLength(text, "utf8"),
+    slices: Object.keys(JSON.parse(text).state).length,
+    pruned: stale.length,
+    kept: Math.min(all.length, KEEP),
+    dir: BACKUP_DIR,
+  };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
@@ -126,72 +193,42 @@ async function main() {
     return 0;
   }
 
-  if (!existsSync(DATA_FILE)) {
-    console.error(`No store at ${DATA_FILE} — nothing to back up.`);
-    return 1;
-  }
+  const result = await runBackup({ force });
 
-  const text = await readFile(DATA_FILE, "utf8");
-
-  const problem = validate(text);
-  if (problem) {
-    // Refuse rather than propagate. If the live store is broken, the last good
-    // backup is the valuable thing and must not be pruned to make room for a
-    // copy of the breakage.
-    console.error(`Refusing to back up ${DATA_FILE}: ${problem}`);
-    console.error("The existing restore points have been left untouched.");
-    return 1;
-  }
-
-  await mkdir(BACKUP_DIR, { recursive: true });
-  const existing = await listBackups();
-
-  // Skip an unchanged store, so restore points track real edits rather than
-  // scheduler ticks.
-  if (!force && existing.length > 0) {
-    const newest = join(BACKUP_DIR, existing[0]);
-    const previous = await readFile(newest, "utf8").catch(() => null);
-    if (previous !== null && hash(previous) === hash(text)) {
-      console.log(`No change since ${existing[0]} — skipped.`);
+  switch (result.status) {
+    case "missing":
+      console.error(`No store at ${DATA_FILE} — nothing to back up.`);
+      return 1;
+    case "refused":
+      console.error(`Refusing to back up ${DATA_FILE}: ${result.reason}`);
+      console.error("The existing restore points have been left untouched.");
+      return 1;
+    case "failed":
+      console.error(`Backup verification failed for ${result.name}: ${result.reason}`);
+      console.error("Removed the bad file and kept the previous restore points.");
+      return 1;
+    case "skipped":
+      console.log(`No change since ${result.since} — skipped.`);
+      return 0;
+    default: {
+      const kb = (result.bytes / 1024).toFixed(1);
+      console.log(`Backed up ${kb} KB / ${result.slices} slices → ${result.target}`);
+      if (result.pruned > 0) {
+        console.log(`Pruned ${result.pruned} old restore point${result.pruned === 1 ? "" : "s"}.`);
+      }
+      console.log(`${result.kept} restore point(s) in ${result.dir}`);
       return 0;
     }
   }
-
-  const name = `${PREFIX}${stamp(new Date())}${SUFFIX}`;
-  const target = join(BACKUP_DIR, name);
-  await writeFile(target, text, "utf8");
-
-  // Read back what actually landed on disk, not what we think we wrote.
-  const readBack = await readFile(target, "utf8");
-  const wrote = validate(readBack);
-  if (wrote || hash(readBack) !== hash(text)) {
-    console.error(`Backup verification failed for ${name}: ${wrote ?? "content mismatch"}`);
-    await unlink(target).catch(() => {});
-    console.error("Removed the bad file and kept the previous restore points.");
-    return 1;
-  }
-
-  const kb = (Buffer.byteLength(text, "utf8") / 1024).toFixed(1);
-  const keys = Object.keys(JSON.parse(text).state).length;
-  console.log(`Backed up ${kb} KB / ${keys} slices → ${target}`);
-
-  // Prune only after the new one is verified, so there is never a window with
-  // no good copy.
-  const all = await listBackups();
-  const stale = all.slice(KEEP);
-  for (const old of stale) {
-    await unlink(join(BACKUP_DIR, old)).catch(() => {});
-  }
-  if (stale.length > 0) {
-    console.log(`Pruned ${stale.length} old restore point${stale.length === 1 ? "" : "s"}.`);
-  }
-  console.log(`${Math.min(all.length, KEEP)} restore point(s) in ${BACKUP_DIR}`);
-  return 0;
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error(`Backup failed: ${err.message}`);
-    process.exit(1);
-  });
+// CLI only when run directly — importing this module (the server does) must not
+// parse argv or exit the process.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`Backup failed: ${err.message}`);
+      process.exit(1);
+    });
+}
