@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Trash2, X } from "lucide-react";
 
 /**
@@ -9,15 +9,23 @@ import { Check, Trash2, X } from "lucide-react";
  * a lot of machinery for "are you sure". Deliberately not window.confirm
  * either — it's unstyled, and on iOS it steals focus from the row you were
  * working in. Both buttons are real 44px targets and neither is hover-gated.
+ *
+ * `icon` exists because the two-step bargain is worth reusing for actions that
+ * are disruptive without deleting anything — restarting the server is the case
+ * that prompted it. Those still need the confirm; what they do not need is a
+ * trash can implying data is about to be destroyed. Delete remains the default,
+ * so every existing caller is unchanged.
  */
 export default function ConfirmButton({
   onConfirm,
   label = "Delete",
   compact = false,
+  icon,
 }: {
   onConfirm: () => void;
   label?: string;
   compact?: boolean;
+  icon?: ReactNode;
 }) {
   const [armed, setArmed] = useState(false);
   const timer = useRef<number | undefined>(undefined);
@@ -40,7 +48,7 @@ export default function ConfirmButton({
         title={label}
         className={`${box} shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-vital-down hover:bg-base-700/60 transition-colors`}
       >
-        <Trash2 size={14} />
+        {icon ?? <Trash2 size={14} />}
       </button>
     );
   }

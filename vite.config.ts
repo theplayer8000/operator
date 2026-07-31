@@ -16,6 +16,17 @@ export default defineConfig({
     // through to 5174 — the API's port — and it then proxies /api to itself.
     port: 5173,
     strictPort: true,
+    /*
+      Reached over `tailscale serve --bg --https 8443 5173`, so the dev server
+      is addressed by its MagicDNS name rather than an IP, and Vite's
+      DNS-rebinding guard rejects it by default ("This host is not allowed").
+
+      A leading dot allows the tailnet and nothing else. Deliberately not `true`
+      and not a bare `.ts.net`: this dev server has the whole repo behind it
+      (see the `fs.deny` list below for how that went), so the set of names it
+      answers to should be exactly one tailnet — the owner's.
+    */
+    allowedHosts: [".tail07eb22.ts.net"],
     fs: {
       // The dev server will otherwise serve ANY file under the project root as
       // a static asset — no auth, and it's bound to the tailnet with --host.

@@ -9,9 +9,10 @@
     "server": "node server/index.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "serve": "node server/index.mjs --serve-dist",
+    "serve": "node scripts/supervise.mjs --serve-dist",
     "backup": "node scripts/backup.mjs",
-    "backup:list": "node scripts/backup.mjs --list"
+    "backup:list": "node scripts/backup.mjs --list",
+    "serve:once": "node server/index.mjs --serve-dist"
   },
   "dependencies": {
     "react": "^18.3.1",

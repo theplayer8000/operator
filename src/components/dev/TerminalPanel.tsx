@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { TerminalSquare, Play, Square, RotateCcw, ShieldAlert, Power } from "lucide-react";
+import { TerminalSquare, Play, Square, RotateCcw, RotateCw, ShieldAlert, Power } from "lucide-react";
+import ConfirmButton from "@/components/ui/ConfirmButton";
 
 interface RunSummary {
   id: string;
@@ -53,6 +54,7 @@ export default function TerminalPanel() {
   const [output, setOutput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
 
   const outputRef = useRef<HTMLPreElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -206,6 +208,48 @@ export default function TerminalPanel() {
     }
   }
 
+  /**
+   * Restart the storage server, so it picks up changes to its own code.
+   *
+   * The one thing the agent could never do for itself: it is spawned by this
+   * server, so editing `server/*.mjs` left the change on disk and the old code
+   * running. Frontend edits never had the problem — `dist/` is read from disk,
+   * so a rebuild is enough.
+   *
+   * Deliberately optimistic about the failure: the connection dying *is* the
+   * expected outcome, so a fetch error here means it worked. What matters is
+   * telling the two apart afterwards, which the poll below does by waiting for
+   * the server to answer again rather than assuming it will.
+   */
+  async function restartServer() {
+    setError(null);
+    setRestarting(true);
+    try {
+      await fetch("/api/restart", { method: "POST" }).catch(() => {});
+      // Give it a moment to actually go away before asking whether it's back,
+      // or the first poll answers from the process that's on its way out.
+      await new Promise((r) => setTimeout(r, 700));
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          const res = await fetch("/api/health", { cache: "no-store" });
+          if (res.ok) {
+            setRestarting(false);
+            await refresh();
+            return;
+          }
+        } catch {
+          /* still down — expected */
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      setRestarting(false);
+      setError("Restarted, but it hasn't come back. It may not be supervised — check the machine.");
+    } catch (err) {
+      setRestarting(false);
+      setError((err as Error).message);
+    }
+  }
+
   async function stop() {
     if (!activeId) return;
     await fetch(`/api/terminal/stop?id=${encodeURIComponent(activeId)}`, { method: "POST" }).catch(
@@ -228,13 +272,23 @@ export default function TerminalPanel() {
             <p className="text-xs text-ink-700 truncate">
               {notListed
                 ? "This device can't run commands"
-                : armed
-                  ? `Armed${info?.you?.device ? ` · ${info.you.device}` : ""} — no shell`
-                  : "Disarmed"}
+                : restarting
+                  ? "Restarting the server…"
+                  : armed
+                    ? `Armed${info?.you?.device ? ` · ${info.you.device}` : ""} — no shell`
+                    : "Disarmed"}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {canManage && (
+            <ConfirmButton
+              onConfirm={() => void restartServer()}
+              label="Restart the server"
+              icon={<RotateCw size={14} />}
+              compact
+            />
+          )}
           {canManage && (
             <button
               onClick={() => void setArmed(!armed)}
@@ -283,6 +337,33 @@ export default function TerminalPanel() {
           Disarmed. Press <span className="text-ink-500">Arm</span> to enable it for this session —
           a server restart disarms it again, so it is never left on by accident.
         </p>
+      )}
+
+      {/*
+        Kept on the panel rather than in the docs, because the moment you need
+        it is the moment you are about to press Restart — not a moment you are
+        reading /docs. Two rules, and which one applies depends only on which
+        folder changed.
+      */}
+      {canManage && (
+        <dl className="mt-3 pt-3 border-t border-base-600 text-xs text-ink-700 space-y-1.5">
+          <div className="flex gap-2">
+            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">src/</dt>
+            <dd>
+              The app. Live instantly on the dev URL. Reaches the real one when you run{" "}
+              <span className="font-mono text-ink-500">npm run build</span> — no restart, the
+              server reads the built files off disk each time.
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">server/</dt>
+            <dd>
+              The API itself. Loaded into memory at boot, so nothing picks it up until this
+              process is replaced — that is what <span className="text-ink-500">Restart</span> is
+              for, and the only thing it is for.
+            </dd>
+          </div>
+        </dl>
       )}
 
       {canManage && armed && (

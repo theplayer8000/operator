@@ -44,6 +44,7 @@ import {
 } from "./terminal.mjs";
 import * as chat from "./workspace.mjs";
 import { runBackup } from "../scripts/backup.mjs";
+import { buildStatus } from "./build.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -418,6 +419,54 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const next = body?.enabled === true;
       return json(res, 200, { enabled: setEnabled(next, identity) });
+    }
+
+    /*
+      Restart the server, so it can pick up changes to its own code.
+
+      This is what makes "Operator works on itself" true rather than half-true.
+      Frontend edits already go live with `npm run build`, because dist/ is read
+      from disk per request — but the agent is spawned *by* this process, so it
+      could edit server/*.mjs and never make the change take effect. Nothing it
+      could do from a phone would help; the process had to outlive itself.
+
+      Exit code 75 is the signal to scripts/supervise.mjs to start a fresh one.
+      Without the supervisor this is still honest: the process exits, the server
+      stops, and you are told that is what will happen.
+
+      Gated on `deviceMayManage` — the same list that may arm the terminal. A
+      device that can already run arbitrary commands can obviously restart a
+      process; what this must not become is something any authenticated tailnet
+      device can do, since bouncing the server is a denial of service to every
+      other device using it.
+
+      The response is written and flushed *before* exiting. Exiting first would
+      look identical to a crash from the client's side, and the difference
+      between "restarting" and "died" is the whole message.
+    */
+    if (pathname === "/api/build") {
+      return json(res, 200, await buildStatus(ROOT));
+    }
+
+    if (pathname === "/api/restart" && req.method === "POST") {
+      const manage = deviceMayManage(identity);
+      if (!manage.ok) {
+        console.warn(
+          `[operator] restart refused for ${identity?.device ?? identity?.client}: ${manage.reason}`
+        );
+        return json(res, 403, { error: "not authorised to restart", reason: manage.reason });
+      }
+      const supervised = process.env.OPERATOR_SUPERVISED === "1";
+      console.log(
+        `[operator] restart requested by ${identity?.device ?? "local"}` +
+          (supervised ? "" : " — NOT supervised, this will stop the server")
+      );
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ restarting: true, supervised }), () => {
+        // Give the socket a moment to drain before the process goes away.
+        setTimeout(() => process.exit(75), 150);
+      });
+      return;
     }
 
     if (pathname === "/api/terminal/run" && req.method === "POST") {

@@ -11,6 +11,7 @@ import {
 import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
 import ClaudeStatus from "@/components/dev/ClaudeStatus";
+import BuildStatus from "@/components/dev/BuildStatus";
 import TerminalPanel from "@/components/dev/TerminalPanel";
 
 const DOC_SHORTCUTS = [
@@ -59,6 +60,7 @@ export default function Dev() {
       <TerminalPanel />
 
       <ConnectedClients />
+      <BuildStatus />
       <ClaudeStatus />
 
       {/* Repo status */}
