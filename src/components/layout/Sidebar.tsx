@@ -23,7 +23,6 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
-import { tick } from "@/lib/haptics";
 
 /**
  * Ordered by build state, not by category: everything built comes first, in
@@ -129,11 +128,9 @@ function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void) {
       const progress = 1 + offset / DRAWER_W; // 0 closed → 1 open
 
       setDrag(null);
-      const next = velocity > FLICK ? true : velocity < -FLICK ? false : progress > COMMIT;
-      // Only when it actually changes — a drag that snaps back to where it
-      // started did nothing, and should feel like it did nothing.
-      if (next !== open) tick();
-      setOpen(next);
+      if (velocity > FLICK) setOpen(true);
+      else if (velocity < -FLICK) setOpen(false);
+      else setOpen(progress > COMMIT);
     }
 
     window.addEventListener("touchstart", onStart, { passive: true });

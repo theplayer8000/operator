@@ -506,3 +506,24 @@ There is also **no automatic pre-migration snapshot**: v8's schema migration ran
 against live data with nothing taken first. `npm run backup` before a migration
 is now a one-liner, but it is still a habit rather than a mechanism — the
 server does not snapshot before running `MIGRATIONS`.
+
+## OPS-021 — There are no haptics on iOS web. Don't try again.
+
+**Severity:** none — a wish, not a defect. Recorded so it isn't re-attempted.
+
+Safari implements no vibration API on any platform. `navigator.vibrate` is
+`undefined` on the owner's iPhone, so anything built on it is dead code on the
+only device Operator is used from.
+
+The known workaround was tried and **does not work**: iOS 17.4+ gives
+`<input type="checkbox" switch>` a real haptic tick, and the trick is to keep
+one off-screen and click it from a touch handler. Implemented in `lib/haptics.ts`,
+tested on the owner's iPhone (iOS 18.1.1, installed to the home screen), felt
+nothing, removed the same night. It was kept rendered rather than
+`display:none`, which is the usual reason the trick fails, so that was not it.
+
+If a future session wants haptics, the honest answers are a native wrapper or
+nothing. Do not reintroduce a silent best-effort helper — a feature that cannot
+be observed to fail is worse than an absent one, because the next person
+assumes it works.
+

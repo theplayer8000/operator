@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
-import { tick } from "@/lib/haptics";
 import { openCommandPalette } from "./CommandPalette";
 
 const DAMP = 0.5; // finger distance → visual distance, so the pull feels rubbery
@@ -29,7 +28,6 @@ export default function PullToSearch() {
   const [dragging, setDragging] = useState(false);
   const from = useRef<{ y: number; engaged: boolean } | null>(null);
   const pullRef = useRef(0);
-  const readyRef = useRef(false);
 
   useEffect(() => {
     if (mobileNavOpen) return;
@@ -64,22 +62,12 @@ export default function PullToSearch() {
       }
 
       e.preventDefault();
-      const next = Math.min(MAX, dy * DAMP);
-
-      // Tick the moment it becomes releasable, which is where iOS puts the
-      // feedback too — you learn the threshold by feel and stop watching the
-      // label. Only on the way in, so hovering the boundary doesn't buzz.
-      const nowReady = next >= TRIGGER;
-      if (nowReady && !readyRef.current) tick();
-      readyRef.current = nowReady;
-
-      set(next);
+      set(Math.min(MAX, dy * DAMP));
     }
 
     function onEnd() {
       const f = from.current;
       from.current = null;
-      readyRef.current = false;
       setDragging(false);
       if (f?.engaged && pullRef.current >= TRIGGER) openCommandPalette();
       set(0);
