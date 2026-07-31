@@ -28,6 +28,23 @@
   body {
     overflow-x: hidden;
   }
+  /*
+    Long-pressing a nav item or a button on iOS pops the callout menu — the
+    "Open in New Tab / Copy" sheet — and then still fires the tap when the
+    finger lifts, so a hesitant press navigates somewhere unasked. It is worse
+    in the installed app, where there are no tabs for "open in new tab" to mean
+    anything, so the menu is pure noise.
+
+    Scoped to chrome only. Links inside page content keep the callout, because
+    there "copy link" is a real thing to want — the Dev page's repository links
+    are the obvious case.
+  */
+  nav a,
+  button,
+  [role="button"] {
+    -webkit-touch-callout: none;
+  }
+
   ::selection {
     @apply bg-xp/30 text-ink-100;
   }

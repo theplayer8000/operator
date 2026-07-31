@@ -166,6 +166,50 @@ export function retry(): Promise<void> {
   return load();
 }
 
+let refreshing: Promise<void> | null = null;
+
+/**
+ * Re-read the server, without `retry()`'s trip through "loading" — so a
+ * successful refresh is invisible and a failed one leaves the existing data on
+ * screen rather than blanking it.
+ */
+export function refresh(): Promise<void> {
+  if (refreshing) return refreshing;
+  loadPromise = null;
+  refreshing = load().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+/**
+ * Re-read whenever the app comes back to the foreground.
+ *
+ * iOS suspends an installed web app when you switch away: the web view is
+ * frozen, its connections are dropped, and on resume the page is restored from
+ * a snapshot. Every fetch made after that fails, and because nothing retried,
+ * the app sat on a screen full of "storage server unreachable" that could never
+ * recover — while the server was up the whole time. That is the actual bug
+ * behind "it doesn't reload".
+ *
+ * It also means a phone picks up edits made on the desktop simply by being
+ * opened, which is the behaviour you'd assume a shared store already had.
+ *
+ * Three events because no one of them is reliable across the cases that matter:
+ * `visibilitychange` covers app switching, `focus` covers a desktop window
+ * regaining focus, and `pageshow` covers a back-forward cache restore, which is
+ * the common one on iOS. They overlap constantly — the in-flight guard above is
+ * what stops that becoming three requests.
+ */
+if (typeof document !== "undefined") {
+  const onResume = () => {
+    if (document.visibilityState === "visible") void refresh();
+  };
+  document.addEventListener("visibilitychange", onResume);
+  window.addEventListener("focus", onResume);
+  window.addEventListener("pageshow", onResume);
+}
+
 // --- writing --------------------------------------------------------------
 
 async function flushPending() {
