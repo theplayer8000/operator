@@ -145,3 +145,26 @@ being always-live.
 
 What would **not** change it: finding the 401s inconvenient while developing.
 Loopback is always trusted, which is the escape hatch.
+
+## Verified again under `tailscale serve` (2026-07-31)
+
+Operator is now also reachable as `https://<host>.<tailnet>.ts.net` via
+`tailscale serve --bg 5174`, which puts a second proxy in front of the API — one
+this ADR was written before. It was worth checking rather than assuming, because
+a proxy that hid the caller would have silently downgraded every tailnet device
+to trusted-loopback and quietly disabled `OPERATOR_TERMINAL_DEVICES`.
+
+It does not. Measured against `/api/auth/whoami`:
+
+| Path | Resolved identity |
+|---|---|
+| `http://127.0.0.1:5174` | `local` |
+| `https://<host>.ts.net` | `tailscale`, correct device, client `100.x.x.x` |
+| Same, with a forged `X-Forwarded-For` | **still the real `100.x.x.x`** |
+
+Tailscale appends its own entry after anything the client sent, so reading the
+**rightmost** entry — the rule this ADR already mandates for the Vite proxy —
+defeats the forgery here too. That is now two independent proxies where the
+leftmost entry would have been attacker-controlled. Treat the rule as
+load-bearing for any future proxy, and re-run the three checks above rather than
+assuming the next one behaves.
