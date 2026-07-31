@@ -87,20 +87,51 @@ function describeDenial(d) {
   const input = d?.tool_input ?? {};
   // Bash is the common case and its `command` is what the rule keys on. Other
   // tools key on a path, so fall back to whichever identifying field exists.
-  const subject =
-    typeof input.command === "string"
-      ? input.command
-      : typeof input.file_path === "string"
-        ? input.file_path
-        : typeof input.path === "string"
-          ? input.path
-          : "";
+  const isCommand = typeof input.command === "string";
+  const rawSubject = isCommand
+    ? input.command
+    : typeof input.file_path === "string"
+      ? input.file_path
+      : typeof input.path === "string"
+        ? input.path
+        : "";
+
+  /*
+    A path-based rule has to be written the way the matcher reads it, or the
+    grant silently does nothing.
+
+    Claude Code matches file tools (Write, Edit, Read…) against gitignore-style
+    paths — forward slashes, relative to the project. `tool_input.file_path`
+    on Windows is neither: it arrives as `D:\Projects\Operator\server\jobs.mjs`.
+    Writing that verbatim produced a rule that looked right in
+    `.claude/settings.local.json`, sat in the allow list, and never fired. The
+    owner granted the same write three times and watched it be denied three
+    times, because each grant added another rule that could not match.
+
+    Bash is unaffected — its rule keys on the command string as typed, which is
+    why that half worked from the start and hid this.
+  */
+  const subject = isCommand ? rawSubject : toRulePath(rawSubject);
+
   return {
     tool,
     subject,
     description: typeof input.description === "string" ? input.description : "",
     rule: subject ? `${tool}(${subject})` : tool,
   };
+}
+
+/** Absolute Windows path → the forward-slash, project-relative form rules use. */
+function toRulePath(raw) {
+  if (!raw) return "";
+  const slashed = raw.replace(/\\/g, "/");
+  const root = ROOT.replace(/\\/g, "/").replace(/\/$/, "");
+  // Case-insensitive because Windows paths are, and the drive letter's case
+  // varies depending on which tool reported it.
+  if (slashed.toLowerCase().startsWith(root.toLowerCase() + "/")) {
+    return slashed.slice(root.length + 1);
+  }
+  return slashed;
 }
 
 /** Rules currently allowed, so the UI can avoid offering one that already exists. */
