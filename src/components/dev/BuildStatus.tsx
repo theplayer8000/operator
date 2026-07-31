@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Layers, RefreshCw } from "lucide-react";
+import { Layers, RefreshCw, Globe, Server, Code2, ExternalLink } from "lucide-react";
 
 interface Body {
   checkedAt: string;
@@ -15,6 +15,35 @@ function ago(iso: string | null): string {
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
   if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
   return `${Math.round(ms / 86_400_000)}d ago`;
+}
+
+/**
+ * Which build is this page? `import.meta.env.DEV` is set by Vite at build time
+ * — true in the dev server's bundle, false in the one `npm run build` writes.
+ * That is exact, unlike guessing from the port, which breaks the moment
+ * anything is proxied. And it is proxied: `tailscale serve` puts 8443 and 443
+ * in front of both.
+ */
+const ON_DEV = import.meta.env.DEV;
+
+/**
+ * The other build's URL, derived from wherever this page is being served.
+ *
+ * Four ways in, because of the proxy: 5173/5174 direct on the machine, and
+ * 8443/443 through Tailscale. Each maps to its opposite number.
+ */
+function otherUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const { protocol, hostname, port } = window.location;
+  const swap: Record<string, string> = {
+    "5173": "5174",
+    "5174": "5173",
+    "8443": "", // dev over Tailscale → live is the bare name on 443
+    "": "8443", // live over Tailscale → dev is 8443
+  };
+  const next = swap[port];
+  if (next === undefined) return null;
+  return `${protocol}//${hostname}${next ? `:${next}` : ""}`;
 }
 
 function Dot({ tone }: { tone: "ok" | "warn" | "off" }) {
@@ -64,6 +93,20 @@ export default function BuildStatus() {
             <h2 className="font-display text-sm font-medium text-ink-300">Builds</h2>
             <p className="text-xs text-ink-700 truncate">What each URL is actually serving</p>
           </div>
+          <span
+            title={
+              ON_DEV
+                ? "This page is Vite, compiling src/ per request — changes show immediately."
+                : "This page is the built snapshot. It changes when you run npm run build."
+            }
+            className={`shrink-0 px-2 py-0.5 rounded-badge border font-mono text-[10px] ${
+              ON_DEV
+                ? "border-rank/40 bg-rank/10 text-rank"
+                : "border-xp/40 bg-xp/10 text-xp"
+            }`}
+          >
+            {ON_DEV ? "you: dev" : "you: live"}
+          </span>
         </div>
         <button
           onClick={() => void refresh()}
@@ -80,8 +123,9 @@ export default function BuildStatus() {
       {body && (
         <ul className="space-y-2.5">
           <li className="flex items-start gap-2.5">
-            <span className="mt-1.5">
+            <span className="mt-1 flex items-center gap-2 shrink-0">
               <Dot tone={body.live.missing ? "off" : body.live.stale ? "warn" : "ok"} />
+              <Globe size={14} className="text-ink-700" />
             </span>
             <div className="min-w-0">
               <p className="text-sm text-ink-100">
@@ -101,8 +145,9 @@ export default function BuildStatus() {
           </li>
 
           <li className="flex items-start gap-2.5">
-            <span className="mt-1.5">
+            <span className="mt-1 flex items-center gap-2 shrink-0">
               <Dot tone={body.server.stale ? "warn" : "ok"} />
+              <Server size={14} className="text-ink-700" />
             </span>
             <div className="min-w-0">
               <p className="text-sm text-ink-100">
@@ -121,8 +166,9 @@ export default function BuildStatus() {
           </li>
 
           <li className="flex items-start gap-2.5">
-            <span className="mt-1.5">
+            <span className="mt-1 flex items-center gap-2 shrink-0">
               <Dot tone={body.dev.running ? "ok" : "off"} />
+              <Code2 size={14} className="text-ink-700" />
             </span>
             <div className="min-w-0">
               <p className="text-sm text-ink-100">
@@ -137,6 +183,22 @@ export default function BuildStatus() {
             </div>
           </li>
         </ul>
+      )}
+
+      {/*
+        One link, to the build you are not on. Two links would mean reading the
+        labels to work out which one you already have open — the only move worth
+        offering here is the other one.
+      */}
+      {otherUrl() && (
+        <a
+          href={otherUrl() as string}
+          className="mt-3 flex items-center justify-center gap-2 min-h-[44px] rounded-badge border border-base-600 text-sm text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
+        >
+          <ExternalLink size={14} />
+          Open the {ON_DEV ? "live" : "dev"} build
+          <span className="font-mono text-xs text-ink-700 truncate">{otherUrl()}</span>
+        </a>
       )}
     </section>
   );
