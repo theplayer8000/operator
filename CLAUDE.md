@@ -352,7 +352,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
 | Claude | `/chat` | Built — a conversation with Claude Code that remembers across messages, by keeping its `session_id` and passing `--resume` (`server/workspace.mjs`). Model is selectable, Opus 5 by default. Print mode can't stop and ask, so a blocked tool is reported with the exact rule that would allow it and a one-tap grant. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
-| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, and a **terminal** for authorised devices, disarmed by default (ADR 0011) |
+| Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |
@@ -405,6 +405,31 @@ His words for why it exists: a preset phrase so a new session picks up where
 the last one stopped, instead of him retyping the same three instructions every
 time. A session starting cold has the repository and this file and nothing
 else, so the phrase is the handover.
+
+## Editing Operator while it runs — the two rules
+
+Operator is developed from inside itself, so at any moment the source, the built
+snapshot and the running server can all disagree. Which command fixes that
+depends only on which folder changed:
+
+| Changed | Dev URL (`:8443`, Vite) | Live URL (the built app) |
+|---|---|---|
+| `src/` | instant, hot-reloaded | `npm run build` — **no restart**, the server reads `dist/` off disk per request |
+| `server/` | Restart | Restart — it is loaded into memory at boot |
+
+`npm run serve` runs under `scripts/supervise.mjs`, which relaunches the server
+when it exits with code 75. That is what `POST /api/restart` and the Dev page's
+Restart button do. It is **not** crash recovery: a server that dies
+unexpectedly stays dead, deliberately, and five restarts in thirty seconds stops
+the supervisor with the real error on screen. `npm run serve:once` skips it.
+
+Both URLs come from Tailscale, and `tailscale serve` **replaces** its config
+rather than adding to it — run both or you will silently drop one:
+
+```
+tailscale serve --bg 5174              # live, https://<host>.<tailnet>.ts.net
+tailscale serve --bg --https 8443 5173 # dev,  same host on :8443
+```
 
 ## Open decisions waiting on the owner — raise these, don't guess
 
