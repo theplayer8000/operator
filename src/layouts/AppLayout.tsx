@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import CommandPalette from "@/components/command/CommandPalette";
+import PullToSearch from "@/components/command/PullToSearch";
 
 export default function AppLayout() {
   return (
@@ -13,6 +14,7 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <PullToSearch />
       <CommandPalette />
     </div>
   );
