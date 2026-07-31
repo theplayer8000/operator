@@ -20,6 +20,7 @@ file states the rule and the document explains it.
 | [`docs/adding-a-feature.md`](docs/adding-a-feature.md) | Building Learning, Gym, Forex, Work, Journey, Statistics, or Settings |
 | [`docs/roadmap.md`](docs/roadmap.md) | Planning; deciding what's next |
 | [`docs/ai-workspace-design.md`](docs/ai-workspace-design.md) | **Before touching the chat, terminal, or anything AI-facing.** The proposed job-based structure, why the current one has the limits it does, and the provider boundary future models plug into. Proposed, not built — needs the owner's approval |
+| [`docs/threat-model.md`](docs/threat-model.md) | **Before changing anything about auth, the terminal, or how Operator is reached.** What actually holds the line, and the fact that there is no sandbox — the terminal runs as the owner with no isolation |
 | [`docs/known-issues.md`](docs/known-issues.md) | **Before shipping anything** — two entries are active defects, not theory |
 | [`docs/development.md`](docs/development.md) | Running, verifying, or handing off work |
 | [`docs/decisions/`](docs/decisions/) | Before "fixing" something that looks wrong, or changing an established pattern |

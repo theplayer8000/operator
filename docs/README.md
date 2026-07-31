@@ -21,6 +21,7 @@ have what the task needs:
 3. **`architecture.md`** — how a feature is put together, and the invariants
    that hold the whole thing up.
 3. The document that matches your task (see the map below).
+- [threat-model.md](threat-model.md) — what actually holds the line, and why there is no sandbox
 4. **`known-issues.md`** — before shipping anything, so you don't build on top
    of a known defect or re-report one.
 

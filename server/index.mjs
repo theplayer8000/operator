@@ -42,7 +42,7 @@ import {
   stopRun,
   subscribe,
 } from "./terminal.mjs";
-import * as chat from "./workspace.mjs";
+import * as jobs from "./jobs.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 import { buildStatus } from "./build.mjs";
 
@@ -346,64 +346,91 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // --- chat with Claude Code ---
+    // --- jobs: working with Claude Code ---
     //
     // Same gate as the terminal on purpose: `claude -p` has tool access, so this
     // is arbitrary execution by another route, not "only chat".
+    //
+    // A job outlives the request that made it (docs/ai-workspace-design.md), so
+    // every handler here returns immediately and the client polls. Nothing waits
+    // on Claude inside an HTTP request — that shape is what imposed the old
+    // 10-minute cap in the first place.
 
-    if (pathname === "/api/chat") {
+    if (pathname === "/api/jobs") {
       const allowed = deviceAuthorised(identity);
+      if (req.method === "POST") {
+        if (!allowed.ok) {
+          return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        }
+        const body = await readBody(req);
+        try {
+          return json(res, 202, jobs.create(body?.prompt, body?.model, identity));
+        } catch (err) {
+          // 409 rather than 400 when another device holds the runner: it isn't a
+          // bad request, it's a busy one, and the client shows it differently.
+          const busy = /busy on/.test(err.message);
+          return json(res, busy ? 409 : 400, { error: err.message });
+        }
+      }
+      // The tab strip. Summaries only — no events, because this is polled and a
+      // long build's log runs to thousands of entries.
       return json(res, 200, {
-        ...(allowed.ok
-          ? chat.state(Number(url.searchParams.get("since") ?? 0))
-          : { messages: [], busy: false }),
+        ...(allowed.ok ? jobs.list() : { jobs: [], running: null }),
         authorised: allowed.ok,
         canManage: deviceMayManage(identity).ok,
+        you: identity?.device ?? null,
         ...(allowed.ok ? {} : { reason: allowed.reason }),
       });
     }
 
-    if (pathname === "/api/chat/send" && req.method === "POST") {
+    if (pathname === "/api/jobs/allow" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
-      if (!allowed.ok) {
-        return json(res, 403, { error: "not authorised", reason: allowed.reason });
-      }
+      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
       const body = await readBody(req);
       try {
-        // Deliberately not awaited: a reply can take a minute, well past any
-        // sensible HTTP timeout on a phone. The client polls /api/chat.
-        const started = chat.send(body?.text, identity);
-        started.catch((err) => console.error("[operator] chat turn failed:", err.message));
-        return json(res, 202, { accepted: true });
+        return json(res, 200, await jobs.allowRule(body?.rule, identity));
       } catch (err) {
         return json(res, 400, { error: err.message });
       }
     }
 
-    if (pathname === "/api/chat/model" && req.method === "POST") {
+    if (pathname === "/api/jobs/clear" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
-      const body = await readBody(req);
-      return json(res, 200, { model: chat.setModel(body?.model) });
+      return json(res, 200, jobs.clear(identity));
     }
 
-    if (pathname === "/api/chat/allow" && req.method === "POST") {
-      const allowed = deviceAuthorised(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
-      const body = await readBody(req);
-      try {
-        return json(res, 200, await chat.allowRule(body?.rule, identity));
-      } catch (err) {
-        return json(res, 400, { error: err.message });
-      }
-    }
-
-    if (pathname === "/api/chat/new" && req.method === "POST") {
+    // /api/jobs/:id, and /api/jobs/:id/<action>
+    if (pathname.startsWith("/api/jobs/")) {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {
         return json(res, 403, { error: "not authorised", reason: allowed.reason });
       }
-      return json(res, 200, chat.reset(identity));
+      const [id, action] = pathname.slice("/api/jobs/".length).split("/");
+      if (!id) return json(res, 404, { error: "no such job" });
+
+      try {
+        if (!action && req.method === "GET") {
+          const found = jobs.detail(id, Number(url.searchParams.get("since") ?? 0));
+          if (!found) return json(res, 404, { error: "no such job" });
+          return json(res, 200, found);
+        }
+        if (!action && req.method === "DELETE") {
+          return json(res, 200, jobs.remove(id, identity));
+        }
+        if (action === "input" && req.method === "POST") {
+          const body = await readBody(req);
+          return json(res, 202, jobs.input(id, body, identity));
+        }
+        if (action === "model" && req.method === "POST") {
+          const body = await readBody(req);
+          return json(res, 200, jobs.setModel(id, body?.model));
+        }
+      } catch (err) {
+        const busy = /busy on/.test(err.message);
+        return json(res, busy ? 409 : 400, { error: err.message });
+      }
+      return json(res, 404, { error: "unknown job route" });
     }
 
     // Arming is a separate permission from running: a listed device may switch
