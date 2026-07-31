@@ -339,32 +339,6 @@ export default function TerminalPanel() {
         </p>
       )}
 
-      {/*
-        Kept on the panel rather than in the docs, because the moment you need
-        it is the moment you are about to press Restart — not a moment you are
-        reading /docs. Two rules, and which one applies depends only on which
-        folder changed.
-      */}
-      {canManage && (
-        <dl className="mt-3 pt-3 border-t border-base-600 text-xs text-ink-700 space-y-1.5">
-          <div className="flex gap-2">
-            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">src/</dt>
-            <dd>
-              The app. Live instantly on the dev URL. Reaches the real one when you run{" "}
-              <span className="font-mono text-ink-500">npm run build</span> — no restart, the
-              server reads the built files off disk each time.
-            </dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">server/</dt>
-            <dd>
-              The API itself. Loaded into memory at boot, so nothing picks it up until this
-              process is replaced — that is what <span className="text-ink-500">Restart</span> is
-              for, and the only thing it is for.
-            </dd>
-          </div>
-        </dl>
-      )}
 
       {canManage && armed && (
         <>
@@ -404,15 +378,6 @@ export default function TerminalPanel() {
             )}
           </div>
 
-          <p className="text-[11px] text-ink-700 mb-3 leading-relaxed">
-            Runs in <span className="font-mono text-ink-500">{info.cwd ?? "the repo root"}</span>. No
-            shell, so <span className="font-mono">&amp;&amp;</span>,{" "}
-            <span className="font-mono">|</span> and <span className="font-mono">;</span> are passed
-            through as plain arguments rather than run, and shell built-ins don&apos;t exist — use{" "}
-            <span className="font-mono">ls</span> rather than a bare{" "}
-            <span className="font-mono">dir</span>. Allowed:{" "}
-            <span className="font-mono text-ink-500">{(info.allowed ?? []).join(" ")}</span>
-          </p>
 
           {error && (
             <p className="text-xs text-vital-down mb-3 leading-relaxed break-words">{error}</p>
@@ -461,10 +426,49 @@ export default function TerminalPanel() {
           )}
 
           <p className="text-[11px] text-ink-700 pt-3 mt-3 border-t border-base-600 leading-relaxed">
-            Runs on the machine hosting Operator, in the repo root. Every run is logged with the
-            device that started it. History is in memory and clears when the server restarts.
+            Runs in <span className="font-mono text-ink-500">{info.cwd ?? "the repo root"}</span> on
+            the machine hosting Operator. There is no shell, so{" "}
+            <span className="font-mono">&amp;&amp;</span>, <span className="font-mono">|</span> and{" "}
+            <span className="font-mono">;</span> are passed through as plain text rather than run,
+            and built-ins don&apos;t exist — <span className="font-mono">ls</span>, not{" "}
+            <span className="font-mono">dir</span>. Ask for a shell explicitly when you want them:{" "}
+            <span className="font-mono text-ink-500">bash -c "…"</span>.
+            {(info.allowed ?? []).length > 0 && (
+              <>
+                {" "}Restricted to:{" "}
+                <span className="font-mono text-ink-500">{(info.allowed ?? []).join(" ")}</span>.
+              </>
+            )}{" "}
+            Every run is logged with the device that started it; history is in memory and clears on
+            restart.
           </p>
         </>
+      )}
+      {/*
+        Kept on the panel rather than in the docs, because the moment you need
+        it is the moment you are about to press Restart — not a moment you are
+        reading /docs. Two rules, and which one applies depends only on which
+        folder changed.
+      */}
+      {canManage && (
+        <dl className="mt-3 pt-3 border-t border-base-600 text-xs text-ink-700 space-y-1.5">
+          <div className="flex gap-2">
+            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">src/</dt>
+            <dd>
+              The app. Live instantly on the dev URL. Reaches the real one when you run{" "}
+              <span className="font-mono text-ink-500">npm run build</span> — no restart, the
+              server reads the built files off disk each time.
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="font-mono text-ink-500 shrink-0 w-[52px]">server/</dt>
+            <dd>
+              The API itself. Loaded into memory at boot, so nothing picks it up until this
+              process is replaced — that is what <span className="text-ink-500">Restart</span> is
+              for, and the only thing it is for.
+            </dd>
+          </div>
+        </dl>
       )}
     </section>
   );
