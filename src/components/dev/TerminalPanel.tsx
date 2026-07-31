@@ -145,6 +145,18 @@ export default function TerminalPanel() {
     const line = command.trim();
     if (!line) return;
     setError(null);
+
+    // `disarm` is handled here rather than being sent anywhere. Locking up
+    // should be the fastest thing on the page — one word into the box you are
+    // already typing in, rather than scrolling back to find a button. There is
+    // deliberately no `arm` counterpart: arming is the direction that grants
+    // execution, and it should stay a deliberate press rather than something
+    // you can fire from muscle memory or a pasted line.
+    if (/^(disarm|lock)$/i.test(line)) {
+      setCommand("");
+      await setArmed(false);
+      return;
+    }
     try {
       const res = await fetch("/api/terminal/run", {
         method: "POST",
@@ -282,7 +294,7 @@ export default function TerminalPanel() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") void run();
               }}
-              placeholder='claude -p "what changed today?"'
+              placeholder={armed ? 'claude -p "what changed today?" · type disarm to lock' : 'claude -p "what changed today?"'}
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"

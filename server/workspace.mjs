@@ -40,7 +40,7 @@
 // move.
 
 import { spawn } from "node:child_process";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -160,8 +160,79 @@ export const MODELS = [
 ];
 const DEFAULT_MODEL = MODELS[0].id;
 
+/*
+  The conversation survives a server restart, on disk beside the store.
+
+  It used to live only in memory, which made the feature quietly dishonest: the
+  page said the chat remembers, and a restart wiped both the transcript *and*
+  the `session_id`. So the history vanished and Claude genuinely forgot — while
+  the UI still claimed memory. Losing the transcript was the visible half;
+  losing the session id was the half that mattered.
+
+  Its own file rather than a slice of `operator.json`, because this is the
+  server's state and not the app's: the client never edits it, and a transcript
+  measured in hundreds of KB does not belong in a document that every device
+  fetches whole on load.
+
+  Written with temp-file-then-rename, same as the store, so a crash mid-write
+  cannot leave a truncated file that fails to parse on the way back up.
+*/
+const CHAT_FILE = process.env.OPERATOR_CHAT_FILE ?? join(ROOT, "data", "chat.json");
+
 let conversation = newConversation();
 let messageSeq = 0;
+
+async function persist() {
+  try {
+    await mkdir(dirname(CHAT_FILE), { recursive: true });
+    const tmp = `${CHAT_FILE}.tmp`;
+    await writeFile(
+      tmp,
+      JSON.stringify(
+        {
+          provider: conversation.provider,
+          model: conversation.model,
+          sessionId: conversation.sessionId,
+          messages: conversation.messages,
+          startedAt: conversation.startedAt,
+          turns: conversation.turns,
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await rename(tmp, CHAT_FILE);
+  } catch (err) {
+    // A conversation that can't be saved is still a conversation worth having.
+    console.warn("[operator] could not save the chat transcript:", err.message);
+  }
+}
+
+async function restore() {
+  try {
+    if (!existsSync(CHAT_FILE)) return;
+    const saved = JSON.parse(await readFile(CHAT_FILE, "utf8"));
+    if (!Array.isArray(saved?.messages)) return;
+    conversation.provider = saved.provider ?? conversation.provider;
+    conversation.model = saved.model ?? conversation.model;
+    conversation.sessionId = saved.sessionId ?? null;
+    conversation.messages = saved.messages;
+    conversation.startedAt = saved.startedAt ?? Date.now();
+    conversation.turns = saved.turns ?? 0;
+    // Ids must keep climbing or the client's `since` polling would re-show
+    // everything it has already rendered.
+    messageSeq = conversation.messages.reduce(
+      (top, m) => Math.max(top, Number(m.id) || 0),
+      0
+    );
+    console.log(`[operator] chat restored — ${conversation.messages.length} messages`);
+  } catch (err) {
+    console.warn("[operator] could not read the saved chat, starting fresh:", err.message);
+  }
+}
+
+await restore();
 
 
 function newConversation() {
@@ -189,6 +260,11 @@ export function reset(identity) {
   if (conversation.proc) conversation.proc.kill();
   conversation = newConversation();
   conversation.model = keepModel;
+  // Deliberately deleted, not just forgotten in memory. Clearing the chat is
+  // how the owner ends a piece of work — the transcript for a shipped patch is
+  // not something he wants kept, and a "cleared" chat that reappears after a
+  // restart would be a worse lie than not persisting at all.
+  rm(CHAT_FILE, { force: true }).catch(() => {});
   console.log(`[operator] chat reset by ${identity?.device ?? "unknown"}`);
   return state();
 }
@@ -204,6 +280,9 @@ function push(role, text, extra = {}) {
   if (conversation.messages.length > MAX_MESSAGES) {
     conversation.messages.splice(0, conversation.messages.length - MAX_MESSAGES);
   }
+  // Save after every message rather than on a timer: the case worth surviving
+  // is the server dying, and a timer is exactly the thing that doesn't run then.
+  persist();
 }
 
 /**
@@ -330,6 +409,8 @@ export async function send(text, identity) {
       }
 
       if (parsed.session_id) conversation.sessionId = parsed.session_id;
+      // The session id is the memory. Saving it late is how a crash loses it.
+      persist();
       conversation.turns += 1;
 
       const reply = typeof parsed.result === "string" ? parsed.result : "";

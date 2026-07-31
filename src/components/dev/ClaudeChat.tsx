@@ -207,6 +207,18 @@ export default function ClaudeChat() {
   // Listed but disarmed is fixable from here; not listed is not.
   const canArm = notAuthorised && state?.canManage === true;
 
+  /*
+    Ghost the owner's resume phrase into an empty, armed conversation.
+
+    "resume operator build" is a documented trigger in CLAUDE.md — it makes a
+    cold session read the design doc and the latest handoff and ask the open
+    decisions before touching anything. A phrase that only works if you
+    remember it is a phrase that stops getting used, and the start of a fresh
+    conversation is the one moment it is the right thing to type. It vanishes
+    as soon as there is any history, because by then it is the wrong advice.
+  */
+  const fresh = state?.authorised !== false && (state?.messages?.length ?? 0) === 0;
+
   return (
     <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
       <header className="flex items-center justify-between gap-3 mb-3">
@@ -377,7 +389,7 @@ export default function ClaudeChat() {
                 }
               }}
               rows={2}
-              placeholder="Ask Claude about this project…"
+              placeholder={fresh ? "resume operator build" : "Ask Claude about this project…"}
               aria-label="Message for Claude"
               className="flex-1 min-w-0 bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 resize-none transition-colors"
             />
