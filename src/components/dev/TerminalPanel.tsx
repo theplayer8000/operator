@@ -159,6 +159,18 @@ export default function TerminalPanel() {
       await setArmed(false);
       return;
     }
+
+    // `clear` is a real program, and running it does exactly what it is meant
+    // to: emit the escape codes that tell a terminal to wipe itself. This pane
+    // is a <pre>, so it printed them instead. Handled here because what the
+    // command means — empty the output — is something only the client can do.
+    if (/^(clear|cls)$/i.test(line)) {
+      setCommand("");
+      abortRef.current?.abort();
+      setActiveId(null);
+      setOutput("");
+      return;
+    }
     try {
       const res = await fetch("/api/terminal/run", {
         method: "POST",

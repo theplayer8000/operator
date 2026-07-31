@@ -540,6 +540,41 @@ export async function startRun(line, identity) {
     zero bytes in the odd positions of an otherwise plain-ASCII chunk, which
     UTF-8 text never produces.
   */
+  /*
+    Strip terminal control sequences. Colour is already suppressed with
+    NO_COLOR and FORCE_COLOR, but that only covers programs that ask politely —
+    `clear` emits ESC[H ESC[2J ESC[3J because wiping the screen *is* what it
+    does, and progress bars and spinners rewrite lines the same way. A real
+    terminal acts on these; this output is rendered into a <pre>, where they
+    show up literally as "[H[2J[3J" and read as corruption.
+
+    CSI and OSC only. Left alone: tabs, carriage returns and newlines, which are
+    layout rather than control and which <pre> already handles.
+  */
+  const ESC = String.fromCharCode(27);
+  const BEL = String.fromCharCode(7);
+  // Built with fromCharCode rather than written literally: a raw ESC in the
+  // source is invisible in every editor and diff, which is how it ends up
+  // deleted by accident.
+  const OSC = new RegExp(ESC + "\\][^" + BEL + "]*" + BEL, "g");
+  const CSI = new RegExp(ESC + "\\[[0-9;?]*[A-Za-z]", "g");
+  const ANY_ESC = new RegExp(ESC + "[\\s\\S]?", "g");
+  const C0 = new RegExp(
+    "[" +
+      String.fromCharCode(0) + "-" + String.fromCharCode(8) +
+      String.fromCharCode(11) + String.fromCharCode(12) +
+      String.fromCharCode(14) + "-" + String.fromCharCode(31) +
+      String.fromCharCode(127) +
+      "]",
+    "g"
+  );
+  const stripAnsi = (text) =>
+    text
+      .replace(OSC, "") // window titles and the like
+      .replace(CSI, "") // ESC[2J, ESC[H, colours, cursor moves
+      .replace(ANY_ESC, "") // anything else an ESC introduces
+      .replace(C0, ""); // stray controls; tab/newline/CR survive as layout
+
   const decode = (chunk) => {
     if (!Buffer.isBuffer(chunk)) return String(chunk);
     if (chunk.length >= 2 && chunk[0] === 0xff && chunk[1] === 0xfe) {
@@ -553,8 +588,8 @@ export async function startRun(line, identity) {
     return chunk.toString("utf8");
   };
 
-  proc.stdout?.on("data", (d) => publish(run, decode(d)));
-  proc.stderr?.on("data", (d) => publish(run, decode(d)));
+  proc.stdout?.on("data", (d) => publish(run, stripAnsi(decode(d))));
+  proc.stderr?.on("data", (d) => publish(run, stripAnsi(decode(d))));
 
   const timer = setTimeout(() => {
     if (run.endedAt === null) {
