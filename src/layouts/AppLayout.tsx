@@ -10,7 +10,13 @@ export default function AppLayout() {
       <Sidebar />
       <div className="flex-1 min-w-0">
         <Topbar />
-        <main className="px-4 sm:px-6 py-5 sm:py-6 max-w-[1400px] mx-auto">
+        {/*
+          The bottom padding is deliberately larger than the top and carries the
+          home-indicator inset. On a long page — Daily Routine, Calendar — the
+          last row otherwise ends flush with the bottom of the display, half
+          under the indicator, and reads as content that has been cut off.
+        */}
+        <main className="px-4 sm:px-6 pt-5 sm:pt-6 pb-[calc(3rem+env(safe-area-inset-bottom))] max-w-[1400px] mx-auto">
           <Outlet />
         </main>
       </div>

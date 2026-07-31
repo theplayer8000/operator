@@ -21,7 +21,11 @@
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
+    /*
+      No padding-bottom here on purpose. The scrolling content is <main>, which
+      carries the bottom inset itself (AppLayout) — doing it here as well counts
+      the home indicator twice and leaves a dead band under every page.
+    */
   }
   /* Nothing should be able to push the page sideways on a phone. */
   html,

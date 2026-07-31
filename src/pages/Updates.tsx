@@ -5,6 +5,17 @@ import ConfirmButton from "@/components/ui/ConfirmButton";
 import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
 
+/**
+ * The changelog opens showing this many days and grows by the same step.
+ *
+ * By day rather than by entry, because a day is the unit the list is grouped
+ * into — cutting at "20 entries" would slice a date group in half and imply
+ * that was everything that shipped that day. Three days is roughly one screen
+ * on a phone, which is the device it was unreadable on.
+ */
+const DAY_WINDOW = 3;
+const DAY_STEP = 5;
+
 const INPUT =
   "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
 
@@ -45,6 +56,13 @@ function formatChangelogDate(dateKey: string): string {
 export default function Updates() {
   const { pending, done, doneByDate, addEntry, updateEntry, markDone, markPending, deleteEntry } =
     useUpdates();
+
+  const [dayLimit, setDayLimit] = useState(DAY_WINDOW);
+  const visibleDays = doneByDate.slice(0, dayLimit);
+  const hiddenDays = doneByDate.length - visibleDays.length;
+  const hiddenChanges = doneByDate
+    .slice(dayLimit)
+    .reduce((total, day) => total + day.items.length, 0);
 
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
@@ -213,7 +231,7 @@ export default function Updates() {
         {done.length === 0 ? (
           <p className="text-sm text-ink-700">Nothing logged yet.</p>
         ) : (
-          doneByDate.map(({ date, items }) => (
+          visibleDays.map(({ date, items }) => (
             <div key={date || "undated"} className="mb-5 last:mb-0">
               {/* Date heading — this is what makes it read as a changelog
                   rather than a flat list of finished things. */}
@@ -302,6 +320,17 @@ export default function Updates() {
               </ul>
             </div>
           ))
+        )}
+
+        {hiddenDays > 0 && (
+          <button
+            onClick={() => setDayLimit((n) => n + DAY_STEP)}
+            className="mt-4 w-full min-h-[44px] rounded-badge border border-base-600 bg-base-700/30 text-sm text-ink-300 hover:text-ink-100 hover:border-base-500 transition-colors"
+          >
+            Show earlier — {hiddenDays} more {hiddenDays === 1 ? "day" : "days"},{" "}
+            <span className="font-mono text-xs">{hiddenChanges}</span>{" "}
+            {hiddenChanges === 1 ? "change" : "changes"}
+          </button>
         )}
       </section>
     </div>

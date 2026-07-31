@@ -34,6 +34,13 @@ function describe(userAgent) {
   if (/\bcurl\//i.test(userAgent)) return "curl";
   if (/node|undici/i.test(userAgent)) return "Node";
 
+  // iOS fetches icons and the manifest through its own agents, outside any
+  // browser. They were being labelled "Desktop · Browser", which is the least
+  // useful thing they could have been called.
+  if (/SafariViewService|NetworkingExtension|CFNetwork|Darwin/i.test(userAgent)) {
+    return "iOS · system";
+  }
+
   let device = "Desktop";
   if (/iPhone/i.test(userAgent)) device = "iPhone";
   else if (/iPad/i.test(userAgent)) device = "iPad";
@@ -41,6 +48,16 @@ function describe(userAgent) {
   else if (/Macintosh/i.test(userAgent)) device = "Mac";
   else if (/Windows/i.test(userAgent)) device = "Windows";
   else if (/Linux/i.test(userAgent)) device = "Linux";
+
+  // An installed home-screen app is distinguishable from Safari by omission:
+  // WebKit drops both `Version/` and `Safari/` from the user-agent when the
+  // page is running standalone, keeping only `Mobile/`. It is the only signal
+  // there is — nothing announces "I am installed" — but it is a stable one, and
+  // being able to tell which of the two you are looking at is the entire point
+  // of this panel.
+  if ((device === "iPhone" || device === "iPad") && /Mobile\//i.test(userAgent) && !/Safari\//i.test(userAgent)) {
+    return `${device} · App`;
+  }
 
   let browser = "Browser";
   // Order matters: Edge and Chrome both claim Safari, Chrome claims Safari.
