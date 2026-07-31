@@ -11,9 +11,17 @@
   }
   body {
     @apply bg-base-900;
-    /* Notch / home-indicator insets — viewport-fit=cover is set in index.html. */
+    /*
+      Notch / home-indicator insets — viewport-fit=cover is set in index.html.
+      Top and bottom matter only once installed to the home screen: in Safari the
+      browser's own chrome occupies that space and these resolve to 0, but a
+      standalone web app runs the full height of the display, so without them the
+      header sits under the status bar and the last row under the home indicator.
+    */
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
   /* Nothing should be able to push the page sideways on a phone. */
   html,
