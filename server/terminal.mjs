@@ -281,6 +281,67 @@ export async function resolveExecutable(name) {
     });
     candidates = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   } catch {
+    /* not on PATH — the extra directories below are the remaining chance */
+  }
+
+  /*
+    Git for Windows ships the POSIX tools, but only puts some of them on PATH.
+
+    `git` and `curl` live in mingw64\bin, which the installer adds; `ls`, `dir`,
+    `grep`, `wc` and the rest live in usr\bin, which it does not. So whether a
+    command resolves depended on which shell started the server — from Git Bash
+    everything worked, from cmd.exe half of it didn't, and the failure said
+    "couldn't find an executable" as though the tool weren't installed. It is
+    installed. It was never findable from here.
+
+    This is not a shell and does not become one: `shell: false` still holds, and
+    these are just more directories to look in.
+  */
+  if (process.platform === "win32" && candidates.length === 0) {
+    const extra = [
+      process.env.OPERATOR_TERMINAL_PATH,
+      "C:\\Program Files\\Git\\usr\\bin",
+      "C:\\Program Files\\Git\\mingw64\\bin",
+      "C:\\Program Files (x86)\\Git\\usr\\bin",
+    ].filter(Boolean);
+    for (const dir of extra) {
+      for (const ext of [".exe", ".cmd", ".bat", ""]) {
+        const path = join(dir, `${name}${ext}`);
+        if (existsSync(path)) {
+          candidates.push(path);
+          break;
+        }
+      }
+      if (candidates.length) break;
+    }
+  }
+
+  /*
+    On Windows, `bash` on PATH is `C:\Windows\System32\bash.exe` — the WSL
+    launcher, not a shell. With no distribution installed it answers any command
+    with "Linux has no installed distributions", which is a confusing reply to
+    `bash -c "git log | head"` when Git's own bash is sitting right there.
+
+    So a System32 WSL stub is demoted below anything else found. It stays as a
+    last resort rather than being removed, because someone with a real WSL setup
+    may well mean it.
+  */
+  if (process.platform === "win32" && candidates.length > 0) {
+    const isWslStub = (p) => /\\(System32|WindowsApps)\\(bash|wsl)\.exe$/i.test(p);
+    if (candidates.every(isWslStub)) {
+      for (const dir of ["C:\\Program Files\\Git\\bin", "C:\\Program Files\\Git\\usr\\bin"]) {
+        const path = join(dir, `${name}.exe`);
+        if (existsSync(path)) {
+          candidates.unshift(path);
+          break;
+        }
+      }
+    } else {
+      candidates = [...candidates.filter((c) => !isWslStub(c)), ...candidates.filter(isWslStub)];
+    }
+  }
+
+  if (candidates.length === 0) {
     resolvedCache.set(key, null);
     return null;
   }
@@ -468,10 +529,32 @@ export async function startRun(line, identity) {
   });
   run.proc = proc;
 
-  proc.stdout?.setEncoding("utf8");
-  proc.stderr?.setEncoding("utf8");
-  proc.stdout?.on("data", (d) => publish(run, d));
-  proc.stderr?.on("data", (d) => publish(run, d));
+  /*
+    Read raw and decode per chunk, because not everything on Windows writes
+    UTF-8. WSL's bash.exe writes UTF-16LE, and forcing utf8 on that keeps the
+    null byte after every character — the output arrives looking like
+    "W i n d o w s   S u b s y s t e m", one space per letter, which reads as a
+    rendering bug rather than as the wrong encoding.
+
+    Sniffed rather than configured: a BOM if there is one, otherwise a run of
+    zero bytes in the odd positions of an otherwise plain-ASCII chunk, which
+    UTF-8 text never produces.
+  */
+  const decode = (chunk) => {
+    if (!Buffer.isBuffer(chunk)) return String(chunk);
+    if (chunk.length >= 2 && chunk[0] === 0xff && chunk[1] === 0xfe) {
+      return chunk.subarray(2).toString("utf16le");
+    }
+    const sample = chunk.subarray(0, Math.min(chunk.length, 64));
+    let odd = 0;
+    for (let i = 1; i < sample.length; i += 2) if (sample[i] === 0) odd += 1;
+    const pairs = Math.floor(sample.length / 2);
+    if (pairs >= 4 && odd / pairs > 0.8) return chunk.toString("utf16le");
+    return chunk.toString("utf8");
+  };
+
+  proc.stdout?.on("data", (d) => publish(run, decode(d)));
+  proc.stderr?.on("data", (d) => publish(run, decode(d)));
 
   const timer = setTimeout(() => {
     if (run.endedAt === null) {
