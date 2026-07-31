@@ -429,10 +429,10 @@ export default function TerminalPanel() {
             Runs in <span className="font-mono text-ink-500">{info.cwd ?? "the repo root"}</span> on
             the machine hosting Operator. There is no shell, so{" "}
             <span className="font-mono">&amp;&amp;</span>, <span className="font-mono">|</span> and{" "}
-            <span className="font-mono">;</span> are passed through as plain text rather than run,
-            and built-ins don&apos;t exist — <span className="font-mono">ls</span>, not{" "}
-            <span className="font-mono">dir</span>. Ask for a shell explicitly when you want them:{" "}
-            <span className="font-mono text-ink-500">bash -c "…"</span>.
+            <span className="font-mono">;</span> are passed through as plain text rather than run.
+            Ask for a shell explicitly when you want them:{" "}
+            <span className="font-mono text-ink-500">bash -c "…"</span>. The first word must be a
+            program, not a flag.
             {(info.allowed ?? []).length > 0 && (
               <>
                 {" "}Restricted to:{" "}

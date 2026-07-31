@@ -402,8 +402,17 @@ export async function startRun(line, identity) {
       ? { exe: argv[0], prefixArgs: [] }
       : await resolveExecutable(name);
   if (!resolved) {
+    // A leading dash means they typed a flag where the command goes — usually a
+    // stray character, or a line copied from prose. Telling them to set
+    // OPERATOR_TERMINAL_BIN_--LS is technically what the generic branch says and
+    // is of no use to anyone.
+    if (name.startsWith("-")) {
+      throw new Error(
+        `"${name}" is a flag, not a command — the first word has to be the program to run`
+      );
+    }
     throw new Error(
-      `couldn't find an executable for "${name}" on this machine — set OPERATOR_TERMINAL_BIN_${name.toUpperCase()}`
+      `couldn't find an executable for "${name}" on this machine — set OPERATOR_TERMINAL_BIN_${name.toUpperCase()} if it lives somewhere unusual`
     );
   }
 
