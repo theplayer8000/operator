@@ -49,16 +49,16 @@ function describe(userAgent) {
   else if (/Windows/i.test(userAgent)) device = "Windows";
   else if (/Linux/i.test(userAgent)) device = "Linux";
 
-  // An installed home-screen app is distinguishable from Safari by omission:
-  // WebKit drops both `Version/` and `Safari/` from the user-agent when the
-  // page is running standalone, keeping only `Mobile/`. It is the only signal
-  // there is — nothing announces "I am installed" — but it is a stable one, and
-  // being able to tell which of the two you are looking at is the entire point
-  // of this panel.
-  if ((device === "iPhone" || device === "iPad") && /Mobile\//i.test(userAgent) && !/Safari\//i.test(userAgent)) {
-    return `${device} · App`;
-  }
-
+  // NOTE: there is no way to tell the installed home-screen app from Safari
+  // here. The old signal was omission — WebKit used to drop `Version/` and
+  // `Safari/` from the user-agent when running standalone — but iOS 18 sends
+  // the identical string either way. Verified on the owner's iPhone (18.1.1):
+  // the app and the browser produce byte-identical agents.
+  //
+  // Only the page knows, via `navigator.standalone`. Distinguishing them would
+  // mean the client volunteering it in a header. Same for Brave, which reports
+  // itself as Chrome on purpose to resist fingerprinting. Don't spend time
+  // trying to infer either from the request — the information isn't in it.
   let browser = "Browser";
   // Order matters: Edge and Chrome both claim Safari, Chrome claims Safari.
   if (/Edg\//i.test(userAgent)) browser = "Edge";

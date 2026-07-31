@@ -390,6 +390,22 @@ without being asked; localStorage can't hold binary files at any real size
 anyway, so this will need real design thought when it's actually built
 (likely just storing filenames/links, not file contents).
 
+## "resume operator build" — the owner's resume phrase
+
+When he types **"resume operator build"** (or close to it), treat it as a
+request to do this before anything else:
+
+1. Read [`docs/ai-workspace-design.md`](docs/ai-workspace-design.md) — the
+   proposed structure and why the current one is shaped the way it is.
+2. Read the newest file in [`docs/handoffs/`](docs/handoffs/).
+3. Ask the open decisions in the next section. Don't guess them.
+4. Then start at the design doc's next unbuilt step.
+
+His words for why it exists: a preset phrase so a new session picks up where
+the last one stopped, instead of him retyping the same three instructions every
+time. A session starting cold has the repository and this file and nothing
+else, so the phrase is the handover.
+
 ## Open decisions waiting on the owner — raise these, don't guess
 
 Ask about anything here that touches what you're about to build. They are
