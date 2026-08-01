@@ -61,7 +61,25 @@ This is the design working as specified — the device list *is* the boundary �
 and it is why arming resets to off on every server start rather than persisting.
 The phone's own lock screen is a real part of this system's security.
 
-### 3. The permission allow list only ever grows
+### 3. Jobs run under `bypassPermissions`, held back only by a deny list
+
+Decided 2026-08-01 and worth stating plainly: every job spawns Claude Code with
+`--permission-mode bypassPermissions`. The only thing preventing it from
+publishing to GitHub or deleting files is `--disallowedTools`.
+
+That was measured, not assumed — `git push` is refused, an ordinary file write
+is not (`server/jobs.mjs` records both checks). But it means **one flag is the
+whole boundary** for the two irreversible actions. If a Claude Code upgrade ever
+stops honouring `--disallowedTools` under that mode, Operator becomes an
+unrestricted agent with nothing on screen to say so.
+
+**Re-run those two checks after upgrading Claude Code.** It is two commands and
+it is the only way this failure would ever be noticed.
+
+The trade was deliberate: the alternative had produced 69 single-use rules that
+never expire, and a list nobody reviews is not a boundary either.
+
+### 4. The permission allow list only ever grows
 
 `.claude/settings.local.json` accumulates every rule ever granted, permanently.
 It currently includes `Bash(python -)` — "run arbitrary Python from stdin" —
@@ -71,13 +89,13 @@ Nothing expires, nothing is scoped to a session, and the file is not reviewed on
 any schedule. **Worth reading occasionally and pruning.** A rule granted in
 March is still live in December.
 
-### 4. Elevation multiplies everything above
+### 5. Elevation multiplies everything above
 
 If the server is started from an elevated shell, every command it runs inherits
 administrator rights. Starting it from an ordinary terminal costs nothing and
 removes a whole tier of possible damage. Check the window title.
 
-### 5. The dev server is a separate door
+### 6. The dev server is a separate door
 
 Vite on 5173 does not share the API's authentication. It once served the entire
 repository to anything on the LAN, including a different project's client

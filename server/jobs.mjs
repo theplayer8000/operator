@@ -122,6 +122,58 @@ const MAX_STDOUT_BYTES = 4_000_000;
   A number that looks like plan usage but only counts one client is worse than no
   number at all.
 */
+/*
+  The standing permission profile. The owner's decision, 2026-08-01.
+
+  **Everything except `git push` and deleting files**, applied to every job
+  rather than chosen per job. His reasoning was practical: a grant-per-command
+  flow meant forty taps to make one change, and the exact-rule list had grown to
+  69 entries of single-use rules that never expire — which is worse security
+  than a considered standing profile, not better.
+
+  Two exceptions, and they are the two that are hard to take back. Publishing to
+  GitHub is public and permanent; deleting is unrecoverable, and this project has
+  no undo (OPS-020). Everything else — reading, editing anywhere including
+  `server/`, running builds, committing — is recoverable from git.
+
+  **When Claude hits one of these it must not retry.** It writes the exact
+  command down for the owner to run himself, which is what APPEND_PROMPT below
+  instructs. That keeps the two irreversible actions as deliberate human ones
+  without turning the other ninety-eight percent of the work into tapping.
+
+  Per-job profiles remain possible — these are CLI flags, so they can vary per
+  spawn — but he asked for one standing setting and that is what this is.
+  Narrow it with OPERATOR_JOB_DENY if a setup ever wants less.
+*/
+const DENIED_TOOLS = (
+  process.env.OPERATOR_JOB_DENY ??
+  [
+    "Bash(git push:*)",
+    "Bash(rm:*)",
+    "Bash(rmdir:*)",
+    "Bash(del:*)",
+    "PowerShell(Remove-Item:*)",
+  ].join(",")
+)
+  .split(",")
+  .map((t) => t.trim())
+  .filter(Boolean);
+
+/**
+ * Told to the model, because a refusal it cannot act on is a dead end.
+ *
+ * Print mode cannot stop and ask, so hitting a denied tool ends the turn. The
+ * owner asked that it leave him the command instead of retrying — he runs the
+ * two irreversible ones by hand.
+ */
+const APPEND_PROMPT = [
+  "You are running inside Operator, headless. You cannot be asked for approval mid-turn.",
+  `The following are denied and will never succeed: ${DENIED_TOOLS.join(", ")}.`,
+  "If your work needs one of them, DO NOT retry it and do not try to reach it another way.",
+  "Finish everything else, then write the exact command out for the owner to run in Operator's",
+  "terminal himself, and note it in docs/handoffs/CURRENT.md so it survives a restart.",
+].join(" ");
+
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
 /** Assume a turn costs at least this, when nothing has run yet to measure. */
 const MIN_RESERVE_USD = 0.5;
@@ -430,6 +482,29 @@ async function runTurn(job) {
     prompt,
     "--model",
     job.model,
+    /*
+      The standing profile — see DENIED_TOOLS.
+
+      `bypassPermissions` reads alarmingly and is the correct mode here, but
+      **only because the deny list is what actually holds the line**, and that
+      was measured rather than assumed:
+
+        dontAsk            → git push denied, and a plain file write ALSO denied.
+                             It means "never prompt, so anything not explicitly
+                             allowed fails" — the opposite of what it sounds
+                             like, and it would have made every job useless.
+        bypassPermissions  → git push denied (1 denial), file write succeeded
+                             (0 denials). Both verified 2026-08-01.
+
+      So the deny list survives bypass. If a future version of Claude Code stops
+      honouring --disallowedTools under this mode, this becomes an unrestricted
+      agent silently — re-run those two checks after any Claude Code upgrade.
+    */
+    "--permission-mode",
+    "bypassPermissions",
+    ...(DENIED_TOOLS.length ? ["--disallowedTools", ...DENIED_TOOLS] : []),
+    "--append-system-prompt",
+    APPEND_PROMPT,
     "--output-format",
     "stream-json",
     // Not optional. Claude Code refuses `--output-format stream-json` under

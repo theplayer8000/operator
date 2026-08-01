@@ -468,10 +468,25 @@ guessing; guessing is the failure mode this list exists to prevent.
 **Before building any of the AI workspace** (see
 [`docs/ai-workspace-design.md`](docs/ai-workspace-design.md)):
 
-1. **Job history** — should completed jobs survive a server restart, or is a live
-   view enough? Persisting means a storage slice and a retention rule.
-2. **Permission profiles** — which bundles are actually wanted? "Edit `src/`",
-   "run builds", "anything except git push" are guesses, not requirements.
+1. **Job history — DECIDED, and built.** Tabs survive a restart with their
+   Claude session; event logs do not, and the UI says so. `data/jobs.json`.
+2. **Permission profiles — DECIDED 2026-08-01.** One standing profile on every
+   job: **everything except `git push` and deleting files.** Implemented in
+   `server/jobs.mjs` as `--permission-mode bypassPermissions` plus a
+   `--disallowedTools` list, which was measured to hold — see the note there,
+   and re-run those two checks after any Claude Code upgrade.
+
+   The two exceptions are the two that are hard to take back: publishing is
+   public and permanent, deleting is unrecoverable and this project has no undo
+   (**OPS-020**). Everything else is recoverable from git.
+
+   **When Claude hits one, it must not retry** — it writes the exact command out
+   for the owner to run in the terminal himself and notes it in `CURRENT.md`.
+   That is appended to its system prompt, not left to chance.
+
+   Chosen over grant-per-command because that had produced 69 single-use rules
+   that never expire, which is worse security than a considered standing
+   profile, not better.
 3. **Concurrency** — one job at a time, or several? One matches a single user on
    a phone; several matters if a long build should run while he asks something
    else.
