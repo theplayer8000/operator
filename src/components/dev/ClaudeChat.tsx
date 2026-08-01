@@ -1,223 +1,260 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { MessageSquare, Send, Plus, ShieldAlert, Loader2, Ban, Check, Power } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  MessageSquare,
+  Send,
+  Plus,
+  ShieldAlert,
+  Loader2,
+  Check,
+  Power,
+  Square,
+  Wrench,
+  FileText,
+  History,
+} from "lucide-react";
 import Markdown from "@/components/ui/Markdown";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  at: string;
-  error?: boolean;
-  costUsd?: number | null;
-  durationMs?: number | null;
-  model?: string;
-  denials?: Denial[];
-}
-
-interface Denial {
-  tool: string;
-  subject: string;
-  description: string;
-  rule: string;
-}
-
-interface ChatState {
-  provider?: string;
-  model?: string;
-  models?: { id: string; label: string }[];
-  sessionId?: string | null;
-  busy: boolean;
-  turns?: number;
-  lastError?: string | null;
-  latest?: number;
-  messages: ChatMessage[];
-  authorised?: boolean;
-  canManage?: boolean;
-  reason?: string;
-}
+import ConfirmButton from "@/components/ui/ConfirmButton";
+import { useJobs, type JobEvent, type JobSummary } from "@/hooks/useJobs";
 
 /**
- * A conversation with Claude Code that survives between messages.
+ * The Claude workspace.
  *
- * The terminal above runs one-shot commands; every `claude -p` there is a fresh
- * session that remembers nothing. This keeps the `session_id` Claude returns and
- * passes it back, so the owner can hand off from a session at his desk and carry
- * on from his phone — which is the whole point of the Embedded Claude Workspace.
+ * Each conversation is a **job** with an append-only event log, so this shows
+ * two things the old chat couldn't: a strip of jobs to switch between, and what
+ * Claude is doing *while* it does it — which file it read, which command it
+ * ran. Ten minutes of "Claude is working…" is a spinner; ten minutes of watching
+ * it read three files and run a build is information.
  *
- * Polls rather than streams, for the reason established by the terminal: stream
- * readers deliver nothing on the owner's iPhone, and a reply that silently never
- * appears is worse than a slow one. Polls only while a turn is in flight.
+ * Polls rather than streams, for the reason the terminal established: stream
+ * readers deliver nothing on the owner's iPhone, and a reply that silently
+ * never appears is worse than a slow one.
  */
-export default function ClaudeChat() {
-  const [state, setState] = useState<ChatState | null>(null);
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const sinceRef = useRef(0);
-  const inFlightRef = useRef(false);
-  const [allowed, setAllowed] = useState<Record<string, string>>({});
 
-  const poll = useCallback(async () => {
+const STATUS_TONE: Record<string, string> = {
+  running: "text-xp",
+  queued: "text-rank",
+  complete: "text-ink-500",
+  failed: "text-vital-down",
+  blocked: "text-vital-down",
+  cancelled: "text-ink-700",
+};
+
+function ago(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
+  return `${Math.round(ms / 86_400_000)}d ago`;
+}
+
+/** One event, rendered in the register its type deserves. */
+function Event({
+  event,
+  onAllow,
+  grants,
+}: {
+  event: JobEvent;
+  onAllow: (rule: string) => void;
+  grants: Record<string, string>;
+}) {
+  switch (event.type) {
+    case "prompt":
+      return (
+        <div className="flex justify-end">
+          <div className="max-w-[85%] rounded-badge bg-base-700/50 border border-base-600 px-3 py-2 text-sm text-ink-100 whitespace-pre-wrap break-words">
+            {event.text}
+          </div>
+        </div>
+      );
+
+    case "text":
+      return (
+        <div
+          className={`text-sm leading-relaxed break-words ${
+            event.error ? "text-vital-down" : "text-ink-300"
+          }`}
+        >
+          {event.raw ? (
+            <pre className="font-mono text-[11px] whitespace-pre-wrap">{event.text}</pre>
+          ) : (
+            <Markdown text={event.text ?? ""} />
+          )}
+        </div>
+      );
+
     /*
-      Two polls must never be in flight at once.
-
-      Without this guard every message appeared two or three times on the
-      owner's phone — React's StrictMode fires the mount effect twice, both
-      polls read `sinceRef` before either had advanced it, and each appended the
-      whole transcript. The screenshot showed one question and one answer
-      rendered twice over, which also reads as being charged twice.
+      Tool activity is the point of the job model, but it is not the reply — so
+      it reads as a margin note rather than as something Claude said. Dense,
+      monospaced, one line each.
     */
-    if (inFlightRef.current) return null;
-    inFlightRef.current = true;
-    try {
-      const res = await fetch(`/api/chat?since=${sinceRef.current}`, {
-        headers: { accept: "application/json" },
-      });
-      if (res.status === 401) {
-        setError("This device isn't authorised. Open Operator on the Tailscale address.");
-        return null;
-      }
-      const body = (await res.json()) as ChatState;
-      if (body.latest) sinceRef.current = body.latest;
-      setState((prev) => {
-        // Append what's new, then de-duplicate by id. The guard above prevents
-        // the common case; this makes a repeat impossible rather than unlikely,
-        // which matters because the failure is silent and looks like a charge.
-        const byId = new Map<string, ChatMessage>();
-        for (const m of [...(prev?.messages ?? []), ...(body.messages ?? [])]) {
-          byId.set(m.id, m);
-        }
-        return { ...body, messages: [...byId.values()] };
-      });
-      return body;
-    } catch (err) {
-      setError((err as Error).message);
+    case "tool_use":
+      return (
+        <div className="flex items-start gap-2 text-[11px] font-mono text-ink-700">
+          <Wrench size={11} className="mt-0.5 shrink-0 text-rank" />
+          <span className="text-ink-500">{event.tool}</span>
+          <span className="truncate">{event.subject}</span>
+        </div>
+      );
+
+    case "tool_result":
+      if (!event.text?.trim()) return null;
+      return (
+        <details className="text-[11px] font-mono text-ink-700 ml-[19px]">
+          <summary className={`cursor-pointer ${event.ok ? "text-ink-700" : "text-vital-down"}`}>
+            {event.ok ? "result" : "error"} · {event.text.split("\n").length} lines
+          </summary>
+          <pre className="mt-1 p-2 rounded-badge bg-base-950/60 border border-base-600 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
+            {event.text}
+          </pre>
+        </details>
+      );
+
+    /*
+      A denial is the one event that needs an action, so it is the one event
+      that looks like a card. Print mode can't stop and ask — the alternative is
+      the owner reading a refusal with no way to answer it from a phone.
+    */
+    case "permission_request": {
+      const rule = event.rule ?? "";
+      const state = grants[rule];
+      return (
+        <div className="rounded-badge border border-vital-down/30 bg-vital-down/5 p-3 space-y-2">
+          <div className="flex items-center gap-2 text-xs text-vital-down">
+            <ShieldAlert size={13} className="shrink-0" />
+            Needed permission — it couldn&apos;t ask, so it stopped
+          </div>
+          <p className="text-xs text-ink-500 break-words">
+            <span className="font-mono text-ink-300">{event.tool}</span>
+            {event.subject ? <span className="font-mono"> — {event.subject}</span> : null}
+          </p>
+          <p className="text-[11px] font-mono text-ink-700 break-all">rule: {rule}</p>
+          {state === "allowed" || state === "already allowed" ? (
+            <p className="flex items-center gap-1.5 text-xs text-vital-up">
+              <Check size={13} /> {state} — send again to retry
+            </p>
+          ) : (
+            <button
+              onClick={() => onAllow(rule)}
+              disabled={state === "working"}
+              className="min-h-[44px] px-3 rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 disabled:opacity-50 transition-colors"
+            >
+              {state === "working" ? "Writing…" : "Allow this"}
+            </button>
+          )}
+          {state && !["working", "allowed", "already allowed"].includes(state) && (
+            <p className="text-xs text-vital-down">{state}</p>
+          )}
+        </div>
+      );
+    }
+
+    case "status":
+      // Only the ends of a turn are worth a line; "running" is already obvious
+      // from the spinner in the header.
+      if (event.status === "running" || event.status === "queued") return null;
+      return (
+        <p className={`text-[11px] font-mono ${STATUS_TONE[event.status ?? ""] ?? "text-ink-700"}`}>
+          {event.status}
+          {event.detail ? ` — ${event.detail}` : ""}
+        </p>
+      );
+
+    case "usage":
+      return (
+        <p
+          className="text-[11px] font-mono text-ink-700"
+          title="Claude Code reports this as the API-equivalent cost. On a subscription it is plan usage, not a charge."
+        >
+          {(event.turnUsd ?? 0).toFixed(4)} this turn · {(event.jobUsd ?? 0).toFixed(4)} this job
+        </p>
+      );
+
+    default:
       return null;
-    } finally {
-      inFlightRef.current = false;
-    }
-  }, []);
+  }
+}
+
+function Tab({
+  job,
+  active,
+  running,
+  onSelect,
+}: {
+  job: JobSummary;
+  active: boolean;
+  running: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={`shrink-0 flex items-center gap-2 h-9 px-3 rounded-badge border text-xs transition-colors ${
+        active
+          ? "border-xp/40 bg-xp/10 text-xp"
+          : "border-base-600 text-ink-500 hover:text-ink-100 hover:border-base-500"
+      }`}
+    >
+      {running ? (
+        <Loader2 size={12} className="animate-spin shrink-0" />
+      ) : job.restored ? (
+        <span title="From before a restart — Claude still remembers, the log doesn't">
+          <History size={12} className="shrink-0 text-ink-700" />
+        </span>
+      ) : null}
+      <span className="max-w-[140px] truncate">{job.title}</span>
+      {job.queued > 0 && <span className="font-mono text-[10px] text-rank">+{job.queued}</span>}
+    </button>
+  );
+}
+
+export default function ClaudeChat() {
+  const j = useJobs();
+  const [draft, setDraft] = useState("");
+  const [grants, setGrants] = useState<Record<string, string>>({});
+  const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void poll();
-  }, [poll]);
-
-  // Only poll while Claude is actually working. An idle chat shouldn't tick.
-  useEffect(() => {
-    if (!state?.busy) return;
-    const timer = setInterval(() => void poll(), 1500);
-    return () => clearInterval(timer);
-  }, [state?.busy, poll]);
-
-  useEffect(() => {
-    const el = listRef.current;
+    const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [state?.messages.length, state?.busy]);
+  }, [j.events.length, j.busy]);
 
-  async function send() {
+  async function submit() {
     const text = draft.trim();
-    if (!text || state?.busy) return;
+    if (!text) return;
     setDraft("");
-    setError(null);
-    try {
-      const res = await fetch("/api/chat/send", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { reason?: string; error?: string };
-        setError(body.reason ?? body.error ?? `server returned ${res.status}`);
-        return;
-      }
-      // No optimistic copy: the server records the user message synchronously
-      // before spawning, so one poll shows it with the server's own id. A local
-      // placeholder would carry a fake id that can't de-duplicate against it —
-      // which is exactly how the triple-render happened.
-      setState((prev) => (prev ? { ...prev, busy: true } : prev));
-      await poll();
-    } catch (err) {
-      setError((err as Error).message);
-    }
+    if (j.selectedId) await j.send(j.selectedId, text);
+    else await j.create(text);
   }
 
-  /**
-   * Write the rule that would have permitted a blocked tool.
-   *
-   * Print mode can't stop and ask, so a denial is otherwise a dead end from a
-   * phone — the approval prompt Claude refers to only exists in an interactive
-   * terminal at the desk. This writes the same rule that prompt would, to the
-   * same file. Nothing new is granted: an authorised device can already run
-   * anything through the terminal.
-   */
   async function allow(rule: string) {
-    setAllowed((prev) => ({ ...prev, [rule]: "working" }));
+    setGrants((p) => ({ ...p, [rule]: "working" }));
     try {
-      const res = await fetch("/api/chat/allow", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rule }),
-      });
-      const body = (await res.json()) as { added?: boolean; error?: string; reason?: string };
-      setAllowed((prev) => ({
-        ...prev,
-        [rule]: res.ok ? (body.added ? "allowed" : (body.reason ?? "already allowed")) : (body.error ?? "failed"),
-      }));
+      const outcome = await j.allowRule(rule);
+      setGrants((p) => ({ ...p, [rule]: outcome }));
     } catch (err) {
-      setAllowed((prev) => ({ ...prev, [rule]: (err as Error).message }));
+      setGrants((p) => ({ ...p, [rule]: (err as Error).message }));
     }
   }
 
-  /**
-   * Arm from here as well as from the terminal panel.
-   *
-   * They share one flag server-side, but the chat now lives on its own page —
-   * sending someone to a different page to switch on the thing they are looking
-   * at is the same mistake as requiring an env var at the machine.
-   */
   async function arm() {
-    setError(null);
     await fetch("/api/terminal/enable", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled: true }),
     }).catch(() => {});
-    await poll();
+    await j.refreshList();
   }
 
-  async function chooseModel(id: string) {
-    setState((prev) => (prev ? { ...prev, model: id } : prev));
-    await fetch("/api/chat/model", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: id }),
-    }).catch(() => {});
-    await poll();
-  }
-
-  async function startNew() {
-    setError(null);
-    await fetch("/api/chat/new", { method: "POST" }).catch(() => {});
-    sinceRef.current = 0;
-    setState(null);
-    await poll();
-  }
-
-  const notAuthorised = state !== null && state.authorised === false;
-  // Listed but disarmed is fixable from here; not listed is not.
-  const canArm = notAuthorised && state?.canManage === true;
-
+  const notAuthorised = j.list !== null && !j.authorised;
+  const running = j.selectedId !== null && j.runningId === j.selectedId;
   /*
-    Ghost the owner's resume phrase into an empty, armed conversation.
-
     "resume operator build" is a documented trigger in CLAUDE.md — it makes a
     cold session read the design doc and the latest handoff and ask the open
-    decisions before touching anything. A phrase that only works if you
-    remember it is a phrase that stops getting used, and the start of a fresh
-    conversation is the one moment it is the right thing to type. It vanishes
-    as soon as there is any history, because by then it is the wrong advice.
+    decisions before touching anything. A phrase that only works if you remember
+    it stops getting used, and an empty workspace is the one moment it is the
+    right thing to type.
   */
-  const fresh = state?.authorised !== false && (state?.messages?.length ?? 0) === 0;
+  const fresh = j.authorised && j.jobs.length === 0;
 
   return (
     <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
@@ -228,43 +265,40 @@ export default function ClaudeChat() {
             <h2 className="font-display text-sm font-medium text-ink-300">Claude</h2>
             <p className="text-xs text-ink-700 truncate">
               {notAuthorised
-                ? state?.reason
-                : state?.sessionId
-                  ? `${state.turns} turn${state.turns === 1 ? "" : "s"} · session ${state.sessionId.slice(0, 8)}`
-                  : "New conversation"}
+                ? j.reason
+                : j.selected
+                  ? `${j.selected.turns} turn${j.selected.turns === 1 ? "" : "s"}` +
+                    (j.selected.sessionId ? ` · session ${j.selected.sessionId.slice(0, 8)}` : "") +
+                    ` · ${ago(j.selected.createdAt)}`
+                  : "No conversations yet"}
             </p>
           </div>
         </div>
         {!notAuthorised && (
-          <button
-            onClick={() => void startNew()}
-            aria-label="Start a new conversation"
-            title="Start a new conversation"
-            className="flex items-center gap-1.5 px-3 min-h-[44px] shrink-0 rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
-          >
-            <Plus size={14} />
-            {/* Labelled at every width. As a bare "+" on a phone nobody can
-                tell whether it adds a message, a file, or wipes the thread. */}
-            New chat
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {j.jobs.length > 0 && (
+              <ConfirmButton onConfirm={() => void j.clearAll()} label="Clear all conversations" compact />
+            )}
+            <button
+              onClick={() => j.startNew()}
+              className="flex items-center gap-1.5 px-3 min-h-[44px] rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
+            >
+              <Plus size={14} />
+              New chat
+            </button>
+          </div>
         )}
       </header>
 
       {notAuthorised && (
-        <div className="p-3 rounded-badge border border-xp/30 bg-xp/5">
-          <p className="flex items-start gap-2 text-xs text-ink-300 leading-relaxed mb-3">
-            <ShieldAlert size={14} className="text-xp shrink-0 mt-0.5" />
-            <span>
-              {state?.reason}. Chat runs Claude Code with tool access, so it sits behind the same
-              gate as the terminal — being a known device gets you Operator, not a shell.
-            </span>
-          </p>
-          {canArm && (
+        <div className="rounded-badge border border-base-600 bg-base-700/30 p-3 text-sm text-ink-500 leading-relaxed">
+          {j.reason}
+          {j.canManage && (
             <button
               onClick={() => void arm()}
-              className="flex items-center gap-2 px-3 min-h-[44px] rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 transition-colors"
+              className="mt-3 flex items-center gap-2 min-h-[44px] px-3 rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 transition-colors"
             >
-              <Power size={14} /> Arm it
+              <Power size={14} /> Arm it for this session
             </button>
           )}
         </div>
@@ -272,147 +306,129 @@ export default function ClaudeChat() {
 
       {!notAuthorised && (
         <>
-          {(state?.messages.length ?? 0) > 0 && (
-            <div
-              ref={listRef}
-              className="space-y-3 max-h-96 overflow-auto mb-3 pr-1"
-            >
-              {state?.messages.map((m) => (
-                <div key={m.id} className={m.role === "user" ? "text-right" : ""}>
-                  <span
-                    className={`inline-block max-w-[92%] text-left px-3 py-2 rounded-badge text-sm leading-relaxed break-words ${
-                      m.role === "user"
-                        ? "bg-base-700/60 text-ink-100 whitespace-pre-wrap"
-                        : m.error
-                          ? "border border-vital-down/40 bg-vital-down/10 text-vital-down whitespace-pre-wrap"
-                          : "border border-base-600 text-ink-300"
-                    }`}
-                  >
-                    {/* Only Claude's replies are markdown. What the owner typed
-                        is shown exactly as typed — rendering his own asterisks
-                        as bold would be the app editing his words. */}
-                    {m.role === "assistant" && !m.error ? <Markdown text={m.text} /> : m.text}
-                  </span>
-                  {m.role === "assistant" && !m.error && (
-                    <span
-                      className="block text-[10px] font-mono text-ink-700 mt-1"
-                      /* The figure Claude Code reports is the API-equivalent
-                         cost. On a subscription login it is plan usage, not a
-                         charge — showing "$0.4472" next to a reply read as a
-                         bill, so it moves to the tooltip and says what it is. */
-                      title={
-                        m.costUsd != null
-                          ? `≈$${m.costUsd.toFixed(4)} of equivalent API usage — counted against your plan, not billed separately`
-                          : undefined
-                      }
-                    >
-                      {m.durationMs != null && `${(m.durationMs / 1000).toFixed(1)}s`}
-                      {m.model && ` · ${m.model.replace("claude-", "")}`}
-                    </span>
-                  )}
-                  {m.role === "assistant" &&
-                    m.denials?.map((d) => (
-                      <div
-                        key={d.rule}
-                        className="mt-2 p-3 rounded-badge border border-xp/30 bg-xp/5 text-left"
-                      >
-                        <p className="flex items-center gap-1.5 text-[11px] text-xp mb-1">
-                          <Ban size={11} className="shrink-0" />
-                          Needed permission — it couldn&apos;t ask, so it stopped
-                        </p>
-                        <p className="text-xs text-ink-300 mb-1 break-words">
-                          <span className="font-mono text-ink-500">{d.tool}</span>
-                          {d.subject && <span className="font-mono"> — {d.subject}</span>}
-                        </p>
-                        {d.description && (
-                          <p className="text-[11px] text-ink-700 mb-2">{d.description}</p>
-                        )}
-                        <p className="text-[10px] font-mono text-ink-700 mb-2 break-all">
-                          rule: {d.rule}
-                        </p>
-                        {allowed[d.rule] ? (
-                          <p className="flex items-center gap-1.5 text-[11px] text-vital-up">
-                            <Check size={11} />
-                            {allowed[d.rule]} — ask again and it&apos;ll go through
-                          </p>
-                        ) : (
-                          <button
-                            onClick={() => void allow(d.rule)}
-                            className="px-3 min-h-[38px] rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 transition-colors"
-                          >
-                            Allow this
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                </div>
-              ))}
-              {state?.busy && (
-                <p className="flex items-center gap-2 text-xs text-ink-700">
-                  <Loader2 size={13} className="animate-spin" /> Claude is working…
-                </p>
-              )}
-            </div>
-          )}
-
-          {error && <p className="text-xs text-vital-down mb-3 break-words">{error}</p>}
-
-          {(state?.models?.length ?? 0) > 1 && (
-            <div className="flex items-center gap-1.5 mb-2">
-              {state?.models?.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => void chooseModel(m.id)}
-                  disabled={state?.busy}
-                  className={`px-3 min-h-[38px] rounded-badge border text-xs transition-colors ${
-                    state?.model === m.id
-                      ? "border-xp/40 bg-xp/10 text-xp"
-                      : "border-base-600 text-ink-500 hover:text-ink-300"
-                  } disabled:opacity-50`}
-                >
-                  {m.label}
-                </button>
+          {j.jobs.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2 mb-3">
+              {j.jobs.map((job) => (
+                <Tab
+                  key={job.id}
+                  job={job}
+                  active={job.id === j.selectedId}
+                  running={job.id === j.runningId}
+                  onSelect={() => void j.select(job.id)}
+                />
               ))}
             </div>
           )}
+
+          <div
+            ref={logRef}
+            className="space-y-2.5 max-h-[26rem] overflow-y-auto mb-3 pr-1"
+          >
+            {j.selectedId === null ? (
+              <p className="text-sm text-ink-700 leading-relaxed">
+                {j.jobs.length === 0
+                  ? "Nothing yet. Ask it something and it starts a conversation that remembers — pick it up from any of your devices."
+                  : "New conversation. What you send starts a fresh one."}
+              </p>
+            ) : j.events.length === 0 ? (
+              <p className="text-sm text-ink-700">
+                {j.selected?.restored
+                  ? "From before a restart — the log isn't kept, but Claude still remembers. Send a message to carry on."
+                  : "No events yet."}
+              </p>
+            ) : (
+              j.events.map((e) => (
+                <Event key={e.seq} event={e} onAllow={(r) => void allow(r)} grants={grants} />
+              ))
+            )}
+            {running && (
+              <p className="flex items-center gap-2 text-xs text-xp">
+                <Loader2 size={13} className="animate-spin" /> working…
+              </p>
+            )}
+          </div>
+
+          {j.error && <p className="text-xs text-vital-down mb-2 break-words">{j.error}</p>}
 
           <div className="flex items-end gap-2">
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                // Enter sends, Shift+Enter breaks the line — the shape people
-                // already expect from a chat box.
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  void send();
+                  void submit();
                 }
               }}
               rows={2}
               placeholder={fresh ? "resume operator build" : "Ask Claude about this project…"}
-              aria-label="Message for Claude"
               className="flex-1 min-w-0 bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 resize-none transition-colors"
             />
-            <button
-              onClick={() => void send()}
-              disabled={draft.trim() === "" || state?.busy === true}
-              aria-label="Send"
-              title="Send"
-              className="w-11 h-11 shrink-0 rounded-badge border border-xp/40 bg-xp/10 flex items-center justify-center text-xp hover:bg-xp/20 disabled:text-ink-700 disabled:border-base-600 disabled:bg-transparent transition-colors"
+            {running ? (
+              <button
+                onClick={() => void j.cancel(j.selectedId as string)}
+                aria-label="Stop"
+                title="Stop this turn"
+                className="w-11 h-11 shrink-0 rounded-badge border border-vital-down/40 bg-vital-down/10 flex items-center justify-center text-vital-down hover:bg-vital-down/20 transition-colors"
+              >
+                <Square size={14} />
+              </button>
+            ) : (
+              <button
+                onClick={() => void submit()}
+                disabled={!draft.trim()}
+                aria-label="Send"
+                className="w-11 h-11 shrink-0 rounded-badge border border-xp/40 bg-xp/10 flex items-center justify-center text-xp hover:bg-xp/20 disabled:text-ink-700 disabled:border-base-600 disabled:bg-transparent transition-colors"
+              >
+                <Send size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 mt-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+              {j.models.map((m) => {
+                const active = (j.selected?.model ?? j.defaultModel) === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => j.selectedId && void j.setModel(j.selectedId, m.id)}
+                    disabled={!j.selectedId || running}
+                    className={`shrink-0 px-2.5 h-8 rounded-badge border text-[11px] transition-colors disabled:opacity-40 ${
+                      active
+                        ? "border-xp/40 bg-xp/10 text-xp"
+                        : "border-base-600 text-ink-700 hover:text-ink-300"
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p
+              className="shrink-0 text-[11px] font-mono text-ink-700"
+              title="Operator's own usage only — this cannot see your plan percentage."
             >
-              {state?.busy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-            </button>
+              {j.spentUsd.toFixed(3)}
+              {j.budgetUsd ? ` / ${j.budgetUsd}` : ""}
+            </p>
           </div>
 
           <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
             Runs Claude Code against this project and remembers across messages — the same
             conversation you can pick up at the desk. It has tool access, so it can read and change
-            files, but it <strong className="font-normal text-ink-500">can&apos;t stop and ask you
-            anything</strong>: print mode is one-way. When it needs a permission it stops and tells
-            you which one — tap Allow to write that rule to{" "}
-            <span className="font-mono">.claude/settings.local.json</span> and ask again. Transcript is in memory; Claude
-            keeps the real session, so &ldquo;New chat&rdquo; starts a fresh one rather than
-            deleting anything.
+            files, but it{" "}
+            <strong className="font-normal text-ink-500">can&apos;t stop and ask you anything</strong>
+            : print mode is one-way. When it needs a permission it stops and tells you which one —
+            tap Allow to write that rule to{" "}
+            <span className="font-mono">.claude/settings.local.json</span>, then send again.
+            Conversations survive a restart; the event log doesn&apos;t, but Claude&apos;s own
+            session does, so a restored one carries on where it left off.
+          </p>
+
+          <p className="flex items-center gap-1.5 text-[11px] text-ink-700 mt-1.5">
+            <FileText size={11} className="shrink-0" />
+            One job runs at a time — a second is queued rather than run alongside.
           </p>
         </>
       )}

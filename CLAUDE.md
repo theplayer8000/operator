@@ -391,6 +391,31 @@ without being asked; localStorage can't hold binary files at any real size
 anyway, so this will need real design thought when it's actually built
 (likely just storing filenames/links, not file contents).
 
+## Every piece of work keeps a live handoff — write it as you go
+
+**Rule:** any session doing real work on Operator — this one, or Claude running
+inside Operator — keeps [`docs/handoffs/CURRENT.md`](docs/handoffs/CURRENT.md)
+up to date **as it works**, not at the end.
+
+Why this is a rule rather than a nicety: restarting the server is now a normal
+part of editing Operator (see the two rules above), and a restart **destroys the
+event log**. Claude Code's own session survives, so the model still remembers —
+but the app shows an empty thread, and if the session is ever lost too, the work
+is unreconstructible. A file on disk survives both.
+
+Update it:
+
+- when starting a piece of work — what and why,
+- after anything lands — what changed, what is verified, what isn't,
+- **before asking for a restart**, always. That is the moment it exists for.
+
+Keep it short and current. It is a working note, not a record: overwrite it
+rather than appending a log. When the work reaches a milestone, fold it into a
+dated handoff in the same folder and reset `CURRENT.md` to the empty template.
+
+If it is empty or stale, say so rather than guessing — a confident summary
+reconstructed from the diff is worse than "the last session left no note".
+
 ## "resume operator build" — the owner's resume phrase
 
 When he types **"resume operator build"** (or close to it), treat it as a
@@ -398,7 +423,9 @@ request to do this before anything else:
 
 1. Read [`docs/ai-workspace-design.md`](docs/ai-workspace-design.md) — the
    proposed structure and why the current one is shaped the way it is.
-2. Read the newest file in [`docs/handoffs/`](docs/handoffs/).
+2. Read [`docs/handoffs/CURRENT.md`](docs/handoffs/CURRENT.md) — work in
+   progress, possibly mid-restart — then the newest dated file in
+   [`docs/handoffs/`](docs/handoffs/).
 3. Ask the open decisions in the next section. Don't guess them.
 4. Then start at the design doc's next unbuilt step.
 
