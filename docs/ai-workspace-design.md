@@ -59,7 +59,34 @@ The owner's **Work Queue Framework** queue item already describes this: *Pending
 Running, Review, Complete, Failed*. That is this object. Building the job model
 here is building that item, not a detour around it.
 
-### 2. Permissions answered in-turn (fixes ②)
+### 2. Permissions answered in-turn — **NOT POSSIBLE via the CLI**
+
+> **Corrected 2026-08-01, by measurement.** Everything below this box was
+> written before the mechanism was tested, and the central claim is wrong.
+>
+> `--input-format stream-json` does **not** make permissions answerable. Probed
+> with `--permission-mode manual`: Claude requested `Bash(git push --dry-run)`,
+> emitted an assistant message saying *"The command requires your approval to
+> run"*, and the turn **ended** with `result/success`. The complete set of event
+> types on stdout was `system/init`, `rate_limit_event`, `assistant`, `user`,
+> `system/post_turn_summary`, `result` — no control request, no request id,
+> nothing to reply to. This version of the CLI has no `--permission-prompt-tool`
+> either.
+>
+> The `canUseTool` callback people mean by this lives in the **Claude Agent
+> SDK**, a different package. Reaching it means adopting that SDK — a dependency
+> decision under `CLAUDE.md`'s stack rule, not a flag change.
+>
+> **What step 2 does still buy:** file and image uploads (user content blocks
+> accept them), and one process per job instead of a respawn-and-`--resume` per
+> turn. Those are worth having — uploads were an original ask — but they are the
+> reason to do it. In-turn permissions are not.
+>
+> A denial therefore remains a dead end that ends the turn, and the
+> report-the-rule-and-offer-a-grant flow stays the answer until the SDK question
+> is taken deliberately.
+
+### 2 (as originally proposed — superseded by the box above)
 
 `claude -p` is one-shot, so a permission request ends the turn — which is why the
 current chat can only report a denial and offer to write a rule for next time.
