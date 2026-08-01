@@ -316,6 +316,21 @@ function pump() {
       continue;
     }
     waiting.shift();
+    /*
+      Claim the runner HERE, synchronously, not inside runTurn.
+
+      runTurn awaits `resolveExecutable` before it sets `runningId`, so the
+      guard at the top of this function and the assignment were separated by a
+      microtask. Two calls into pump() in that window — two devices sending at
+      once, or an input() racing the deferred re-pump — both saw a free runner
+      and both spawned. Two `claude -p` processes editing the same repo is
+      precisely what one-at-a-time exists to prevent, and it would have been
+      near-impossible to diagnose from the symptoms.
+
+      Claiming before any await closes it: JavaScript runs this to completion
+      before another call can observe it.
+    */
+    runningId = job.id;
     void runTurn(job);
     return;
   }
@@ -339,7 +354,12 @@ async function runTurn(job) {
     `await`, so a direct call would re-enter `pump()` from inside its own frame,
     once per queued job.
   */
-  const restartQueue = () => queueMicrotask(pump);
+  const restartQueue = () => {
+    // pump() claims the runner before calling us, so an exit before spawning
+    // has to hand it back or nothing ever runs again.
+    if (runningId === job.id) runningId = null;
+    queueMicrotask(pump);
+  };
 
   const blocked = budgetBlock();
   if (blocked) {
@@ -363,7 +383,7 @@ async function runTurn(job) {
     return;
   }
 
-  runningId = job.id;
+  // `runningId` was claimed by pump() before this ran — see the note there.
   job.startedAt = job.startedAt ?? new Date().toISOString();
   job.error = null;
   setStatus(job, "running");
@@ -425,9 +445,24 @@ async function runTurn(job) {
 
     proc.stdout.on("data", (chunk) => {
       touch();
-      if (bytes > MAX_STDOUT_BYTES) return;
       bytes += Buffer.byteLength(chunk, "utf8");
       buffer += chunk;
+      /*
+        Never stop parsing. This used to `return` once the total exceeded
+        MAX_STDOUT_BYTES, which silently discarded every later line — including
+        the final `result`, the one that carries the session id, the cost, and
+        the fact that the turn finished at all. A long but perfectly successful
+        turn would then be reported as failed, with no clue why.
+
+        Total volume is not the memory risk, because lines are consumed as they
+        arrive. The only unbounded case is a single line that never terminates,
+        so that is what is capped instead — and it is dropped whole rather than
+        sliced, since half a JSON document parses as nothing useful anyway.
+      */
+      if (buffer.length > MAX_STDOUT_BYTES) {
+        buffer = "";
+        emit(job, "text", { text: "[a line of output was too long and was dropped]", raw: true });
+      }
       // NDJSON: one complete JSON document per line. The last fragment stays in
       // the buffer until its newline arrives.
       let nl;
@@ -450,7 +485,9 @@ async function runTurn(job) {
       settled = true;
       clearTimeout(idle);
       job.proc = null;
-      runningId = null;
+      // Only if it is still ours. A late exit from an earlier job would
+      // otherwise unlock the runner while a different one is mid-turn.
+      if (runningId === job.id) runningId = null;
 
       // A trailing line with no newline still counts.
       const tail = buffer.trim();
@@ -703,11 +740,17 @@ export function input(id, body, identity) {
   if (!job) throw new Error("no such job");
 
   if (body?.type === "cancel") {
+    /*
+      Drop the queue either way. Killing the child only ends the turn that is
+      running; anything already queued on this job would start the moment the
+      process exits and pump() runs again — so pressing Stop launched the next
+      turn instead of stopping. Stop means stop.
+    */
+    job.pending.length = 0;
     if (job.proc) {
       setStatus(job, "cancelled", "stopped from the app");
       job.proc.kill();
     } else {
-      job.pending.length = 0;
       setStatus(job, "cancelled", "stopped before it started");
     }
     return summary(job);
