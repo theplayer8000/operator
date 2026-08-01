@@ -325,6 +325,22 @@ async function runTurn(job) {
   const prompt = job.pending.shift();
   if (prompt === undefined) return;
 
+  /*
+    Both early exits below have to restart the queue themselves.
+
+    `pump()` has already shifted this job off `waiting` by the time it calls us,
+    and it only runs again when something completes. Returning here without
+    re-pumping leaves the queue stalled: `runningId` was never set, so it is not
+    a deadlock, but every other queued job sits there until someone happens to
+    send another message. One job failing to start must not silently stop the
+    rest.
+
+    Deferred rather than called directly. The budget check runs before any
+    `await`, so a direct call would re-enter `pump()` from inside its own frame,
+    once per queued job.
+  */
+  const restartQueue = () => queueMicrotask(pump);
+
   const blocked = budgetBlock();
   if (blocked) {
     job.error = blocked;
@@ -332,6 +348,10 @@ async function runTurn(job) {
     // Put it back: raising the ceiling and restarting should not lose what he
     // typed. It is in the event log either way.
     job.pending.unshift(prompt);
+    // Deliberately not re-queued into `waiting` — it would be picked up, blocked
+    // and re-queued forever. The prompt survives in `pending`, so the next
+    // message he sends runs both.
+    restartQueue();
     return;
   }
 
@@ -339,6 +359,7 @@ async function runTurn(job) {
   if (!resolved) {
     job.error = "couldn't find Claude Code on this machine — set OPERATOR_TERMINAL_BIN_CLAUDE";
     setStatus(job, "failed", job.error);
+    restartQueue();
     return;
   }
 
