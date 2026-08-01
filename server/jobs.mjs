@@ -52,6 +52,28 @@ import { resolveExecutable } from "./terminal.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/*
+  Where Claude works — deliberately not necessarily where Operator runs.
+
+  Jobs used to spawn in ROOT, the same checkout serving the app. That is how
+  `main` ended up unable to restart twice in one day: Claude migrated the server
+  half of a change, the frontend half was still in flight, and the tree the
+  running server reads was the tree being edited. There was no moment where a
+  half-finished change was invisible to the thing using it.
+
+  Point `OPERATOR_JOB_CWD` at a git worktree and that stops being possible. The
+  agent commits to its own branch, the app keeps serving `main`, and its work
+  becomes visible only when the branch is merged — the review step that was
+  previously a matter of remembering.
+
+  Unset, it is ROOT and behaves as before, so nothing breaks for a setup that
+  hasn't made a worktree.
+*/
+const JOB_CWD = process.env.OPERATOR_JOB_CWD
+  ? resolve(process.env.OPERATOR_JOB_CWD)
+  : ROOT;
+if (JOB_CWD !== ROOT) console.log(`[operator] jobs will run in ${JOB_CWD}`);
+
 /**
  * Models a job may use. Claude Code takes `--model`, verified returning
  * `modelUsage: ["claude-opus-5"]`, so this is a real switch rather than a label.
@@ -600,7 +622,7 @@ async function runTurn(job) {
     let sawResult = false;
 
     const proc = spawn(resolved.exe, args, {
-      cwd: ROOT,
+      cwd: JOB_CWD,
       shell: false,
       windowsHide: true,
       // No stdin, for the same reason as the terminal: an open pipe nobody

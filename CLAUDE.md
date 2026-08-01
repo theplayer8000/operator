@@ -475,13 +475,38 @@ Restart button do. It is **not** crash recovery: a server that dies
 unexpectedly stays dead, deliberately, and five restarts in thirty seconds stops
 the supervisor with the real error on screen. `npm run serve:once` skips it.
 
-Both URLs come from Tailscale, and `tailscale serve` **replaces** its config
-rather than adding to it — run both or you will silently drop one:
+### Three builds, and Claude edits none of the ones you use
+
+| URL | Serves | Checkout |
+|---|---|---|
+| `https://<host>.<tailnet>.ts.net` | the built app | `main` — what the owner uses |
+| `:8443` | Vite, hot-reloaded | `main` — what he reviews |
+| `:9443` | Vite, hot-reloaded | **`D:/Projects/Operator-agent`, branch `agent`** — what Claude writes |
+
+The third one is the point. `OPERATOR_JOB_CWD` sends every job's `claude`
+process into a **git worktree**, so the agent edits a different checkout to the
+one the running server reads.
+
+Before this, a job editing `server/` changed the tree the live server was
+serving, and a half-finished migration was immediately everyone's problem —
+which is exactly how `main` twice ended up unable to restart. Now its work is
+invisible until the `agent` branch is merged, and that merge is the review step
+that used to depend on remembering.
+
+The worktree shares `.git` (so branches and history are one thing) and its
+`node_modules` is a junction to the main checkout's, so it costs a few MB rather
+than a reinstall.
+
+`tailscale serve` **replaces** its config rather than adding to it — run all
+three or you will silently drop the others:
 
 ```
-tailscale serve --bg 5174              # live, https://<host>.<tailnet>.ts.net
-tailscale serve --bg --https 8443 5173 # dev,  same host on :8443
+tailscale serve --bg 5174              # live
+tailscale serve --bg --https 8443 5173 # dev,   Vite on main
+tailscale serve --bg --https 9443 5175 # agent, Vite on the worktree
 ```
+
+Start the agent's Vite from the worktree: `npx vite --port 5175 --host`.
 
 ## Open decisions waiting on the owner — raise these, don't guess
 
