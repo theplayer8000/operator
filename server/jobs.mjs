@@ -74,6 +74,23 @@ const DEFAULT_MODEL = MODELS[0].id;
 // means stuck, not busy. A two-hour build that keeps talking is fine.
 
 const IDLE_TIMEOUT_MS = Number(process.env.OPERATOR_JOB_IDLE_MS ?? 10 * 60_000) || 10 * 60_000;
+/*
+  A longer window while a tool is still outstanding.
+
+  Silence does not mean stuck if Claude is waiting on something. Under
+  stream-json it emits `tool_use` when a tool starts and then says nothing at
+  all until the result comes back — so a fifteen-minute `npm run build` is
+  fifteen minutes of silence from a completely healthy turn, and the plain idle
+  timeout would kill it at ten. That is the exact workflow this feature exists
+  for, so the timeout has to know the difference.
+
+  Still bounded: a tool that never returns is a hang, it just gets longer to
+  prove otherwise.
+*/
+const TOOL_IDLE_TIMEOUT_MS =
+  Number(process.env.OPERATOR_JOB_TOOL_IDLE_MS ?? 45 * 60_000) || 45 * 60_000;
+/** stderr is kept for the failure message, not as a log. */
+const MAX_STDERR_CHARS = 20_000;
 
 /** Jobs remembered at once. Oldest finished ones are dropped first. */
 const MAX_JOBS = 20;
@@ -90,6 +107,12 @@ const MAX_STDOUT_BYTES = 4_000_000;
   Unset by default, and that is deliberate: a number picked here would be a guess
   at the owner's headroom, and limits are temporarily boosted (Claude Code +50%,
   Cowork +100%) so anything tuned to today is wrong next month.
+
+  **Checking before a turn rather than during it was a proposed default**, not
+  the owner's decision — an earlier session recorded it as his and he has since
+  said it was a suggestion. It stands on its own reasoning: killing a turn
+  mid-edit leaves the repo half-changed, which is worse than overshooting a
+  self-imposed number by one turn.
 
   Read `OPERATOR_USAGE_BUDGET_USD` to arm it.
 
@@ -151,10 +174,14 @@ function indexOf(job) {
   };
 }
 
+let persistSeq = 0;
+
 async function persist() {
   try {
     await mkdir(dirname(JOBS_FILE), { recursive: true });
-    const tmp = `${JOBS_FILE}.tmp`;
+    // Unique per write: two persists overlapping on one shared temp path can
+    // interleave writes and rename a half-written file into place.
+    const tmp = `${JOBS_FILE}.${process.pid}.${++persistSeq}.tmp`;
     // Only jobs with a session are worth restoring — one that never got that far
     // cannot be resumed, so a tab for it would be a dead tab.
     const index = [...jobs.values()].filter((j) => j.sessionId).map(indexOf);
@@ -302,10 +329,16 @@ export function usage() {
 /**
  * Start the next turn if nothing is running.
  *
- * One job at a time, globally. That matches the owner's answer — one person, one
- * Claude — and it also sidesteps two Claudes editing the same file. Batch or
- * parallel jobs are a later question; the queue is the thing that makes it a
- * later question rather than a race.
+ * One job at a time, globally.
+ *
+ * **A proposed default, not the owner's decision.** An earlier session recorded
+ * this as his answer; he has since said it was a suggestion made to him. It is
+ * kept because the reasoning stands on its own — one person driving one Claude,
+ * and two agents editing the same file is a race nobody asked for — and because
+ * it has been used and not objected to. Not because it was decided.
+ *
+ * Batch or parallel jobs remain open. The queue is what makes that a later
+ * question rather than a bug.
  */
 function pump() {
   if (runningId) return;
@@ -384,6 +417,7 @@ async function runTurn(job) {
   }
 
   // `runningId` was claimed by pump() before this ran — see the note there.
+  job.outstandingTools = 0;
   job.startedAt = job.startedAt ?? new Date().toISOString();
   job.error = null;
   setStatus(job, "running");
@@ -434,13 +468,33 @@ async function runTurn(job) {
     idle.unref?.();
     function touch() {
       clearTimeout(idle);
-      idle = setTimeout(onIdle, IDLE_TIMEOUT_MS);
+      idle = setTimeout(onIdle, (job.outstandingTools ?? 0) > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS);
       idle.unref?.();
     }
     function onIdle() {
       if (settled) return;
-      job.error = `no output for ${Math.round(IDLE_TIMEOUT_MS / 60000)} minutes — stopped`;
+      const mins = Math.round(
+        ((job.outstandingTools ?? 0) > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS) / 60000
+      );
+      job.error = `no output for ${mins} minutes — stopped`;
+      stop();
+    }
+
+    /*
+      Ask, then insist.
+
+      A plain kill() is a request the child may ignore, and one that does would
+      hold the runner claim forever — every other job queued behind a process
+      that will not die. On Windows kill() already terminates outright, so this
+      is really for the EPYC move; it costs nothing to have it right now.
+    */
+    function stop() {
+      if (settled) return;
       proc.kill();
+      const hard = setTimeout(() => {
+        if (!settled) proc.kill("SIGKILL");
+      }, 5_000);
+      hard.unref?.();
     }
 
     proc.stdout.on("data", (chunk) => {
@@ -477,7 +531,9 @@ async function runTurn(job) {
 
     proc.stderr.on("data", (d) => {
       touch();
-      stderr += d;
+      // Capped. It exists to explain a failure, and an unbounded string fed by
+      // a chatty process is a memory leak that only shows up on a long run.
+      if (stderr.length < MAX_STDERR_CHARS) stderr += d;
     });
 
     function finish(code, failure) {
@@ -485,6 +541,7 @@ async function runTurn(job) {
       settled = true;
       clearTimeout(idle);
       job.proc = null;
+      job.outstandingTools = 0;
       // Only if it is still ours. A late exit from an earlier job would
       // otherwise unlock the runner while a different one is mid-turn.
       if (runningId === job.id) runningId = null;
@@ -562,6 +619,9 @@ function ingest(job, line) {
         if (block?.type === "text" && block.text?.trim()) {
           emit(job, "text", { text: block.text });
         } else if (block?.type === "tool_use") {
+          // Tracked so the idle timer can tell "waiting on a build" from
+          // "stuck" — see TOOL_IDLE_TIMEOUT_MS.
+          job.outstandingTools = (job.outstandingTools ?? 0) + 1;
           emit(job, "tool_use", {
             tool: block.name,
             // What it is doing, in the terms the owner would use — a command, a
@@ -577,6 +637,7 @@ function ingest(job, line) {
       // Tool results come back as a synthetic user message.
       for (const block of msg.message?.content ?? []) {
         if (block?.type !== "tool_result") continue;
+        job.outstandingTools = Math.max(0, (job.outstandingTools ?? 0) - 1);
         emit(job, "tool_result", {
           ok: block.is_error !== true,
           text: flatten(block.content).slice(0, MAX_RESULT_CHARS),
@@ -696,7 +757,8 @@ export function detail(id, since = 0) {
 /**
  * Who is allowed to send right now.
  *
- * One user on Claude at a time was the owner's answer. While a job is running,
+ * One user on Claude at a time — a proposed default rather than his stated
+ * answer; see the note on the queue above. While a job is running,
  * devices other than the one that started it are read-only — they can watch,
  * which is the desk-to-phone hand-off this whole feature exists for, but they
  * cannot queue work into someone else's session. When nothing is running, any
@@ -741,6 +803,12 @@ export function input(id, body, identity) {
 
   if (body?.type === "cancel") {
     /*
+      **Cancel deliberately skips `assertMine`.** Sending into someone else's
+      running job is refused, but stopping one is not: a runaway has to be
+      killable from whichever device is in your hand, and every device that can
+      reach this is already authorised to run arbitrary commands. Restricting it
+      would protect nothing and strand the person watching it go wrong.
+
       Drop the queue either way. Killing the child only ends the turn that is
       running; anything already queued on this job would start the moment the
       process exits and pump() runs again — so pressing Stop launched the next
@@ -759,6 +827,11 @@ export function input(id, body, identity) {
   const text = String(body?.text ?? "").trim();
   if (!text) throw new Error("nothing to send");
   assertMine(identity);
+
+  // Whoever sends the turn holds it, not whoever opened the tab. `holder()`
+  // reads this to say "busy on X from <device>", and naming the wrong device
+  // makes that message actively misleading on a two-device setup.
+  job.device = identity?.device ?? job.device;
 
   emit(job, "prompt", { text });
   job.pending.push(text);
