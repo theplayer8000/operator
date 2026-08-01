@@ -396,6 +396,25 @@ without being asked; localStorage can't hold binary files at any real size
 anyway, so this will need real design thought when it's actually built
 (likely just storing filenames/links, not file contents).
 
+## Never `git add -A` — two sessions write to this repo now
+
+**Rule:** stage files by name. `git add -A` and `git commit -a` are banned here.
+
+This has gone wrong twice, the same way both times. Claude runs inside Operator
+and edits the working tree; a session at the desk runs `git add -A`, sweeps up
+whatever the agent had in flight, and commits it under a message describing
+something else entirely. `cadccfc` claimed to be a docs commit and carried 867
+lines of unreviewed `server/jobs.mjs` plus a route swap that left `main` unable
+to restart. It had to be reverted.
+
+The tree is shared. A dirty file you did not touch is not noise to sweep up, it
+is someone else's work — and a commit message that does not describe its own
+contents is how it gets lost rather than reviewed.
+
+Before committing, run `git status` and stage what you meant to change. If
+something unexpected is there, read it and decide deliberately: commit it in its
+own commit with its own message, or leave it.
+
 ## Every piece of work keeps a live handoff — write it as you go
 
 **Rule:** any session doing real work on Operator — this one, or Claude running
