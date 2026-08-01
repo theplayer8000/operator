@@ -145,6 +145,29 @@ const MAX_STDOUT_BYTES = 4_000_000;
   spawn — but he asked for one standing setting and that is what this is.
   Narrow it with OPERATOR_JOB_DENY if a setup ever wants less.
 */
+/*
+  The standing profile is **disabled** until the owner decides, because testing
+  it found the deny list is not a boundary.
+
+  Verified 2026-08-01, one attempt each, no adversarial effort:
+
+    git push --dry-run                        -> DENIED   (1 denial)
+    bash -c "git push --dry-run"              -> DENIED   (1 denial)
+    git -C <path> push --dry-run              -> RAN      (0 denials)
+    node -e "fs.unlinkSync(<file>)"           -> RAN, file deleted
+
+  The rule matches the command string, so it stops the forms that begin
+  `git push` and nothing else. The model was not evading — asked to delete a
+  file it simply used node, and even declined an obfuscated version offered to
+  it as unnecessary. **A helpful agent routes around a blacklist by accident**,
+  which is the same lesson that retired the executable allowlist: a list of
+  forbidden spellings is not containment.
+
+  Set OPERATOR_JOB_PROFILE=1 to arm it anyway. Until then jobs run under Claude
+  Code's own defaults, which stop and ask — the behaviour that existed before.
+*/
+const PROFILE_ARMED = process.env.OPERATOR_JOB_PROFILE === "1";
+
 const DENIED_TOOLS = (
   process.env.OPERATOR_JOB_DENY ??
   [
@@ -166,6 +189,52 @@ const DENIED_TOOLS = (
  * owner asked that it leave him the command instead of retrying — he runs the
  * two irreversible ones by hand.
  */
+/**
+ * Whether a denial hit the standing profile, rather than being an ordinary
+ * missing rule.
+ *
+ * **The two are answered completely differently and the UI must not merge
+ * them.** An ordinary denial is one the owner can grant with a button. A
+ * standing one cannot be granted at all: `--disallowedTools` is a deny, deny
+ * beats allow, so writing the rule produces an entry that sits in
+ * `settings.local.json` looking effective and is refused every single time it is
+ * used. That is precisely the "grant that silently does nothing" failure the
+ * Windows path-matching bug caused below — it cost three denied grants to find,
+ * and must not be reintroduced from the other direction.
+ *
+ * It would be the wrong offer even if it worked. The owner's decision is that
+ * publishing and deleting are the two he does himself.
+ *
+ * Matching is prefix-based because the two sides are written differently: the
+ * profile holds patterns (`Bash(git push:*)`) while `describeDenial` generates
+ * the exact command that was refused (`Bash(git push --dry-run)`).
+ *
+ * **A bare prefix, deliberately — no word boundary.** It over-matches: `git
+ * pushup` reads as standing. That is the direction to be wrong in, because the
+ * two mistakes are not equal. Over-matching tells the owner to run something
+ * himself that he could have granted — confusing for one command. Under-matching
+ * puts the grant button back on a refusal the deny list will keep refusing,
+ * which is the inert-rule bug this whole function exists to prevent. Claude
+ * Code's own matcher is the authority here and its exact `:*` semantics are not
+ * documented, so lean toward "the profile covers this".
+ */
+function matchesStanding(tool, subject) {
+  if (!tool) return false;
+  return DENIED_TOOLS.some((entry) => {
+    const parsed = /^([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/.exec(entry.trim());
+    if (!parsed) return false;
+    const [, entryTool, pattern] = parsed;
+    if (entryTool !== tool) return false;
+    // No parentheses means the whole tool is denied, whatever the argument.
+    if (pattern === undefined) return true;
+    const prefix = pattern.replace(/:\*$/, "").trim();
+    if (!prefix) return true;
+    return String(subject ?? "")
+      .trim()
+      .startsWith(prefix);
+  });
+}
+
 const APPEND_PROMPT = [
   "You are running inside Operator, headless. You cannot be asked for approval mid-turn.",
   `The following are denied and will never succeed: ${DENIED_TOOLS.join(", ")}.`,
@@ -483,6 +552,8 @@ async function runTurn(job) {
     "--model",
     job.model,
     /*
+      OFF BY DEFAULT, pending the owner's decision — see PROFILE_ARMED.
+
       The standing profile — see DENIED_TOOLS.
 
       `bypassPermissions` reads alarmingly and is the correct mode here, but
@@ -500,9 +571,13 @@ async function runTurn(job) {
       honouring --disallowedTools under this mode, this becomes an unrestricted
       agent silently — re-run those two checks after any Claude Code upgrade.
     */
-    "--permission-mode",
-    "bypassPermissions",
-    ...(DENIED_TOOLS.length ? ["--disallowedTools", ...DENIED_TOOLS] : []),
+    ...(PROFILE_ARMED
+      ? [
+          "--permission-mode",
+          "bypassPermissions",
+          ...(DENIED_TOOLS.length ? ["--disallowedTools", ...DENIED_TOOLS] : []),
+        ]
+      : []),
     "--append-system-prompt",
     APPEND_PROMPT,
     "--output-format",
@@ -811,6 +886,9 @@ export function list() {
     running: runningId,
     models: MODELS,
     defaultModel: DEFAULT_MODEL,
+    // The standing profile, so the page states what it actually is rather than
+    // repeating it in prose that drifts the first time OPERATOR_JOB_DENY is set.
+    deniedTools: DENIED_TOOLS,
     ...usage(),
   };
 }
@@ -1026,6 +1104,9 @@ export function describeDenial(d) {
     subject,
     description: typeof input.description === "string" ? input.description : "",
     rule: subject ? `${tool}(${subject})` : tool,
+    // Which of the two refusals this is. The client shows a grant button for one
+    // and the command to run by hand for the other — see matchesStanding.
+    standing: matchesStanding(tool, isCommand ? rawSubject : subject),
   };
 }
 
@@ -1062,6 +1143,25 @@ export async function allowRule(rule, identity) {
   const clean = String(rule ?? "").trim();
   if (!clean) throw new Error("no rule given");
   if (clean.length > 2000) throw new Error("rule is implausibly long");
+
+  /*
+    Refuse rather than write a rule that can never fire.
+
+    The page no longer offers this for a standing denial, but the check belongs
+    here too: a stale tab, an old event log, or a second client would otherwise
+    get a cheerful "allowed" for a grant that deny-beats-allow makes inert. The
+    whole point of this feature is that a refusal stops being a dead end — an
+    imaginary grant is a worse dead end than an honest refusal, because it looks
+    solved.
+  */
+  const parsed = /^([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/.exec(clean);
+  if (parsed && matchesStanding(parsed[1], parsed[2] ?? "")) {
+    throw new Error(
+      "That's one of the two Operator never runs for you. It's denied at the " +
+        "command line, and a deny beats an allow — this rule would be written and " +
+        "then ignored every time. Run it in the terminal yourself."
+    );
+  }
 
   const settings = await readSettings();
   if (settings.permissions.allow.includes(clean)) {

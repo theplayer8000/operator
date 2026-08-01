@@ -47,6 +47,13 @@ export interface JobEvent {
   subject?: string;
   description?: string;
   rule?: string;
+  /*
+    Which kind of refusal this is — the standing profile, or an ordinary
+    missing rule. Optional because an event log from before the server was
+    restarted won't carry it, and the old "offer a grant" path is the right
+    fallback for anything that predates the profile.
+  */
+  standing?: boolean;
   ok?: boolean;
   status?: string;
   detail?: string;
@@ -61,6 +68,8 @@ interface JobsList {
   running: string | null;
   models?: { id: string; label: string }[];
   defaultModel?: string;
+  /** The standing permission profile, named by the server rather than in prose. */
+  deniedTools?: string[];
   spentUsd?: number;
   budgetUsd?: number | null;
   scope?: string;
@@ -321,6 +330,7 @@ export function useJobs() {
     jobs: list?.jobs ?? [],
     models: list?.models ?? [],
     defaultModel: list?.defaultModel,
+    deniedTools: list?.deniedTools ?? [],
     runningId: list?.running ?? null,
     authorised: list?.authorised !== false,
     canManage: list?.canManage === true,

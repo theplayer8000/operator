@@ -113,10 +113,48 @@ function Event({
       A denial is the one event that needs an action, so it is the one event
       that looks like a card. Print mode can't stop and ask — the alternative is
       the owner reading a refusal with no way to answer it from a phone.
+
+      Two different refusals share this event type, and the difference decides
+      what the card offers. A **standing** one — publishing, deleting — is the
+      owner's own decision and cannot be granted at all: the deny list is a deny,
+      and a deny beats an allow, so an "Allow this" button here would write a
+      rule that sits in settings.local.json looking effective and is refused
+      every time it is used. That is the same silently-inert grant the Windows
+      path bug produced, and it took three denied grants to spot. So the standing
+      card hands over the command instead, which is exactly what the profile says
+      should happen.
     */
     case "permission_request": {
       const rule = event.rule ?? "";
       const state = grants[rule];
+
+      if (event.standing) {
+        return (
+          <div className="rounded-badge border border-rank/30 bg-rank/5 p-3 space-y-2">
+            <div className="flex items-center gap-2 text-xs text-rank">
+              <ShieldAlert size={13} className="shrink-0" />
+              Yours to run — Claude never does this one
+            </div>
+            <p className="text-xs text-ink-500 leading-relaxed">
+              Publishing and deleting are the two that can&apos;t be taken back, so they stay
+              with you. Everything else it can do itself.
+            </p>
+            {/*
+              Selectable text, not a copy button: Operator runs at a bare IP over
+              Tailscale, so `navigator.clipboard` doesn't exist there (OPS-001's
+              underlying constraint). A copy button would be dead on the one
+              device this page is used from.
+            */}
+            <pre className="p-2 rounded-badge bg-base-950/60 border border-base-600 font-mono text-[11px] text-ink-300 overflow-x-auto whitespace-pre-wrap break-all">
+              {event.subject || event.tool}
+            </pre>
+            <p className="text-[11px] text-ink-700">
+              Run it in the terminal on the Dev page, then tell Claude it&apos;s done.
+            </p>
+          </div>
+        );
+      }
+
       return (
         <div className="rounded-badge border border-vital-down/30 bg-vital-down/5 p-3 space-y-2">
           <div className="flex items-center gap-2 text-xs text-vital-down">
@@ -416,20 +454,33 @@ export default function ClaudeChat() {
 
           <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
             Runs Claude Code against this project and remembers across messages — the same
-            conversation you can pick up at the desk. It has tool access, so it can read and change
-            files, but it{" "}
-            <strong className="font-normal text-ink-500">can&apos;t stop and ask you anything</strong>
-            : print mode is one-way. When it needs a permission it stops and tells you which one —
-            tap Allow to write that rule to{" "}
-            <span className="font-mono">.claude/settings.local.json</span>, then send again.
-            Conversations survive a restart; the event log doesn&apos;t, but Claude&apos;s own
-            session does, so a restored one carries on where it left off.
+            conversation you can pick up at the desk. It has tool access and one standing
+            permission:{" "}
+            <strong className="font-normal text-ink-500">
+              everything except publishing and deleting
+            </strong>
+            . Those two can&apos;t be undone, so it writes the command out and you run it. It{" "}
+            <strong className="font-normal text-ink-500">can&apos;t stop and ask you anything</strong>{" "}
+            either — print mode is one-way — so anything else it&apos;s refused shows the rule that
+            would allow it, one tap. Conversations survive a restart; the event log doesn&apos;t,
+            but Claude&apos;s own session does, so a restored one carries on where it left off.
           </p>
 
           <p className="flex items-center gap-1.5 text-[11px] text-ink-700 mt-1.5">
             <FileText size={11} className="shrink-0" />
             One job runs at a time — a second is queued rather than run alongside.
           </p>
+
+          {/*
+            Named from the server, not repeated in prose. OPERATOR_JOB_DENY can
+            change the profile, and a hardcoded list here would go quietly wrong
+            the first time it does.
+          */}
+          {j.deniedTools.length > 0 && (
+            <p className="text-[11px] font-mono text-ink-700 mt-1 break-all">
+              never: {j.deniedTools.join("  ·  ")}
+            </p>
+          )}
         </>
       )}
     </section>

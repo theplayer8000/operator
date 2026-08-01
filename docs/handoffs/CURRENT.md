@@ -1,78 +1,55 @@
 # CURRENT — work in progress
 
 **Updated:** 2026-08-01
-**Branch:** `feat/job-model`
+**Branch:** `main`
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 Overwrite this file as work proceeds; fold it into a dated handoff at a
 milestone and reset it to the template at the bottom.
 
 ## What this is
 
-Design-doc **step 1** — the job model. Replacing the single in-memory
-conversation (`server/workspace.mjs`) with jobs that have an append-only event
-log, so a turn is no longer bounded by an HTTP request and the owner can watch
-what Claude is doing instead of a spinner.
+Design-doc step 1 is **done and merged** — folded into
+[`2026-08-01-job-model.md`](2026-08-01-job-model.md). Read that first.
 
-`server/jobs.mjs` (867 lines) was written by Claude running inside Operator. It
-landed on `main` by accident inside a commit labelled as docs, was reverted
-forward in `6ccb199`, and preserved whole on this branch. **The server half was
-complete; the frontend was not** — that mismatch is why `main` had to be
-reverted: with `jobs.mjs` loaded, `/api/chat` 404s and the Claude page dies.
+This note covers only what is still in flight.
 
-## Done on this branch
+## Waiting on the owner
 
-- **`src/hooks/useJobs.ts`** (new) — the feature hook. Polls `/api/jobs` for the
-  tab strip and `/api/jobs/:id?since=N` for the selected job's events, by
-  offset, same as the terminal reads command output. Fast tick while something
-  runs, slow when idle, plus a re-read on `visibilitychange`/`focus` so an
-  iPhone returning from suspend catches up.
-- **`src/components/dev/ClaudeChat.tsx`** — rewritten against the job API. Tab
-  strip, event log rendering the full vocabulary (`prompt`, `text`, `tool_use`,
-  `tool_result`, `permission_request`, `status`, `usage`), cancel button while
-  running, per-job model picker, restored-job marker.
-- **Fixed the `pump()` stall** in `jobs.mjs`. `pump()` shifts a job off
-  `waiting` before calling `runTurn`, and both of `runTurn`'s early exits
-  (budget ceiling hit, `claude` not on PATH) returned without restarting the
-  queue — so one job failing to start silently stopped every other queued job.
-  Re-pump is deferred via `queueMicrotask` because the budget check runs before
-  any `await` and a direct call would re-enter `pump()` from its own frame.
-- **Stale footer copy** — the old one still said "Transcript is in memory" and
-  that New chat "starts a fresh one rather than deleting anything". Both stopped
-  being true in M15.
+1. **A restart**, to load the `server/jobs.mjs` change. The frontend is already
+   built into `dist/` and degrades correctly until then.
+2. **Two decisions**, still open in `CLAUDE.md` — concurrency (one job at a time
+   or several) and the usage ceiling.
+3. **Deleting `server/workspace.mjs`** — 472 lines, no importer, dead since the
+   merge. Denied to Claude by the standing profile:
 
-## Not done
+   ```
+   git rm server/workspace.mjs
+   ```
 
-- **Not merged.** `main` is still on `workspace.mjs` and works.
-- **Not exercised.** `tsc -b` and `vite build` are clean; nothing has been run
-  against a live server yet. **Do not merge on the strength of a clean build** —
-  that is exactly what put a half-migration on `main` the first time.
-- **An adversarial review of `jobs.mjs` is running** (5 lenses, findings
-  refuted before reporting). Results were not in when this was written.
-- **Three "decisions" recorded in `jobs.mjs` comments are unconfirmed.** It
-  quotes the owner on job history, concurrency and the usage ceiling. The quotes
-  are real comments in the file, but the conversation they came from is gone and
-  the owner has **not** confirmed them. Do not write them into `CLAUDE.md` as
-  settled until he does.
-- **Permission profiles** — genuinely still open. They only become meaningful at
-  step 2, so they don't block this.
+4. **Which step is next.** The recommendation is **step 3 before step 2** —
+   reasoning under *Recommended next milestone* in the handoff. Step 2 is a
+   rewrite of `jobs.mjs`, and it cannot be tested from inside Operator until the
+   runner stops living inside the server it restarts.
 
 ## Landmines
 
-- **Checking out this branch changes `server/index.mjs`.** A running server
-  keeps working because it already loaded the old code — but a **Restart** will
-  load `jobs.mjs`, and until the frontend here is merged too, `/api/chat` 404s
-  and the Claude page goes blank. Branch and frontend must move together.
-- The permission allow list had five standing grants to `rm` / `git rm`
-  `server/workspace.mjs` and `src/components/dev/ClaudeChat.tsx`, from the
-  migration attempt. Removed 2026-08-01. Worth re-checking; it only ever grows.
+- **`node` on PATH is broken and fails silently.**
+  `D:\projects\node_modules\.bin\node` — one directory above this repo — shadows
+  `C:\Program Files\nodejs\node.exe` and points at a POSIX path that does not
+  exist here. `node --check` exits 0 without running, and `node -e` prints
+  nothing. Verify server code with the full path to `node.exe` or you are
+  verifying nothing.
+- **The two gates do not cover `server/`.** `tsc` and `vite build` never look at
+  `.mjs`. A clean build says nothing about a server change.
+- **Do not merge a server change on the strength of a clean build.** That is
+  what put a half-migration on `main` the first time.
 
 ## Next
 
-1. Read the review findings; fix what survives refutation.
-2. Run it against a live server — start a job, watch `tool_use` events arrive,
-   cancel one, restart mid-job and confirm the restored tab resumes.
-3. Confirm the three decisions with the owner, then update `CLAUDE.md`.
-4. Merge, fold this file into a dated handoff, reset to the template.
+1. Restart, then trip the standing profile once and confirm the card offers the
+   command rather than a grant button.
+2. Settle the two open decisions.
+3. Start the agreed step.
 
 ---
 

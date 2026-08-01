@@ -207,9 +207,14 @@ server/
                           Gates every /api/ route — see ADR 0010 before touching it
   terminal.mjs          — runs commands for authorised devices. No shell (argv only),
                           disarmed by default — see ADR 0011
-  workspace.mjs         — a conversation with Claude Code that remembers, by keeping
-                          its session_id and passing --resume. Same gate as the
-                          terminal: `claude -p` has tool access, so it is execution
+  jobs.mjs              — work with Claude Code, modelled as a job rather than a
+                          request: an append-only event log that outlives any HTTP
+                          request. Owns a session_id per job and passes --resume, so
+                          a tab is a thread that remembers. Same gate as the
+                          terminal: `claude -p` has tool access, so it is execution.
+                          Step 1 of docs/ai-workspace-design.md
+  workspace.mjs         — DEAD. The one-shot chat jobs.mjs replaced. No importer;
+                          kept only because deleting it is denied to Claude
   clients.mjs           — in-memory record of which devices are connected
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
@@ -352,7 +357,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Claude | `/chat` | Built — a conversation with Claude Code that remembers across messages, by keeping its `session_id` and passing `--resume` (`server/workspace.mjs`). Model is selectable, Opus 5 by default. Print mode can't stop and ask, so a blocked tool is reported with the exact rule that would allow it and a one-tap grant. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
+| Claude | `/chat` | Built — conversations as **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, and an append-only event log that outlives the request, so you watch which file it read and which command it ran instead of a spinner. Each job owns a `session_id` and passes `--resume`, so a tab remembers; tabs survive a restart, their event logs don't, and the UI says so. Model is selectable, Opus 5 by default. Print mode can't stop and ask, so a refusal is reported two ways: one the **standing profile** covers hands you the command to run yourself, anything else shows the exact rule that would allow it and a one-tap grant. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
@@ -545,6 +550,20 @@ tests and no linter — the type checker is the only automated gate, and it is
 weaker than it looks (`noUnusedLocals` is off, and an explicit `undefined` in a
 spread type-checks fine while corrupting data). Exercise the UI path you
 changed. `dist/`, `node_modules/` and `data/` should not be committed.
+
+**Neither gate looks at `server/`.** `tsc` and `vite build` never read a `.mjs`
+file, so a clean build says nothing whatsoever about a server change. Syntax-check
+those by hand — and **not with the `node` on PATH**:
+
+```
+"C:\Program Files\nodejs\node.exe" --check server/<file>.mjs
+```
+
+`D:\projects\node_modules\.bin\node` — one directory *above* this repo — shadows
+the real binary and points at a POSIX path that doesn't exist on Windows. It
+fails **silently**: `node --check` exits 0 having run nothing, and `node -e`
+prints nothing at all. A session that verifies with it has verified nothing and
+will be told everything is fine.
 
 ## Running it
 
