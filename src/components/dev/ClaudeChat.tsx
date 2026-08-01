@@ -222,13 +222,8 @@ export default function ClaudeChat() {
     const text = draft.trim();
     if (!text) return;
     setDraft("");
-    if (j.selectedId && j.selected && j.selected.status !== "complete") {
-      await j.send(j.selectedId, text);
-    } else if (j.selectedId) {
-      await j.send(j.selectedId, text);
-    } else {
-      await j.create(text);
-    }
+    if (j.selectedId) await j.send(j.selectedId, text);
+    else await j.create(text);
   }
 
   async function allow(rule: string) {
@@ -285,7 +280,7 @@ export default function ClaudeChat() {
               <ConfirmButton onConfirm={() => void j.clearAll()} label="Clear all conversations" compact />
             )}
             <button
-              onClick={() => void j.select(null)}
+              onClick={() => j.startNew()}
               className="flex items-center gap-1.5 px-3 min-h-[44px] rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
             >
               <Plus size={14} />

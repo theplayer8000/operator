@@ -77,6 +77,15 @@ const TICK_IDLE = 8000;
 export function useJobs() {
   const [list, setList] = useState<JobsList | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /*
+    "New chat" is a state, not the absence of one.
+
+    Deselecting alone doesn't work: the effect below opens the newest job
+    whenever nothing is selected, so clicking New chat was undone on the same
+    render and you were still looking at the old conversation. This flag says
+    "deliberately on a blank one" and suppresses that.
+  */
+  const [composing, setComposing] = useState(false);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +150,7 @@ export function useJobs() {
   /** Switch tabs: clear the log and re-read from the start of that job. */
   const select = useCallback(
     async (id: string | null) => {
+      if (id) setComposing(false);
       setSelectedId(id);
       sinceRef.current = 0;
       setEvents([]);
@@ -153,11 +163,12 @@ export function useJobs() {
     void refreshList();
   }, [refreshList]);
 
-  // Open the running job, or the newest, when nothing is chosen yet.
+  // Open the running job, or the newest — but never over a blank one the user
+  // asked for.
   useEffect(() => {
-    if (selectedId || !list?.jobs?.length) return;
+    if (composing || selectedId || !list?.jobs?.length) return;
     void select(list.running ?? list.jobs[list.jobs.length - 1].id);
-  }, [list, selectedId, select]);
+  }, [list, selectedId, composing, select]);
 
   const busy = list?.running !== null && list?.running !== undefined;
 
@@ -208,6 +219,7 @@ export function useJobs() {
       setError(null);
       try {
         const body = await post("/api/jobs", { prompt, model });
+        setComposing(false);
         await refreshList();
         if (body.id) await select(body.id);
         return body.id ?? null;
@@ -294,6 +306,14 @@ export function useJobs() {
     return body.added ? "allowed" : (body.reason ?? "already allowed");
   }, []);
 
+  /** Show a blank conversation. What gets sent next starts a new job. */
+  const startNew = useCallback(() => {
+    setComposing(true);
+    setSelectedId(null);
+    sinceRef.current = 0;
+    setEvents([]);
+  }, []);
+
   const selected = list?.jobs?.find((j) => j.id === selectedId) ?? null;
 
   return {
@@ -310,6 +330,8 @@ export function useJobs() {
     budgetUsd: list?.budgetUsd ?? null,
     selected,
     selectedId,
+    composing,
+    startNew,
     events,
     busy,
     error,
