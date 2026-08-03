@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Layers, RefreshCw, Globe, Server, Code2, ExternalLink } from "lucide-react";
+import { Layers, RefreshCw, Globe, Server, Code2, ExternalLink, GitBranch } from "lucide-react";
 
 interface Body {
   checkedAt: string;
   live: { builtAt: string | null; sourceChangedAt: string | null; stale: boolean; missing: boolean };
   server: { startedAt: string; codeChangedAt: string | null; stale: boolean; supervised: boolean };
   dev: { port: number; running: boolean };
+  agent?: { port: number; running: boolean; cwd: string | null; separate: boolean };
 }
 
 function ago(iso: string | null): string {
@@ -44,6 +45,29 @@ function otherUrl(): string | null {
   const next = swap[port];
   if (next === undefined) return null;
   return `${protocol}//${hostname}${next ? `:${next}` : ""}`;
+}
+
+/**
+ * The agent build, from wherever this page is served.
+ *
+ * Same swap as `otherUrl`, one port along: 5175 direct on the machine, 9443
+ * through Tailscale. Returns null from anywhere it can't be worked out rather
+ * than guessing a host that won't resolve.
+ */
+function agentUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const { protocol, hostname, port } = window.location;
+  const map: Record<string, string> = {
+    "5173": "5175",
+    "5174": "5175",
+    "5175": "5175",
+    "8443": "9443",
+    "9443": "9443",
+    "": "9443",
+  };
+  const next = map[port];
+  if (next === undefined) return null;
+  return `${protocol}//${hostname}:${next}`;
 }
 
 function Dot({ tone }: { tone: "ok" | "warn" | "off" }) {
@@ -182,6 +206,36 @@ export default function BuildStatus() {
               </p>
             </div>
           </li>
+          {body.agent && (
+            <li className="flex items-start gap-2.5">
+              <span className="mt-1 flex items-center gap-2 shrink-0">
+                <Dot tone={body.agent.running ? "ok" : "off"} />
+                <GitBranch size={14} className="text-ink-700" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm text-ink-100">
+                  Agent build{" "}
+                  <span className="font-mono text-xs text-ink-700">:{body.agent.port}</span>
+                </p>
+                <p className="text-xs text-ink-700">
+                  {!body.agent.separate
+                    ? "Claude is editing THIS checkout — set OPERATOR_JOB_CWD to a worktree."
+                    : body.agent.running
+                      ? "What Claude is writing, on its own branch. Nothing here is live until it's merged."
+                      : "Its checkout exists, but nothing is serving it — npx vite --port 5175 --host in the worktree."}
+                </p>
+                {body.agent.separate && body.agent.running && (
+                  <a
+                    href={agentUrl() ?? "#"}
+                    className="inline-flex items-center gap-1.5 mt-1.5 text-xs text-xp hover:underline"
+                  >
+                    <ExternalLink size={12} />
+                    Open it
+                  </a>
+                )}
+              </div>
+            </li>
+          )}
         </ul>
       )}
 

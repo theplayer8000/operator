@@ -14,7 +14,7 @@
 
 import { readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import net from "node:net";
 
 /** Directories that never affect the built output. */
@@ -64,7 +64,7 @@ function portOpen(port, timeout = 400) {
   });
 }
 
-export async function buildStatus(root, { devPort = 5173 } = {}) {
+export async function buildStatus(root, { devPort = 5173, agentPort = 5175 } = {}) {
   const now = Date.now();
   if (cache && now - cache.at < CACHE_MS) return cache.value;
 
@@ -104,6 +104,23 @@ export async function buildStatus(root, { devPort = 5173 } = {}) {
     dev: {
       port: devPort,
       running: await portOpen(devPort),
+    },
+    /*
+      The agent's own checkout, served separately.
+
+      `OPERATOR_JOB_CWD` sends jobs into a git worktree so Claude never edits
+      the tree the running server reads. That only helps if its work is
+      reachable — otherwise the branch is reviewed by reading a diff, which is
+      how a half-finished migration gets waved through twice.
+    */
+    agent: {
+      port: agentPort,
+      running: await portOpen(agentPort),
+      cwd: process.env.OPERATOR_JOB_CWD ?? null,
+      separate: Boolean(
+        process.env.OPERATOR_JOB_CWD &&
+          resolve(process.env.OPERATOR_JOB_CWD) !== resolve(root)
+      ),
     },
   };
 
