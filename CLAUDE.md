@@ -24,6 +24,7 @@ file states the rule and the document explains it.
 | [`docs/known-issues.md`](docs/known-issues.md) | **Before shipping anything** — two entries are active defects, not theory |
 | [`docs/development.md`](docs/development.md) | Running, verifying, or handing off work |
 | [`docs/decisions/`](docs/decisions/) | Before "fixing" something that looks wrong, or changing an established pattern |
+| [`docs/decisions/0012-claude-agent-sdk.md`](docs/decisions/0012-claude-agent-sdk.md) | Before touching the job runner, or adding anything to `server/`'s dependencies |
 | [`docs/handoffs/`](docs/handoffs/) | At the end of every milestone — template and naming convention |
 
 ## What this is
@@ -128,7 +129,14 @@ from the LAN. It is true *now*, and only while the two points above hold.
 ## Tech stack
 
 React 18 + TypeScript + Vite + Tailwind + React Router v6 + Recharts +
-lucide-react. Nothing else. Don't introduce a state management library
+lucide-react. Nothing else **in the frontend**.
+
+`server/` was dependency-free — eleven Node built-ins and nothing else — and is
+no longer, as of [ADR 0012](docs/decisions/0012-claude-agent-sdk.md), which
+adopts the Claude Agent SDK for the job runner. That is the amendment, not an
+opening: a server dependency needs an ADR naming the package and what it buys,
+and everything outside the runner (`auth.mjs`, storage, backups, terminal) stays
+pure Node so that what serves your data is still readable end to end. Don't introduce a state management library
 (Redux/Zustand/etc.) — `useLocalStorage` + React state has been sufficient
 and should stay that way unless the user asks otherwise.
 
