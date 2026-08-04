@@ -33,12 +33,27 @@ This note covers only what is still in flight.
 
 ## Landmines
 
-- **`node` on PATH is broken and fails silently.**
-  `D:\projects\node_modules\.bin\node` — one directory above this repo — shadows
-  `C:\Program Files\nodejs\node.exe` and points at a POSIX path that does not
-  exist here. `node --check` exits 0 without running, and `node -e` prints
-  nothing. Verify server code with the full path to `node.exe` or you are
-  verifying nothing.
+- **`node` is version-shadowed, but it is NOT broken.** *(Corrected 2026-08-03.
+  This entry previously claimed `node --check` "exits 0 without running" and
+  that verifying with it meant "verifying nothing". That is false, and acting on
+  it would mean abandoning a gate that works.)*
+
+  True: `D:\Projects\node_modules\.bin\node` exists, and npm puts parent
+  `node_modules/.bin` on PATH — so anything run **through npm** resolves
+  **v23.8.0**, while a direct `node` gets **v24.12.0**.
+
+  False: that it fails silently. Measured against a file with deliberate syntax
+  errors:
+
+  ```
+  node --check broken.mjs              -> exit 1, SyntaxError printed
+  npm exec -- node --check broken.mjs  -> exit 1, SyntaxError printed
+  node -e "console.log('x')"           -> prints, both ways
+  ```
+
+  So `node --check` is a real gate. The only hazard is version drift — code
+  using a v24 feature can pass a check run under v23. Reach for the full path to
+  `node.exe` when the version matters, not because the short name lies.
 - **The two gates do not cover `server/`.** `tsc` and `vite build` never look at
   `.mjs`. A clean build says nothing about a server change.
 - **Do not merge a server change on the strength of a clean build.** That is
