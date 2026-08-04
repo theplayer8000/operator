@@ -1,84 +1,87 @@
 # CURRENT — work in progress
 
-**Updated:** 2026-08-01
-**Branch:** `main`
+**Updated:** 2026-08-03
+**Branch:** `main` is clean and shipping. Work in progress is on **`agent`**.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
-Overwrite this file as work proceeds; fold it into a dated handoff at a
-milestone and reset it to the template at the bottom.
 
 ## What this is
 
-Design-doc step 1 is **done and merged** — folded into
-[`2026-08-01-job-model.md`](2026-08-01-job-model.md). Read that first.
+[ADR 0012](../decisions/0012-claude-agent-sdk.md) — adopting the Claude Agent
+SDK so a permission can be answered **inside** a turn. Decided because the CLI
+structurally cannot: asked to close Snapchat, Claude made six attempts and every
+one was refused, since print mode has no channel to say yes on.
 
-This note covers only what is still in flight.
+Design-doc step 1 (the job model) is **merged and in daily use**. This is the
+next thing, not a continuation of that.
 
-## Waiting on the owner
-
-1. **A restart**, to load the `server/jobs.mjs` change. The frontend is already
-   built into `dist/` and degrades correctly until then.
-2. **Two decisions**, still open in `CLAUDE.md` — concurrency (one job at a time
-   or several) and the usage ceiling.
-3. **Deleting `server/workspace.mjs`** — 472 lines, no importer, dead since the
-   merge. Denied to Claude by the standing profile:
-
-   ```
-   git rm server/workspace.mjs
-   ```
-
-4. **Which step is next.** The recommendation is **step 3 before step 2** —
-   reasoning under *Recommended next milestone* in the handoff. Step 2 is a
-   rewrite of `jobs.mjs`, and it cannot be tested from inside Operator until the
-   runner stops living inside the server it restarts.
-
-## Landmines
-
-- **`node` is version-shadowed, but it is NOT broken.** *(Corrected 2026-08-03.
-  This entry previously claimed `node --check` "exits 0 without running" and
-  that verifying with it meant "verifying nothing". That is false, and acting on
-  it would mean abandoning a gate that works.)*
-
-  True: `D:\Projects\node_modules\.bin\node` exists, and npm puts parent
-  `node_modules/.bin` on PATH — so anything run **through npm** resolves
-  **v23.8.0**, while a direct `node` gets **v24.12.0**.
-
-  False: that it fails silently. Measured against a file with deliberate syntax
-  errors:
-
-  ```
-  node --check broken.mjs              -> exit 1, SyntaxError printed
-  npm exec -- node --check broken.mjs  -> exit 1, SyntaxError printed
-  node -e "console.log('x')"           -> prints, both ways
-  ```
-
-  So `node --check` is a real gate. The only hazard is version drift — code
-  using a v24 feature can pass a check run under v23. Reach for the full path to
-  `node.exe` when the version matters, not because the short name lies.
-- **The two gates do not cover `server/`.** `tsc` and `vite build` never look at
-  `.mjs`. A clean build says nothing about a server change.
-- **Do not merge a server change on the strength of a clean build.** That is
-  what put a half-migration on `main` the first time.
-
-## Next
-
-1. Restart, then trip the standing profile once and confirm the card offers the
-   command rather than a grant button.
-2. Settle the two open decisions.
-3. Start the agreed step.
-
----
-
-## Template
-
-```markdown
-# CURRENT — work in progress
-
-**Updated:**
-**Branch:**
-
-## What this is
 ## Done
-## Not done
+
+- **`docs/decisions/0012-claude-agent-sdk.md`** on `main` — records both
+  measurements, including that I first claimed the SDK had zero transitive
+  dependencies and was wrong in the direction that made adoption look cheaper.
+- **`CLAUDE.md` stack rule amended** — it now governs the frontend; `server/`
+  may take a dependency only through an ADR naming the package.
+- **`server/runner.mjs`** on `agent` (`e8ab6ae`) — the SDK behind one file, the
+  only thing in `server/` importing from npm. Not wired into `jobs.mjs`.
+- **SDK installed in the worktree only.** npm replaced the `node_modules`
+  junction with a real directory, so `main` is genuinely untouched — verified.
+
+## Verified
+
+- Runs on the **Pro subscription with no API key** (`ANTHROPIC_API_KEY`,
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` all unset). Jobs stay plan usage
+  rather than becoming metered spend.
+- A plain turn works end to end through `runner.mjs`: events in the existing
+  vocabulary, session id returned, cost tracked, no error.
+- `main` still typechecks and builds with the SDK absent from it.
+
+## NOT verified — and the reason matters
+
+**Whether `canUseTool` is ever consulted.** This is the entire justification for
+ADR 0012, and it is unproven.
+
+Four attempts said it was never called. The fourth explained why: asked to run
+Bash with `disallowedTools` set, Claude replied that its available tools were
+*"Agent, Artifact, AskUserQuestion, ScheduleWakeup, Skill, ToolSearch,
+Workflow"*. **Those are the host session's tools.** The SDK inherits the Claude
+Code process it is spawned from, and stripping every `CLAUDE_*` and
+`ANTHROPIC_*` environment variable did not break the coupling — so it is deeper
+than env.
+
+**Any SDK test run from inside a Claude Code session is contaminated.** That
+includes every permission result recorded above as "not called". It is not
+evidence that `canUseTool` is broken; it is evidence the test was invalid.
+
+### How to actually test it
+
+From Operator's own server — a plain `node` process, not a child of any Claude
+session:
+
+1. On the `agent` worktree, wire `runner.mjs` into `runTurn` in `jobs.mjs`.
+2. `npm run serve` from a normal terminal.
+3. Ask a job to run something not in `.claude/settings.local.json`.
+4. Expect: a `permission_request` event, the turn **pausing**, and — once
+   answered — the same turn continuing with a `tool_result`.
+
+If the turn ends instead of pausing, the SDK buys nothing over the CLI and
+**ADR 0012 should be reversed**, not patched.
+
 ## Landmines
+
+- **`node` is version-shadowed, not broken.** npm resolves v23.8.0 (parent
+  `node_modules/.bin` on PATH), a direct `node` gets v24.12.0. Both catch syntax
+  errors correctly — measured. An earlier note here claimed `node --check`
+  "verifies nothing"; that was false and is corrected.
+- **`tsc` and `vite build` never read `.mjs`.** A clean build says nothing about
+  a server change.
+- **The worktree's `jobs.mjs` has diverged** from `main` — Claude-in-Operator
+  edited it and those changes are unreviewed. Read them before wiring anything
+  into that file.
+
 ## Next
-```
+
+1. Read the worktree's `jobs.mjs` changes.
+2. Wire `runner.mjs` in, on `agent`.
+3. Run the permission test above from a real server. **That result decides
+   whether ADR 0012 stands.**
+4. Only then: uploads.
