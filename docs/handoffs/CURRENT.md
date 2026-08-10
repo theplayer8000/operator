@@ -1,87 +1,105 @@
 # CURRENT — work in progress
 
-**Updated:** 2026-08-03
-**Branch:** `main` is clean and shipping. Work in progress is on **`agent`**.
+**Updated:** 2026-08-06
+**`main`:** `3d0571c`, clean, pushed, running.
+**`agent`:** `e8ab6ae` — the SDK runner, written but **not wired in**.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 
-## What this is
+## Start here
 
-[ADR 0012](../decisions/0012-claude-agent-sdk.md) — adopting the Claude Agent
-SDK so a permission can be answered **inside** a turn. Decided because the CLI
-structurally cannot: asked to close Snapchat, Claude made six attempts and every
-one was refused, since print mode has no channel to say yes on.
+The next action is a **single test** that decides whether
+[ADR 0012](../decisions/0012-claude-agent-sdk.md) stands or gets reversed.
+Everything else below is context for it.
 
-Design-doc step 1 (the job model) is **merged and in daily use**. This is the
-next thing, not a continuation of that.
+## The environment is now set up correctly — don't re-do it
 
-## Done
+Verified against the running server on 2026-08-06:
 
-- **`docs/decisions/0012-claude-agent-sdk.md`** on `main` — records both
-  measurements, including that I first claimed the SDK had zero transitive
-  dependencies and was wrong in the direction that made adoption look cheaper.
-- **`CLAUDE.md` stack rule amended** — it now governs the frontend; `server/`
-  may take a dependency only through an ADR naming the package.
-- **`server/runner.mjs`** on `agent` (`e8ab6ae`) — the SDK behind one file, the
-  only thing in `server/` importing from npm. Not wired into `jobs.mjs`.
-- **SDK installed in the worktree only.** npm replaced the `node_modules`
-  junction with a real directory, so `main` is genuinely untouched — verified.
+```
+OPERATOR_JOB_CWD     = D:\Projects\Operator-agent   jobs run in the worktree
+OPERATOR_JOB_PROFILE = 1                            standing profile armed
+jobs cwd (server)    = D:\Projects\Operator-agent   picked up, separate: true
+agent build (:9443)  = up
+supervised           = true
+```
 
-## Verified
+**`setx` only reaches new shells, and the Restart button cannot fix that** — the
+supervisor passes its own environment down, so a restart inherits whatever the
+supervisor started with. Changing an env var means: Ctrl+C, close the window,
+open a new one, `npm run serve`. An hour went into rediscovering this.
 
-- Runs on the **Pro subscription with no API key** (`ANTHROPIC_API_KEY`,
-  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` all unset). Jobs stay plan usage
-  rather than becoming metered spend.
-- A plain turn works end to end through `runner.mjs`: events in the existing
-  vocabulary, session id returned, cost tracked, no error.
-- `main` still typechecks and builds with the SDK absent from it.
+## The one thing that matters
 
-## NOT verified — and the reason matters
+**Is `canUseTool` ever consulted?** That is the entire justification for ADR
+0012 — in-turn permissions, so a denial stops ending the turn.
 
-**Whether `canUseTool` is ever consulted.** This is the entire justification for
-ADR 0012, and it is unproven.
+It is **unproven**, and the four tests that said "no" were invalid. The fourth
+showed why: asked to run Bash, Claude reported its available tools as *"Agent,
+Artifact, AskUserQuestion, ScheduleWakeup, Skill, ToolSearch, Workflow"* —
+**the host session's tools.** The SDK inherits the Claude Code process it is
+spawned from, and clearing every `CLAUDE_*` / `ANTHROPIC_*` variable did not
+break the coupling.
 
-Four attempts said it was never called. The fourth explained why: asked to run
-Bash with `disallowedTools` set, Claude replied that its available tools were
-*"Agent, Artifact, AskUserQuestion, ScheduleWakeup, Skill, ToolSearch,
-Workflow"*. **Those are the host session's tools.** The SDK inherits the Claude
-Code process it is spawned from, and stripping every `CLAUDE_*` and
-`ANTHROPIC_*` environment variable did not break the coupling — so it is deeper
-than env.
+So: **any SDK test run from inside a Claude Code session is contaminated.**
+Operator's own server is not a Claude Code child, which is why the test has to
+run there.
 
-**Any SDK test run from inside a Claude Code session is contaminated.** That
-includes every permission result recorded above as "not called". It is not
-evidence that `canUseTool` is broken; it is evidence the test was invalid.
+### The test
 
-### How to actually test it
-
-From Operator's own server — a plain `node` process, not a child of any Claude
-session:
-
-1. On the `agent` worktree, wire `runner.mjs` into `runTurn` in `jobs.mjs`.
-2. `npm run serve` from a normal terminal.
-3. Ask a job to run something not in `.claude/settings.local.json`.
+1. Read the worktree's `server/jobs.mjs`. It has diverged from `main` —
+   Claude-in-Operator edited it and **those changes are unreviewed**.
+2. Wire `runner.mjs` into `runTurn`, on `agent`.
+3. From Operator's Claude page, ask a job to run something not already in
+   `.claude/settings.local.json`.
 4. Expect: a `permission_request` event, the turn **pausing**, and — once
-   answered — the same turn continuing with a `tool_result`.
+   answered — that *same turn* continuing to a `tool_result`.
 
-If the turn ends instead of pausing, the SDK buys nothing over the CLI and
-**ADR 0012 should be reversed**, not patched.
+**If the turn ends instead of pausing, reverse ADR 0012 rather than patching
+it.** The SDK would then buy nothing over the CLI that justifies 93 packages.
+
+## What is already true and verified
+
+- **Step 1 (the job model) is merged and in daily use** — tabs, event log with
+  `tool_use`/`tool_result`, cancel, per-job model, restart survival.
+- **The SDK runs on the Pro subscription with no API key.** Jobs stay plan
+  usage, not metered spend. Tested with `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` all unset.
+- **A plain turn works end to end through `runner.mjs`** — events, session id,
+  cost, no error.
+- **The worktree genuinely isolates.** npm replaced the `node_modules` junction
+  with a real directory, so `main` has no SDK and still builds.
 
 ## Landmines
 
-- **`node` is version-shadowed, not broken.** npm resolves v23.8.0 (parent
-  `node_modules/.bin` on PATH), a direct `node` gets v24.12.0. Both catch syntax
-  errors correctly — measured. An earlier note here claimed `node --check`
-  "verifies nothing"; that was false and is corrected.
+- **`git add -A` is banned here** (`CLAUDE.md`). Two writers share this tree; it
+  has swept up Claude's in-flight work into unrelated commits twice.
+- **`node` is version-shadowed, not broken.** npm resolves v23.8.0, direct
+  resolves v24.12.0; both catch syntax errors correctly. An earlier note here
+  claimed `node --check` "verifies nothing" — that was false and is corrected.
 - **`tsc` and `vite build` never read `.mjs`.** A clean build says nothing about
   a server change.
-- **The worktree's `jobs.mjs` has diverged** from `main` — Claude-in-Operator
-  edited it and those changes are unreviewed. Read them before wiring anything
-  into that file.
+- **The deny list is not a boundary.** `git -C <path> push` ran with zero
+  denials, and a file was deleted via `node -e`. It is a speed bump against
+  accidents. What makes that acceptable is the worktree — the blast radius is a
+  branch in a checkout nobody is running.
+
+## Also open
+
+- **Uploads** (files/images into a job) — the surviving half of design-doc step
+  2, and an original ask. Do it after the SDK question settles, since the answer
+  changes where uploads are implemented.
+- **`server/workspace.mjs`** is dead — no importer since the job model merged.
+  Not deleted, deliberately: it is the fallback if `jobs.mjs` misbehaves in real
+  use. Delete it once step 1 has a week of use.
+- **Remote Control** was running earlier in the day and is now down; cause
+  unknown. It is a startup flag (`claude --remote-control [name]`), not
+  something a running session can switch on. Worth checking what it exposes
+  before relying on it — this machine holds the store, the token and an armed
+  terminal.
 
 ## Next
 
-1. Read the worktree's `jobs.mjs` changes.
-2. Wire `runner.mjs` in, on `agent`.
-3. Run the permission test above from a real server. **That result decides
-   whether ADR 0012 stands.**
-4. Only then: uploads.
+1. Read the worktree's `jobs.mjs` diff.
+2. Wire in `runner.mjs`.
+3. **Run the permission test.** That result decides ADR 0012.
+4. Then uploads.
