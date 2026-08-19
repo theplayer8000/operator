@@ -164,6 +164,13 @@ open a new one, `npm run serve`. An hour went into rediscovering this.
 - **The deny list is not a boundary.** `git -C <path> push` ran with zero
   denials; a file was deleted via `node -e`. It is a speed bump against
   accidents. What makes that acceptable is the worktree.
+- **`overflow-x: hidden` silently kills `position: sticky`.** It makes the
+  element a scroll container, so every sticky descendant anchors to a box that
+  is not the one being scrolled. It was on `html, body` in `index.css` — for a
+  good reason, stopping sideways drift on a phone — and cost the sidebar and
+  topbar on every long page for months. `overflow-x: clip` does the same job
+  without creating a scroll container. Fixed 2026-08-19; if either bar ever
+  scrolls away again, look for a new `overflow` on an ancestor first.
 
 ## Next
 
@@ -208,6 +215,23 @@ what he does next; keep the first section short.
 Updates changelog, via `node scripts/log-update.mjs "title" "detail"`. The
 changelog is dated history and is never rewritten; this file is the moving
 picture and is overwritten as it moves.
+
+Landed after it, same day (`8f873e4`, `b1ac55a`, `012f18e`, all pushed):
+
+- **Sticky was broken app-wide** — see Landmines. The sidebar and topbar now
+  stay put on every long page, not just this one.
+- **Updates pages by entry**, eight at a time, queue and changelog both. Paging
+  by *day* was tried first and always computed to one page: 35 changes sit on
+  four dates, so the control hid itself. Slice first, group by date after, so
+  the headings describe the page you are on.
+- **Long details are clamped to three lines** with a subtle gold *Show more*
+  that only renders when the clamp is genuinely cutting text off — measured
+  from `scrollHeight`, not guessed from length, and re-measured on resize.
+  Editing a detail is a textarea now; one entry is a 1,500-character brief.
+- **The Darams CRM tile** pointed at `localhost:5000`, which resolves to
+  `<tailnet-host>:5000` from a phone and is refused — Tailscale serves that app
+  on **7443**. Tile is now `https://tosin-pc.tail07eb22.ts.net:7443`, which the
+  probe can also reach, so the status dot and the link agree.
 
 ## All three servers run from Task Scheduler now
 
