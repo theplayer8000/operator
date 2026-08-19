@@ -27,10 +27,23 @@
       the home indicator twice and leaves a dead band under every page.
     */
   }
-  /* Nothing should be able to push the page sideways on a phone. */
+  /*
+    Nothing should be able to push the page sideways on a phone.
+
+    `clip`, not `hidden`, and the difference is not cosmetic: `overflow-x:
+    hidden` makes the element a scroll container, which silently breaks
+    `position: sticky` on every descendant. That is why the sidebar and the
+    topbar scrolled away on long pages — both are sticky, both were sticking to
+    a container that was not the one doing the scrolling.
+
+    `clip` cuts the overflow off without creating a scroll container, so sticky
+    keeps working. `hidden` stays first as the fallback for anything too old to
+    know `clip`; browsers that support it take the second declaration.
+  */
   html,
   body {
     overflow-x: hidden;
+    overflow-x: clip;
   }
   /*
     Long-pressing a nav item or a button on iOS pops the callout menu — the

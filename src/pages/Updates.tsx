@@ -16,17 +16,19 @@ import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
 
 /**
- * Days per page of changelog.
+ * Entries per page.
  *
- * Paged by day, not by entry: a day is the unit the list is grouped into, and
- * cutting at "20 entries" would slice a date group across a page boundary and
- * imply that was everything that shipped that day. Four days is about one phone
- * screen once a day carries two or three changes.
+ * **Per entry, not per day.** Paging by day was the obvious reading of "group
+ * it by date" and it was wrong for this data: 35 changes sit on four dates, so
+ * every page control computed to a single page and none of them ever appeared.
+ * A date heading is how the list is *read*; the entry is what there are a lot
+ * of, so the entry is what gets paged. A day spanning two pages simply repeats
+ * its heading, which is what a paper changelog does too.
  */
-const PAGE_DAYS = 4;
+const PAGE_SIZE = 8;
 
 const INPUT =
-  "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
+  "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 py-2.5 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
 
 /** "Today", "Yesterday", else "Mon 27 July" — a changelog date heading. */
 function formatChangelogDate(dateKey: string): string {
@@ -44,6 +46,70 @@ function formatChangelogDate(dateKey: string): string {
       month: "long",
       year: "numeric",
     }) ?? dateKey
+  );
+}
+
+/** Consecutive runs of one date, in the order given. */
+function groupByDate(entries: UpdateEntry[]): { date: string; items: UpdateEntry[] }[] {
+  const groups: { date: string; items: UpdateEntry[] }[] = [];
+  for (const entry of entries) {
+    const date = entry.date ?? "";
+    const last = groups[groups.length - 1];
+    if (last && last.date === date) last.items.push(entry);
+    else groups.push({ date, items: [entry] });
+  }
+  return groups;
+}
+
+/**
+ * Pages, not a growing list.
+ *
+ * "Show earlier" made the page longer every time it was pressed, so getting
+ * back to the top of a hundred entries meant scrolling past all of them. Both
+ * controls stay mounted and disable at the ends, so the row never reflows under
+ * a thumb mid-tap.
+ */
+function Pager({
+  page,
+  pageCount,
+  count,
+  unit,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  count: number;
+  unit: string;
+  onPage: (next: number) => void;
+}) {
+  if (pageCount < 2) return null;
+  const button =
+    "w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:text-ink-700 disabled:hover:border-base-600 transition-colors";
+  return (
+    <nav className="mt-4 flex items-center gap-2" aria-label={`${unit} pages`}>
+      <button
+        onClick={() => onPage(Math.max(0, page - 1))}
+        disabled={page === 0}
+        aria-label={`Newer ${unit}`}
+        className={button}
+      >
+        <ChevronLeft size={16} />
+      </button>
+      <p className="flex-1 text-center text-xs text-ink-700">
+        <span className="font-mono">{count}</span> of this page ·{" "}
+        <span className="font-mono">
+          {page + 1}/{pageCount}
+        </span>
+      </p>
+      <button
+        onClick={() => onPage(Math.min(pageCount - 1, page + 1))}
+        disabled={page >= pageCount - 1}
+        aria-label={`Older ${unit}`}
+        className={button}
+      >
+        <ChevronRight size={16} />
+      </button>
+    </nav>
   );
 }
 
@@ -103,16 +169,21 @@ function EntryRow({
           aria-label="Title"
           className={INPUT}
         />
-        <input
+        {/*
+          A textarea, not an input. The longest detail here is 1,500 characters
+          — a brief, not a sentence — and a single-line input showed forty of
+          them at a time with no way to see the rest.
+        */}
+        <textarea
           value={detail}
           onChange={(e) => setDetail(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") onCancel();
-            if (e.key === "Enter") onSave(title, detail);
           }}
+          rows={4}
           placeholder="Detail"
           aria-label="Detail"
-          className={INPUT}
+          className={`${INPUT} resize-y leading-relaxed`}
         />
         <div className="flex items-center gap-2">
           <button
@@ -149,8 +220,15 @@ function EntryRow({
         className="flex-1 min-w-0 text-left p-3 pr-0 rounded-badge"
       >
         <p className={`text-sm ${shipped ? "text-ink-300" : "text-ink-100"}`}>{entry.title}</p>
+        {/*
+          Clamped. One of these entries is a 1,500-character standing brief, and
+          unclamped it pushed everything else off the screen — which is most of
+          why this page read as a wall. Tapping opens the full text.
+        */}
         {entry.detail && (
-          <p className="text-xs text-ink-700 mt-0.5 leading-relaxed">{entry.detail}</p>
+          <p className="text-xs text-ink-700 mt-0.5 leading-relaxed line-clamp-3">
+            {entry.detail}
+          </p>
         )}
       </button>
       <button
@@ -180,9 +258,9 @@ function EntryRow({
  * - **Queue** — what the owner wants doing. The capture box is the point of the
  *   feature: it's how work gets handed over between sessions, rather than being
  *   remembered or retyped into a chat.
- * - **Changelog** — what's shipped, grouped under date headings, newest first,
- *   a page at a time. The dates are what make it read as history rather than a
- *   flat list of finished things.
+ * - **Changelog** — what's shipped, under date headings, newest first, a page
+ *   at a time. The dates are what make it read as history rather than a flat
+ *   list of finished things.
  *
  * Calm/administrative register, the same as Settings — a utility page, not a
  * feature with a personality of its own.
@@ -194,22 +272,32 @@ export default function Updates() {
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
+  const [queuePage, setQueuePage] = useState(0);
+  const [logPage, setLogPage] = useState(0);
 
-  const pageCount = Math.max(1, Math.ceil(doneByDate.length / PAGE_DAYS));
+  const queuePages = Math.max(1, Math.ceil(pending.length / PAGE_SIZE));
+  const logPages = Math.max(1, Math.ceil(done.length / PAGE_SIZE));
 
-  // Deleting the last entries on the last page would otherwise strand you on a
+  // Clearing the last entries on the last page would otherwise strand you on a
   // page that no longer exists, showing nothing.
   useEffect(() => {
-    if (page > pageCount - 1) setPage(pageCount - 1);
-  }, [page, pageCount]);
+    if (queuePage > queuePages - 1) setQueuePage(queuePages - 1);
+  }, [queuePage, queuePages]);
+  useEffect(() => {
+    if (logPage > logPages - 1) setLogPage(logPages - 1);
+  }, [logPage, logPages]);
 
-  const days = useMemo(
-    () => doneByDate.slice(page * PAGE_DAYS, page * PAGE_DAYS + PAGE_DAYS),
-    [doneByDate, page]
+  const queueItems = useMemo(
+    () => pending.slice(queuePage * PAGE_SIZE, queuePage * PAGE_SIZE + PAGE_SIZE),
+    [pending, queuePage]
   );
 
-  const shownOnPage = days.reduce((total, day) => total + day.items.length, 0);
+  // Slice first, then group: the headings describe what is on this page.
+  const logDays = useMemo(
+    () => groupByDate(done.slice(logPage * PAGE_SIZE, logPage * PAGE_SIZE + PAGE_SIZE)),
+    [done, logPage]
+  );
+  const logCount = logDays.reduce((total, day) => total + day.items.length, 0);
 
   function submit() {
     if (!title.trim()) return;
@@ -291,7 +379,7 @@ export default function Updates() {
           <p className="text-sm text-ink-700">Nothing queued.</p>
         ) : (
           <ul className="space-y-2">
-            {pending.map((entry) => (
+            {queueItems.map((entry) => (
               <EntryRow
                 key={entry.id}
                 entry={entry}
@@ -306,6 +394,14 @@ export default function Updates() {
             ))}
           </ul>
         )}
+
+        <Pager
+          page={queuePage}
+          pageCount={queuePages}
+          count={queueItems.length}
+          unit="requests"
+          onPage={setQueuePage}
+        />
       </section>
 
       {/* --- Changelog --- */}
@@ -313,11 +409,11 @@ export default function Updates() {
         <header className="flex items-baseline justify-between gap-3 mb-4">
           <div className="min-w-0">
             <h2 className="font-display text-sm font-medium text-ink-300">Changelog</h2>
-            <p className="text-xs text-ink-700">Everything that's shipped, newest day first.</p>
+            <p className="text-xs text-ink-700">Everything that's shipped, newest first.</p>
           </div>
-          {pageCount > 1 && (
+          {logPages > 1 && (
             <span className="font-mono text-[11px] text-ink-700 shrink-0">
-              page {page + 1}/{pageCount}
+              page {logPage + 1}/{logPages}
             </span>
           )}
         </header>
@@ -325,8 +421,8 @@ export default function Updates() {
         {done.length === 0 ? (
           <p className="text-sm text-ink-700">Nothing logged yet.</p>
         ) : (
-          days.map(({ date, items }) => (
-            <div key={date || "undated"} className="mb-5 last:mb-0">
+          logDays.map(({ date, items }, i) => (
+            <div key={`${date || "undated"}-${i}`} className="mb-5 last:mb-0">
               {/* The date heading is what makes this read as history rather
                   than a flat list of finished things. */}
               <div className="flex items-baseline gap-2 mb-2 pb-1.5 border-b border-base-600">
@@ -357,41 +453,13 @@ export default function Updates() {
           ))
         )}
 
-        {/*
-          Pages, not a growing list. "Show earlier" made the page longer every
-          time it was pressed, so getting back to the top of a hundred entries
-          meant scrolling past all of them. Both controls stay mounted and
-          disable at the ends, so the row never reflows under a thumb.
-        */}
-        {pageCount > 1 && (
-          <nav className="mt-4 flex items-center gap-2" aria-label="Changelog pages">
-            <button
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-              aria-label="Newer changes"
-              className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:text-ink-700 disabled:border-base-600 disabled:hover:border-base-600 transition-colors"
-            >
-              <ChevronLeft size={16} />
-            </button>
-
-            <p className="flex-1 text-center text-xs text-ink-700">
-              <span className="font-mono">{shownOnPage}</span>{" "}
-              {shownOnPage === 1 ? "change" : "changes"} ·{" "}
-              <span className="font-mono">
-                {page + 1}/{pageCount}
-              </span>
-            </p>
-
-            <button
-              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-              disabled={page >= pageCount - 1}
-              aria-label="Older changes"
-              className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:text-ink-700 disabled:border-base-600 disabled:hover:border-base-600 transition-colors"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </nav>
-        )}
+        <Pager
+          page={logPage}
+          pageCount={logPages}
+          count={logCount}
+          unit="changes"
+          onPage={setLogPage}
+        />
       </section>
     </div>
   );
