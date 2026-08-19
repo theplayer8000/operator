@@ -3,6 +3,7 @@ import Sidebar from "@/components/layout/Sidebar";
 import Topbar from "@/components/layout/Topbar";
 import CommandPalette from "@/components/command/CommandPalette";
 import PullToSearch from "@/components/command/PullToSearch";
+import UpdateBanner from "@/components/layout/UpdateBanner";
 
 export default function AppLayout() {
   return (
@@ -22,6 +23,8 @@ export default function AppLayout() {
       </div>
       <PullToSearch />
       <CommandPalette />
+      {/* Offers a reload when dist/ is newer than this bundle — see the file. */}
+      <UpdateBanner />
     </div>
   );
 }
