@@ -106,8 +106,62 @@ documented in `jobs.mjs` — a rule that looks right and can never fire:
   claim released. That is the third `canUseTool` argument doing its job — the
   one the last note flagged as missing.
 
-- **Not yet exercised: the card itself, on a phone.** The events and the route
-  are proven; the React rendering has only been type-checked and built.
+- **The card is confirmed on the phone, merged and live** (2026-08-19, after the
+  owner merged and restarted). Tested from inside a real job — the running
+  session ran gated commands against itself:
+
+  | Command | Outcome |
+  |---|---|
+  | `git remote -v` | ran silently — read-only, auto-approved by the SDK's classifier before the callback |
+  | `curl … \| node -e …` | `Refused from Operator.` — the deny path |
+  | `npm --version` | allowed from the phone; **the same turn resumed** and returned `11.18.0` |
+
+  So both answers work, and the line the pre-allow list draws is landing in the
+  right place: read-only sails through, outbound and machine-state commands ask.
+
+### Defect found by using it — a long command made the card unanswerable
+
+`subject` is the whole command, rendered in a `<pre>` above the buttons. A
+`log-update.mjs` call carries a paragraph of prose, so the block grew until
+**Allow was below the fold on the phone**. The card looked tapped-and-ignored,
+which from the agent's side is indistinguishable from a denial.
+
+Diagnosed by contrast rather than description: `npm --version` and `npm root`
+were answered immediately, while the same long command came back
+`Refused from Operator.` twice.
+
+Fixed in `ClaudeChat.tsx` — the block is capped at `max-h-24` and scrolls, so
+the buttons stay reachable whatever is being asked about. **Not yet re-tested on
+the phone.** To reach the live app: merge, then
+
+```bash
+npm --prefix D:\Projects\Operator run build
+```
+
+No restart — it is `src/` only. **Not `npm run build` from here**: that builds
+the worktree's `dist/`, which nothing serves, and it fails silently. CLAUDE.md
+now says so under "Editing Operator while it runs".
+
+### One rough edge, seen once, not reproduced
+
+On one attempt the tool came back with:
+
+```
+Tool permission request failed:
+AbortError: Tool permission stream closed before response received
+```
+
+That is **not** Operator's deny message — it is the SDK abandoning its own
+control stream before an answer arrived, which from the phone looks like a card
+that did nothing when tapped. The next identical attempt was answered normally,
+so it is intermittent.
+
+Best guess: an answer landing after the SDK had already torn the stream down —
+a race in the transport rather than in the questions registry, since a genuine
+timeout resolves through `finish()` and would have produced `Refused from
+Operator.` instead. **Unproven.** Worth watching for; if it recurs, the thing to
+capture is how long the card sat unanswered before the tap, because that is what
+separates a transport idle-close from anything of ours.
 
 ## Still open
 

@@ -518,6 +518,25 @@ depends only on which folder changed:
 | `src/` | instant, hot-reloaded | `npm run build` — **no restart**, the server reads `dist/` off disk per request |
 | `server/` | Restart | Restart — it is loaded into memory at boot |
 
+### The build must run in `D:\Projects\Operator`, not wherever you are
+
+**If you are Claude running inside Operator, your working directory is the
+`agent` worktree, and `npm run build` there does nothing you want.** It writes
+`D:\Projects\Operator-agent\dist\`, which nothing serves. The live app reads
+`main`'s `dist/`, so the build has to happen in the main checkout:
+
+```bash
+npm --prefix D:\Projects\Operator run build
+```
+
+This is the obvious mistake to make and it fails silently in the worst way: the
+command succeeds, the output looks right, and the live app is unchanged — so the
+natural next move is to go hunting for a bug in code that was never shipped.
+
+**And it only helps after the work is on `main`.** Building the main checkout
+while your change is still on `agent` rebuilds the old code. The order is:
+merge, then build, then (only for `server/`) restart.
+
 `npm run serve` runs under `scripts/supervise.mjs`, which relaunches the server
 when it exits with code 75. That is what `POST /api/restart` and the Dev page's
 Restart button do. It is **not** crash recovery: a server that dies

@@ -183,8 +183,22 @@ function Event({
             <p className="text-sm text-ink-100 break-words">
               {event.title || `Claude wants to use ${event.tool}`}
             </p>
+            {/*
+              Capped and scrollable, and that is not cosmetic.
+
+              `subject` is the whole command, and a `log-update.mjs` call
+              carries a paragraph of prose. Uncapped, the block grew until the
+              Allow button was below the fold on a phone — so the card looked
+              like it had been tapped and ignored, which is indistinguishable
+              from a denial from the agent's side. Found by using it: a short
+              command was answered immediately while a long one was
+              "refused" twice.
+
+              The buttons must stay reachable without scrolling the card,
+              whatever Claude is asking to run.
+            */}
             {event.subject ? (
-              <pre className="p-2 rounded-badge bg-base-950/60 border border-base-600 font-mono text-[11px] text-ink-300 overflow-x-auto whitespace-pre-wrap break-all">
+              <pre className="p-2 rounded-badge bg-base-950/60 border border-base-600 font-mono text-[11px] text-ink-300 max-h-24 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all">
                 {event.subject}
               </pre>
             ) : null}
