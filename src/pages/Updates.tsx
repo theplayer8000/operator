@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList,
   Plus,
@@ -147,6 +147,28 @@ function EntryRow({
 }: RowProps) {
   const [title, setTitle] = useState(entry.title);
   const [detail, setDetail] = useState(entry.detail);
+  const [expanded, setExpanded] = useState(false);
+
+  /*
+    Whether the clamp is actually cutting anything off.
+
+    Measured rather than guessed from the character count: three lines is a
+    different number of characters at every width, and a "Show more" that opens
+    to reveal nothing is worse than no control at all.
+  */
+  const detailRef = useRef<HTMLParagraphElement>(null);
+  const [clamped, setClamped] = useState(false);
+
+  useEffect(() => {
+    const el = detailRef.current;
+    if (!el || expanded) return;
+    const check = () => setClamped(el.scrollHeight > el.clientHeight + 1);
+    check();
+    // The same text clamps at one width and not another, so re-measure when the
+    // window changes rather than trusting the first pass.
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [entry.detail, expanded]);
 
   useEffect(() => {
     if (editing) {
@@ -214,23 +236,44 @@ function EntryRow({
           : "border-rank/25 bg-rank/5 hover:border-rank/40"
       }`}
     >
-      <button
-        onClick={onStartEdit}
-        aria-label={`Edit "${entry.title}"`}
-        className="flex-1 min-w-0 text-left p-3 pr-0 rounded-badge"
-      >
-        <p className={`text-sm ${shipped ? "text-ink-300" : "text-ink-100"}`}>{entry.title}</p>
-        {/*
-          Clamped. One of these entries is a 1,500-character standing brief, and
-          unclamped it pushed everything else off the screen — which is most of
-          why this page read as a wall. Tapping opens the full text.
-        */}
-        {entry.detail && (
-          <p className="text-xs text-ink-700 mt-0.5 leading-relaxed line-clamp-3">
-            {entry.detail}
-          </p>
+      {/*
+        Two sibling buttons, not one inside the other — "Show more" cannot be
+        nested in the edit button, and a div that behaves like a button is worse
+        for a keyboard than either.
+      */}
+      <div className="flex-1 min-w-0 p-3 pr-0">
+        <button
+          onClick={onStartEdit}
+          aria-label={`Edit "${entry.title}"`}
+          className="block w-full text-left rounded-badge"
+        >
+          <p className={`text-sm ${shipped ? "text-ink-300" : "text-ink-100"}`}>{entry.title}</p>
+          {/*
+            Clamped. One of these is a 1,500-character standing brief, and
+            unclamped it pushed everything else off the screen — which is most
+            of why this page read as a wall.
+          */}
+          {entry.detail && (
+            <p
+              ref={detailRef}
+              className={`text-xs text-ink-700 mt-0.5 leading-relaxed ${
+                expanded ? "" : "line-clamp-3"
+              }`}
+            >
+              {entry.detail}
+            </p>
+          )}
+        </button>
+
+        {(clamped || expanded) && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 text-[11px] text-xp/70 hover:text-xp transition-colors"
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
         )}
-      </button>
+      </div>
       <button
         onClick={onToggle}
         aria-label={
