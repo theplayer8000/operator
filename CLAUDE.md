@@ -218,9 +218,14 @@ server/
   jobs.mjs              — work with Claude Code, modelled as a job rather than a
                           request: an append-only event log that outlives any HTTP
                           request. Owns a session_id per job and passes --resume, so
-                          a tab is a thread that remembers. Same gate as the
-                          terminal: `claude -p` has tool access, so it is execution.
+                          a tab is a thread that remembers. Owns the pre-allow list
+                          and the questions registry — a permission the running turn
+                          is suspended on, answerable from the phone. Same gate as
+                          the terminal: a job has tool access, so it is execution.
                           Step 1 of docs/ai-workspace-design.md
+  runner.mjs            — one turn, through the Claude Agent SDK. The ONLY file in
+                          server/ that imports from npm — ADR 0012 bounded the
+                          dependency there deliberately. Keep it that way
   workspace.mjs         — DEAD. The one-shot chat jobs.mjs replaced. No importer;
                           kept only because deleting it is denied to Claude
   clients.mjs           — in-memory record of which devices are connected
@@ -368,7 +373,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Claude | `/chat` | Built — conversations as **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, and an append-only event log that outlives the request, so you watch which file it read and which command it ran instead of a spinner. Each job owns a `session_id` and passes `--resume`, so a tab remembers; tabs survive a restart, their event logs don't, and the UI says so. Model is selectable, Opus 5 by default. Print mode can't stop and ask, so a refusal is reported two ways: one the **standing profile** covers hands you the command to run yourself, anything else shows the exact rule that would allow it and a one-tap grant. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
+| Claude | `/chat` | Built — conversations as **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, and an append-only event log that outlives the request, so you watch which file it read and which command it ran instead of a spinner. Each job owns a `session_id` and passes `--resume`, so a tab remembers; tabs survive a restart, their event logs don't, and the UI says so. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C — on `agent`, not yet merged): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
@@ -563,23 +568,44 @@ guessing; guessing is the failure mode this list exists to prevent.
 
 1. **Job history — DECIDED, and built.** Tabs survive a restart with their
    Claude session; event logs do not, and the UI says so. `data/jobs.json`.
-2. **Permission profiles — DECIDED 2026-08-01.** One standing profile on every
-   job: **everything except `git push` and deleting files.** Implemented in
-   `server/jobs.mjs` as `--permission-mode bypassPermissions` plus a
-   `--disallowedTools` list, which was measured to hold — see the note there,
-   and re-run those two checks after any Claude Code upgrade.
+2. **Permission profiles — DECIDED 2026-08-01, revised 2026-08-19.** The
+   standing profile is unchanged in substance: **everything except `git push`
+   and deleting files.** What changed is how the rest is reached.
+
+   **Option C, on `agent` and not yet merged.** Jobs run through the SDK
+   (`server/runner.mjs`, ADR 0012) in `default` mode with a broad **pre-allow
+   list**, rather than `bypassPermissions`. Ordinary work — reading, editing,
+   building, committing — never prompts because it is pre-approved. Anything
+   outside the list **suspends the turn** and asks on the phone, answerable with
+   one tap, and the same turn then carries on. Measured 2026-08-19: the callback
+   held for six seconds and the tool ran 4ms after the answer.
+
+   Chosen because the first two options were mutually exclusive and both bad:
+   `bypassPermissions` never consults the callback, so ADR 0012 buys nothing;
+   `default` alone asks about every file read. The pre-allow list is what makes
+   the third one quiet, and it is cheap because the SDK already auto-approves
+   trivially safe calls on its own.
+
+   **`allowedTools` entries are not what they look like.** A bare tool name
+   auto-approves that tool *everywhere*, before the callback is consulted; the
+   scoped form (`Write(**)`) was measured to match nothing and make every write
+   a prompt. Both are written up above `ALLOWED_TOOLS` in `server/jobs.mjs`.
+   Measure before narrowing it — the probes are in `scripts/`.
 
    The two exceptions are the two that are hard to take back: publishing is
    public and permanent, deleting is unrecoverable and this project has no undo
-   (**OPS-020**). Everything else is recoverable from git.
+   (**OPS-020**). Everything else is recoverable from git. They are denied
+   outright and **never become a question**, so they cannot be waved through by
+   a mis-tap.
 
-   **When Claude hits one, it must not retry** — it writes the exact command out
-   for the owner to run in the terminal himself and notes it in `CURRENT.md`.
-   That is appended to its system prompt, not left to chance.
+   **When Claude hits one of those two, it must not retry** — it writes the
+   exact command out for the owner to run in the terminal himself and notes it
+   in `CURRENT.md`. That is appended to its system prompt, not left to chance.
+   The same prompt now tells it that *everything else* can be asked about, so it
+   stops routing around tools it is allowed to request.
 
-   Chosen over grant-per-command because that had produced 69 single-use rules
-   that never expire, which is worse security than a considered standing
-   profile, not better.
+   Grant-per-command remains rejected: it had produced 69 single-use rules that
+   never expire, which is worse security than a considered standing profile.
 3. **Concurrency** — one job at a time, or several? One matches a single user on
    a phone; several matters if a long build should run while he asks something
    else.

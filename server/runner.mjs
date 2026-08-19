@@ -28,11 +28,14 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
  * @param {string|null} spec.sessionId  resume a conversation, or null to start one
  * @param {string} spec.cwd           where Claude works — the agent worktree
  * @param {string[]} spec.deniedTools tools refused outright, never asked about
+ * @param {string[]} spec.allowedTools tools run without asking — see jobs.mjs
  * @param {number|null} spec.budgetUsd hard ceiling for this turn, or null
+ * @param {string} [spec.appendSystemPrompt] appended to the system prompt
  * @param {string} [spec.permissionMode] must be "default" for onPermission to be consulted
  * @param {AbortSignal} [spec.signal]
  * @param {(type: string, data?: object) => void} spec.onEvent
- * @param {(req: {tool: string, subject: string, input: object}) => Promise<boolean>} spec.onPermission
+ * @param {(req: {tool: string, subject: string, input: object, title: string,
+ *                description: string, signal: AbortSignal}) => Promise<boolean>} spec.onPermission
  *        Resolves true to allow. **Awaited** — hold it as long as the person
  *        takes to answer; that is the entire point of this file.
  * @returns {Promise<{sessionId: string|null, costUsd: number, error: string|null}>}
@@ -43,7 +46,9 @@ export async function runTurn({
   sessionId,
   cwd,
   deniedTools = [],
+  allowedTools = [],
   budgetUsd = null,
+  appendSystemPrompt = "",
   permissionMode = "default",
   signal,
   onEvent,
@@ -73,8 +78,43 @@ export async function runTurn({
         `bypassPermissions` allows, `dontAsk` refuses anything not pre-allowed.
       */
       permissionMode,
+      /*
+        `bypassPermissions` is refused by the SDK without this. It did not need
+        a second flag on the CLI, so a wiring that forwards a profile mode
+        through here fails at the first turn until it is passed. Set only for
+        the mode that requires it — passing it under `default` would be a
+        confusing lie about what this turn can do.
+      */
+      ...(permissionMode === "bypassPermissions"
+        ? { allowDangerouslySkipPermissions: true }
+        : {}),
       ...(resolvedSession ? { resume: resolvedSession } : {}),
       ...(deniedTools.length ? { disallowedTools: deniedTools } : {}),
+      /*
+        The pre-allow list — the half of option C that keeps this quiet.
+
+        `default` mode consults `canUseTool` for everything, and a workspace
+        that asks permission to read a file is not a workspace. These run
+        without being asked about; anything outside the list reaches the
+        callback below and becomes a question the owner can answer.
+
+        The SDK also auto-approves trivially safe calls on its own (measured:
+        `echo` never reached the callback), so this list only has to cover the
+        middle ground, not every `ls`.
+      */
+      ...(allowedTools.length ? { allowedTools } : {}),
+      /*
+        **Not `appendSystemPrompt`** — that is the CLI's flag name, and the SDK
+        would accept the object with the key silently ignored. The instruction
+        would simply never reach the model, and nothing would look wrong.
+
+        The preset keeps Claude Code's own system prompt and adds to it;
+        passing a bare string would *replace* it and throw away the tool
+        instructions with it.
+      */
+      ...(appendSystemPrompt
+        ? { systemPrompt: { type: "preset", preset: "claude_code", append: appendSystemPrompt } }
+        : {}),
       // The SDK's own ceiling, which stops a turn *before* it overruns rather
       // than after. Better than counting cost afterwards, which is all the CLI
       // allowed.
@@ -92,12 +132,27 @@ export async function runTurn({
         `deniedTools` is checked by the SDK before we are consulted, so the two
         irreversible actions never even reach this callback and cannot be waved
         through by a mis-tap.
+
+        **Three arguments, not two.** The third carries `signal`, and it is the
+        reason a cancel works while a permission is outstanding: without it,
+        pressing Stop on a job waiting to be answered would leave this promise
+        pending and the turn would hang until the idle timeout rather than
+        stopping. It is forwarded to `onPermission` so the pending question can
+        be torn down at the same moment the turn is.
+
+        `title` and `description` are the bridge's own rendering of the prompt
+        ("Claude wants to read foo.txt"). Preferred over reconstructing a
+        sentence from tool name and input, because the bridge knows things this
+        file does not — such as which path in a Bash command triggered the ask.
       */
-      canUseTool: async (toolName, input) => {
+      canUseTool: async (toolName, input, options = {}) => {
         const allowed = await onPermission({
           tool: toolName,
           subject: subjectOf(input),
           input,
+          title: typeof options.title === "string" ? options.title : "",
+          description: typeof options.description === "string" ? options.description : "",
+          signal: options.signal,
         });
         return allowed
           ? { behavior: "allow", updatedInput: input }
@@ -114,6 +169,17 @@ export async function runTurn({
           // that makes the next turn a continuation rather than a stranger.
           if (message.subtype === "init" && message.session_id) {
             resolvedSession = message.session_id;
+            /*
+              Announced the moment it appears, not just returned at the end.
+
+              The session id is the memory — it is what makes the next turn a
+              continuation — and the moment a later save doesn't run is exactly
+              the moment it is most needed. Handing it back only on a clean
+              return means a turn that crashes half way through loses the
+              conversation, which was already fixed once and written up as "the
+              chat was lying about remembering".
+            */
+            onEvent("session", { sessionId: message.session_id });
             onEvent("status", { status: "running" });
           }
           break;
@@ -149,7 +215,13 @@ export async function runTurn({
                 : "Claude reported an error";
             onEvent("text", { text: error, error: true });
           }
-          onEvent("usage", { turnUsd: costUsd });
+          /*
+            No `usage` event here on purpose. Cost is returned, and the caller
+            emits it — because the numbers the owner actually reads are
+            per-job and per-server totals, and those are `jobs.mjs`'s to keep.
+            Emitting a partial `usage` here as well would put two events of the
+            same type in the log carrying different subsets of the truth.
+          */
           break;
 
         default:

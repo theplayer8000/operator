@@ -47,15 +47,32 @@ function ago(iso: string): string {
   return `${Math.round(ms / 86_400_000)}d ago`;
 }
 
+/** How a question ended, in the words the log should use. */
+const ANSWER_TONE: Record<string, { tone: string; label: string }> = {
+  allowed: { tone: "text-vital-up", label: "you allowed it" },
+  denied: { tone: "text-ink-500", label: "you said no" },
+  timeout: { tone: "text-ink-700", label: "no answer in time — treated as no" },
+  cancelled: { tone: "text-ink-700", label: "you stopped the job" },
+  abandoned: { tone: "text-ink-700", label: "the turn ended first" },
+};
+
 /** One event, rendered in the register its type deserves. */
 function Event({
   event,
   onAllow,
   grants,
+  answers,
+  answering,
+  onAnswer,
 }: {
   event: JobEvent;
   onAllow: (rule: string) => void;
   grants: Record<string, string>;
+  /** Questions already settled, by id — so a live card knows it isn't live. */
+  answers: Record<string, JobEvent>;
+  /** Ids with a tap in flight, so the buttons can't be double-fired. */
+  answering: Record<string, boolean>;
+  onAnswer: (id: string, decision: "allow" | "deny", remember: boolean) => void;
 }) {
   switch (event.type) {
     case "prompt":
@@ -124,9 +141,93 @@ function Event({
       card hands over the command instead, which is exactly what the profile says
       should happen.
     */
+    case "permission_answer": {
+      const shown = ANSWER_TONE[event.decision ?? ""] ?? { tone: "text-ink-700", label: "settled" };
+      return (
+        <p className={`text-[11px] font-mono ${shown.tone} ml-[19px]`}>
+          {shown.label}
+          {event.by ? ` · from ${event.by}` : ""}
+        </p>
+      );
+    }
+
     case "permission_request": {
       const rule = event.rule ?? "";
       const state = grants[rule];
+
+      /*
+        A **live** question — the turn is suspended on it right now, and this is
+        what ADR 0012 was adopted for. Answering it here resumes the same turn
+        with the same context, instead of ending it and asking again from the
+        beginning.
+
+        Only rendered when the event carries an `id` and nothing has settled it.
+        Without that guard the two after-the-fact cards below would grow buttons
+        that resolve nothing: the CLI fallback emits this same type to describe a
+        denial that already ended a turn, and an event log replayed after a
+        restart describes questions that died with the process.
+      */
+      if (event.id && event.pending && !answers[event.id]) {
+        const id = event.id;
+        const busy = answering[id] === true;
+        return (
+          <div className="rounded-badge border border-xp/40 bg-xp/5 p-3 space-y-3">
+            <div className="flex items-center gap-2 text-xs text-xp">
+              <ShieldAlert size={13} className="shrink-0" />
+              Waiting on you — it&apos;s holding the turn open
+            </div>
+
+            {/* The bridge's own sentence when there is one; it knows things the
+                server doesn't, like which path inside a command triggered the
+                ask. */}
+            <p className="text-sm text-ink-100 break-words">
+              {event.title || `Claude wants to use ${event.tool}`}
+            </p>
+            {event.subject ? (
+              <pre className="p-2 rounded-badge bg-base-950/60 border border-base-600 font-mono text-[11px] text-ink-300 overflow-x-auto whitespace-pre-wrap break-all">
+                {event.subject}
+              </pre>
+            ) : null}
+
+            {/* 44px, and side by side rather than stacked — the two answers
+                should look like two answers, not a primary action with an
+                afterthought under it. */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => onAnswer(id, "allow", false)}
+                disabled={busy}
+                className="flex-1 min-h-[44px] px-3 rounded-badge border border-xp/50 bg-xp/15 text-sm text-xp hover:bg-xp/25 disabled:opacity-50 transition-colors"
+              >
+                {busy ? "…" : "Allow"}
+              </button>
+              <button
+                onClick={() => onAnswer(id, "deny", false)}
+                disabled={busy}
+                className="flex-1 min-h-[44px] px-3 rounded-badge border border-base-600 text-sm text-ink-300 hover:border-base-500 hover:text-ink-100 disabled:opacity-50 transition-colors"
+              >
+                No
+              </button>
+            </div>
+
+            {/*
+              Deliberately below, quieter, and full width — a mis-tap here is
+              not the same size of mistake as a mis-tap on Allow, so it should
+              not sit next to it looking like a peer.
+            */}
+            <button
+              onClick={() => onAnswer(id, "allow", true)}
+              disabled={busy}
+              className="w-full min-h-[44px] px-3 rounded-badge border border-base-600 text-xs text-ink-500 hover:text-ink-300 hover:border-base-500 disabled:opacity-50 transition-colors"
+            >
+              Allow, and stop asking about this one
+            </button>
+            <p className="text-[11px] text-ink-700">
+              Until the server restarts. It won&apos;t ask about publishing or deleting either
+              way — those are yours.
+            </p>
+          </div>
+        );
+      }
 
       if (event.standing) {
         return (
@@ -241,6 +342,19 @@ function Tab({
       ) : null}
       <span className="max-w-[140px] truncate">{job.title}</span>
       {job.queued > 0 && <span className="font-mono text-[10px] text-rank">+{job.queued}</span>}
+      {/*
+        A job that has stopped to ask looks exactly like one that is thinking —
+        same spinner, same status — and the turn stays suspended until someone
+        answers. If the only way to find that out is to have that tab open, a
+        question asked while you are reading another one waits half an hour and
+        then times out. So it is marked on the tab.
+      */}
+      {(job.asking ?? 0) > 0 && (
+        <span
+          title="Waiting on an answer from you"
+          className="shrink-0 w-1.5 h-1.5 rounded-full bg-xp animate-pulse"
+        />
+      )}
     </button>
   );
 }
@@ -249,7 +363,22 @@ export default function ClaudeChat() {
   const j = useJobs();
   const [draft, setDraft] = useState("");
   const [grants, setGrants] = useState<Record<string, string>>({});
+  const [answering, setAnswering] = useState<Record<string, boolean>>({});
   const logRef = useRef<HTMLDivElement>(null);
+
+  /*
+    Which questions have been settled, keyed by id.
+
+    Derived from the log rather than kept as state, because the log is the
+    truth: the answer may have come from the other device, or from the timeout,
+    and this client only finds out by reading it back. Holding a local "I
+    answered that" flag would leave a stale Allow button on a phone that had
+    already been overtaken.
+  */
+  const answers: Record<string, JobEvent> = {};
+  for (const e of j.events) {
+    if (e.type === "permission_answer" && e.id) answers[e.id] = e;
+  }
 
   useEffect(() => {
     const el = logRef.current;
@@ -262,6 +391,27 @@ export default function ClaudeChat() {
     setDraft("");
     if (j.selectedId) await j.send(j.selectedId, text);
     else await j.create(text);
+  }
+
+  /**
+   * Answer a live question. The turn is suspended on it while this runs.
+   *
+   * The in-flight flag is not cosmetic: a tap on a phone that appears to do
+   * nothing gets tapped again, and the second tap would land on a question the
+   * first has already settled.
+   */
+  async function answer(id: string, decision: "allow" | "deny", remember: boolean) {
+    if (!j.selectedId || answering[id]) return;
+    setAnswering((p) => ({ ...p, [id]: true }));
+    try {
+      await j.answerPermission(j.selectedId, id, decision, remember);
+    } finally {
+      setAnswering((p) => {
+        const next = { ...p };
+        delete next[id];
+        return next;
+      });
+    }
   }
 
   async function allow(rule: string) {
@@ -376,14 +526,30 @@ export default function ClaudeChat() {
               </p>
             ) : (
               j.events.map((e) => (
-                <Event key={e.seq} event={e} onAllow={(r) => void allow(r)} grants={grants} />
+                <Event
+                  key={e.seq}
+                  event={e}
+                  onAllow={(r) => void allow(r)}
+                  grants={grants}
+                  answers={answers}
+                  answering={answering}
+                  onAnswer={(id, decision, remember) => void answer(id, decision, remember)}
+                />
               ))
             )}
-            {running && (
-              <p className="flex items-center gap-2 text-xs text-xp">
-                <Loader2 size={13} className="animate-spin" /> working…
-              </p>
-            )}
+            {running &&
+              // "working…" under a question it has stopped for is the one thing
+              // this line must not say — it reads as "no action needed" beneath
+              // the card that needs one.
+              ((j.selected?.asking ?? 0) > 0 ? (
+                <p className="flex items-center gap-2 text-xs text-xp">
+                  <ShieldAlert size={13} /> holding — waiting on your answer above
+                </p>
+              ) : (
+                <p className="flex items-center gap-2 text-xs text-xp">
+                  <Loader2 size={13} className="animate-spin" /> working…
+                </p>
+              ))}
           </div>
 
           {j.error && <p className="text-xs text-vital-down mb-2 break-words">{j.error}</p>}
