@@ -222,8 +222,19 @@ export function useJobs() {
     return () => clearInterval(timer);
   }, [busy, refreshList, refreshEvents]);
 
-  // Coming back to the app should show the current state immediately rather
-  // than after a tick — same reasoning as the store's resume handling in M15.
+  /*
+    Coming back to the app should show the current state immediately rather than
+    after a tick — same reasoning as the store's resume handling in M15, and now
+    the same three events, which is the bit this was missing.
+
+    **`pageshow` is the one iOS actually uses.** A backgrounded Safari tab has
+    its timers suspended, so the interval above simply stops; when it comes back
+    from the back-forward cache, `visibilitychange` and `focus` may never fire.
+    Without this listener the page could sit for twenty minutes showing
+    "working…" under a turn that had been suspended on a question the whole
+    time — which is exactly what happened on 2026-08-19. `remoteStore` already
+    listened for all three and says so in its own comment; the jobs poll did not.
+  */
   useEffect(() => {
     const onResume = () => {
       if (document.visibilityState !== "visible") return;
@@ -232,9 +243,11 @@ export function useJobs() {
     };
     document.addEventListener("visibilitychange", onResume);
     window.addEventListener("focus", onResume);
+    window.addEventListener("pageshow", onResume);
     return () => {
       document.removeEventListener("visibilitychange", onResume);
       window.removeEventListener("focus", onResume);
+      window.removeEventListener("pageshow", onResume);
     };
   }, [refreshList, refreshEvents]);
 

@@ -554,6 +554,23 @@ export default function ClaudeChat() {
 
           {j.error && <p className="text-xs text-vital-down mb-2 break-words">{j.error}</p>}
 
+          {/*
+            Sending while a question is outstanding queues the message behind a
+            turn that cannot move — so it reads as a stuck job you just nudged,
+            when really you added a second thing behind a blocked one. Say so
+            rather than blocking it: the card may well be scrolled off, and
+            refusing the send with no visible reason would be worse.
+          */}
+          {(j.selected?.asking ?? 0) > 0 && (
+            <p className="flex items-start gap-2 mb-2 text-xs text-xp">
+              <ShieldAlert size={13} className="shrink-0 mt-0.5" />
+              <span>
+                A question is waiting above — answer it and this turn carries on. Anything you
+                send now waits in the queue until then.
+              </span>
+            </p>
+          )}
+
           <div className="flex items-end gap-2">
             <textarea
               value={draft}
