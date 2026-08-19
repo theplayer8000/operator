@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { NotebookPen, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import FilePeek from "./FilePeek";
 
 /**
  * The live handoff, read straight off disk.
@@ -39,13 +40,35 @@ function ago(iso: string): string {
 }
 
 /**
+ * A code span that is a file in this repo, or null.
+ *
+ * The handoff names a dozen files a paragraph, and "go to Dev, find scripts,
+ * scroll" is not a reference — so the ones that are really paths become links
+ * into the Dev browser. Everything else (`canUseTool`, `git push`,
+ * `bypassPermissions`) stays plain code.
+ *
+ * Mirrors what the server will actually serve: an extension it treats as text,
+ * and not a directory it refuses. Offering a link that lands on "path not
+ * allowed" would be worse than no link.
+ */
+const DENIED_ROOTS = new Set(["node_modules", ".git", "dist", "data", ".vite", "Darams-CRM"]);
+const FILE_LIKE =
+  /^[\w.@-]+(?:\/[\w.@-]+)*\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|html|yml|yaml|txt|cmd)$/;
+
+function repoPath(text: string): string | null {
+  if (!FILE_LIKE.test(text)) return null;
+  if (DENIED_ROOTS.has(text.split("/")[0])) return null;
+  return text;
+}
+
+/**
  * Inline `**bold**` and `` `code` ``, and nothing else.
  *
  * A markdown library is not in the stack (`CLAUDE.md`) and this does not need
  * one — the handoff is prose, headings, lists and code. Anything unsupported
  * renders as its own source text, which is legible rather than broken.
  */
-function inline(text: string, keyPrefix: string) {
+function inline(text: string, keyPrefix: string, onPeek: (path: string) => void) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     const key = `${keyPrefix}-${i}`;
@@ -57,9 +80,22 @@ function inline(text: string, keyPrefix: string) {
       );
     }
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      const code = part.slice(1, -1);
+      const file = repoPath(code);
+      if (file) {
+        return (
+          <button
+            key={key}
+            onClick={() => onPeek(file)}
+            className="font-mono text-[0.85em] text-xp break-words underline decoration-dotted decoration-xp/40 underline-offset-2 hover:decoration-xp transition-colors"
+          >
+            {code}
+          </button>
+        );
+      }
       return (
         <code key={key} className="font-mono text-[0.85em] text-xp break-words">
-          {part.slice(1, -1)}
+          {code}
         </code>
       );
     }
@@ -73,7 +109,7 @@ function inline(text: string, keyPrefix: string) {
  * Tables and anything else unrecognised fall through to a monospace line, so an
  * unsupported construct is still readable instead of silently dropped.
  */
-function render(markdown: string) {
+function render(markdown: string, onPeek: (path: string) => void) {
   const lines = markdown.split(/\r?\n/);
   const out: JSX.Element[] = [];
   let bullets: string[] = [];
@@ -87,7 +123,7 @@ function render(markdown: string) {
         {bullets.map((b, i) => (
           <li key={i} className="flex gap-2 text-sm text-ink-300 leading-relaxed">
             <span className="mt-[0.55rem] w-1 h-1 rounded-full bg-ink-700 shrink-0" aria-hidden />
-            <span className="min-w-0">{inline(b, `${key}-${i}`)}</span>
+            <span className="min-w-0">{inline(b, `${key}-${i}`, onPeek)}</span>
           </li>
         ))}
       </ul>
@@ -137,13 +173,13 @@ function render(markdown: string) {
     if (line.startsWith("### ")) {
       out.push(
         <h4 key={key} className="font-display text-xs text-ink-300 mt-3.5 mb-1">
-          {inline(line.slice(4), key)}
+          {inline(line.slice(4), key, onPeek)}
         </h4>
       );
     } else if (line.startsWith("## ")) {
       out.push(
         <h3 key={key} className="font-display text-sm text-ink-100 mt-4 mb-1.5 first:mt-0">
-          {inline(line.slice(3), key)}
+          {inline(line.slice(3), key, onPeek)}
         </h3>
       );
     } else if (line.startsWith("# ")) {
@@ -155,7 +191,7 @@ function render(markdown: string) {
           key={key}
           className="my-2 pl-3 border-l border-base-500 text-sm text-ink-500 leading-relaxed"
         >
-          {inline(line.slice(2), key)}
+          {inline(line.slice(2), key, onPeek)}
         </p>
       );
     } else if (line.startsWith("|")) {
@@ -167,7 +203,7 @@ function render(markdown: string) {
     } else {
       out.push(
         <p key={key} className="my-2 text-sm text-ink-300 leading-relaxed">
-          {inline(line, key)}
+          {inline(line, key, onPeek)}
         </p>
       );
     }
@@ -198,6 +234,7 @@ export default function HandoffCard() {
   const [body, setBody] = useState<FileBody | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [peek, setPeek] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -273,7 +310,7 @@ export default function HandoffCard() {
 
       {content && (
         <>
-          <div className="min-w-0">{render(expanded ? content : head)}</div>
+          <div className="min-w-0">{render(expanded ? content : head, setPeek)}</div>
 
           {rest && (
             <button
@@ -286,6 +323,8 @@ export default function HandoffCard() {
           )}
         </>
       )}
+
+      {peek && <FilePeek path={peek} onClose={() => setPeek(null)} />}
     </section>
   );
 }

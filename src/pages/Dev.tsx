@@ -8,6 +8,8 @@ import {
   CornerLeftUp,
   GitCommitHorizontal,
 } from "lucide-react";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
 import ClaudeStatus from "@/components/dev/ClaudeStatus";
@@ -42,6 +44,30 @@ export default function Dev() {
   } = useDevBrowser();
 
   const parent = path === "." ? null : crumbs.slice(0, -1).map((c) => c.name).join("/") || ".";
+
+  /*
+    `/dev?file=<path>` opens that file straight away.
+
+    It exists so a path written anywhere else in the app can be a link — the
+    Handoff card names a dozen files, and "go to Dev, find scripts, scroll" is
+    not a reference. The param stays in the URL, so the link survives a reload
+    and can be sent to yourself; closing the file clears it.
+  */
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get("file");
+
+  useEffect(() => {
+    if (wanted) void openFile(wanted);
+  }, [wanted, openFile]);
+
+  function closeFile() {
+    setFile(null);
+    if (wanted) {
+      const next = new URLSearchParams(params);
+      next.delete("file");
+      setParams(next, { replace: true });
+    }
+  }
 
   return (
     <div className="max-w-3xl mx-auto lg:mx-0">
@@ -174,7 +200,7 @@ export default function Dev() {
               </a>
             )}
             <button
-              onClick={() => setFile(null)}
+              onClick={closeFile}
               aria-label="Close file"
               className="w-11 h-11 shrink-0 flex items-center justify-center text-ink-700 hover:text-ink-300 transition-colors"
             >
