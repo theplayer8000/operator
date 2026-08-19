@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { X, FileText, ExternalLink } from "lucide-react";
 
@@ -35,9 +36,17 @@ export default function FilePeek({ path, onClose }: { path: string; onClose: () 
         const res = await fetch(`/api/dev/file?path=${encodeURIComponent(path)}`, {
           headers: { accept: "application/json" },
         });
-        if (!res.ok) throw new Error(`server returned ${res.status}`);
-        const json = (await res.json()) as Body;
-        if (live) setBody(json);
+        /*
+          Read the body even on a 400. The file API answers a refusal with a
+          plain reason — "not found", "not a text file", "too large to display"
+          — and throwing on the status threw that away, so a file that simply
+          is not in this checkout reported "server returned 400", which tells
+          you nothing about what to do.
+        */
+        const json = (await res.json().catch(() => null)) as Body | null;
+        if (!live) return;
+        if (json) setBody(json);
+        else setError(`server returned ${res.status}`);
       } catch (err) {
         if (live) setError((err as Error).message);
       }
@@ -62,9 +71,19 @@ export default function FilePeek({ path, onClose }: { path: string; onClose: () 
     };
   }, [onClose]);
 
-  return (
+  /*
+    Portalled to <body>, and it has to be.
+
+    `position: fixed` is relative to the viewport only while no ancestor has a
+    transform — and the card this is opened from carries `animate-fade-up`,
+    which does. So the overlay covered the Handoff card instead of the screen:
+    the queue below it sat unblurred and fully interactive, and the sheet
+    landed halfway down the page. Rendering outside that subtree is the fix;
+    moving the animation would only relocate the trap for the next component.
+  */
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-up"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm"
       onClick={onClose}
       role="presentation"
     >
@@ -112,12 +131,19 @@ export default function FilePeek({ path, onClose }: { path: string; onClose: () 
         {body?.error && <p className="p-4 text-sm text-vital-down">{body.error}</p>}
         {!body && !error && <p className="p-4 text-sm text-ink-700">Reading…</p>}
 
+        {/*
+          Wrapped, not scrolled sideways. A phone gives no hint that a code
+          block scrolls horizontally, so half of every line in CLAUDE.md was
+          simply invisible. Indentation still survives — `pre-wrap` keeps it —
+          and only lines too long for the screen fold.
+        */}
         {body?.content != null && (
-          <pre className="p-4 overflow-auto text-xs font-mono text-ink-300 leading-relaxed">
+          <pre className="p-4 overflow-y-auto text-xs font-mono text-ink-300 leading-relaxed whitespace-pre-wrap break-words">
             {body.content}
           </pre>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
