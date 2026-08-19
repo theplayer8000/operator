@@ -227,6 +227,8 @@ server/
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
   dev.mjs               — starts the API and Vite together
+  log-update.mjs        — append one entry to the Updates changelog. No deps.
+                          Goes through the API, not the file — see the rule above
   backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
                           never calls the API, so `npm run backup` works when
                           everything is down. index.mjs imports runBackup() and runs
@@ -267,6 +269,7 @@ src/
     ui/                      — Card, EmptyState, StatCounter, ShieldProgress,
                                 Confetti, ConfirmButton — shared primitives
     homelab/                  — ServiceTile, ServiceForm
+    updates/                   — HandoffCard (renders docs/handoffs/CURRENT.md)
     dashboard/                — one file per Dashboard widget
     routine/                    — RoutineSectionCard, RoutineSummary,
                                    RoutineTimeline, routineMeta.ts
@@ -361,7 +364,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Daily Routine | `/routine` | Built — seven fixed sections on a rail, plus a Day Schedule timeline. Steps are tickable from the schedule itself (tap a block to open it in place), and a **day stepper scopes the whole page** to one date. Ticks are stored per date (`routine.completions`, schema v3) and the nightly reset is **gone** — a date with no entry is just a date nothing was ticked on. `RoutineTask.done` now only means anything for **one-off** steps; for repeating ones read `useRoutineData.isDoneOn`, never `task.done` |
 | Mission Board | `/missions`, `/missions/:id` | Built |
 | Calendar | `/calendar` | Built — year calendar, 12 month grids, day panel for add/edit/delete, including moving an event's date. Start/finish time pickers, not a duration field. **Weekly recurrence** — one record per series, expanded at read time; a single occurrence can be skipped (and un-skipped) without touching the rule, while delete takes the whole series. **Per-occurrence notes** (`occurrenceNotes`) sit alongside the series note, so "what I missed on this shift" is separate from standing info — the Work page will read these when it exists, not own them. On phone, tapping a day opens the panel as a popup instead of a scroll-to block. Timed events sync read-only onto Daily Routine's Day Schedule. Dashboard's Upcoming Events reads it, and the clock opens it. Internally still `events.records` / `useEvents` / `CalendarEvent` — only the user-facing label and route changed, same as "Mission Board" over `missions.records` |
-| Updates | `/updates` | Built — shipped/pending log of Operator's own development, reviewable in-app. Distinct from Activity Log |
+| Updates | `/updates` | Built — three sections: the **Handoff** (read-only, rendered from `docs/handoffs/CURRENT.md` — where the work is), the **Queue** (what he's asked for), and the **Changelog** (what shipped, dated). Written to by `scripts/log-update.mjs` as well as by hand. Distinct from Activity Log |
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
@@ -447,6 +450,39 @@ dated handoff in the same folder and reset `CURRENT.md` to the empty template.
 
 If it is empty or stale, say so rather than guessing — a confident summary
 reconstructed from the diff is worse than "the last session left no note".
+
+**The handoff is now readable in the app.** The Updates page renders that file
+directly (`src/components/updates/HandoffCard.tsx`, via `/api/dev/file`) — it is
+**not** copied into the store, so there is one file and one truth. Writing it
+badly is now visible on his phone, which is the point.
+
+## Every change gets logged to Updates — one line, when it lands
+
+**Rule:** when a piece of work ships, log it:
+
+```bash
+node scripts/log-update.mjs "What shipped" "What to know about it"
+node scripts/log-update.mjs "An idea for later" "" --pending   # into the queue instead
+```
+
+The two records answer different questions and neither replaces the other:
+`CURRENT.md` says **where the work is** and is overwritten as it moves; the
+Updates changelog says **what happened**, dated, and is never rewritten. A
+session reading only the first has no history; a session reading only the second
+has no idea what is half-finished.
+
+**Scope: one entry per piece of work someone would want to know shipped — not
+one per commit.** A behaviour change, a new surface, a fixed bug, a reversed
+decision, a decision that needs him. Not a typo in a comment, not a
+formatting pass, not the third commit of the same feature.
+
+Write the entry for the person who will read it in a month, not for git.
+"Fixed BuildStatus" is useless; "every build links from its own row — the footer
+button couldn't handle a third build" is the entry.
+
+The script goes through the API on purpose: `data/operator.json` is held in the
+server's memory while it runs, so a direct write to the file is lost at the next
+save.
 
 ## "resume operator build" — the owner's resume phrase
 

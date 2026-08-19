@@ -193,6 +193,22 @@ up linking to `:5175`, a port the proxy is not listening on.
 `tsc -b` and `vite build` both clean; `dist/` rebuilt, so the live URL has it
 with no restart. Uncommitted on `main`.
 
+## This file is now rendered in the app (2026-08-19)
+
+The Updates page shows it read-only, above the queue —
+`src/components/updates/HandoffCard.tsx` via the existing `/api/dev/file`. Not
+copied into the store: one file, one truth. Collapsed to the first section with
+a "show the whole note" toggle, an "updated Xh ago" stamp, and a warning if it
+has not been touched in three days.
+
+So **writing this badly is now visible on his phone.** Lead with what changes
+what he does next; keep the first section short.
+
+`CLAUDE.md` also gained a rule: every change that ships gets one line in the
+Updates changelog, via `node scripts/log-update.mjs "title" "detail"`. The
+changelog is dated history and is never rewritten; this file is the moving
+picture and is overwritten as it moves.
+
 ## All three servers run from Task Scheduler now
 
 `OperatorServe` (5174), `OperatorViteMain` (5173), `OperatorViteAgent` (5175),
