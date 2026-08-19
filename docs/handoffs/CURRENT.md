@@ -193,6 +193,22 @@ up linking to `:5175`, a port the proxy is not listening on.
 `tsc -b` and `vite build` both clean; `dist/` rebuilt, so the live URL has it
 with no restart. Uncommitted on `main`.
 
+## This file is now rendered in the app (2026-08-19)
+
+The Updates page shows it read-only, above the queue —
+`src/components/updates/HandoffCard.tsx` via the existing `/api/dev/file`. Not
+copied into the store: one file, one truth. Collapsed to the first section with
+a "show the whole note" toggle, an "updated Xh ago" stamp, and a warning if it
+has not been touched in three days.
+
+So **writing this badly is now visible on his phone.** Lead with what changes
+what he does next; keep the first section short.
+
+`CLAUDE.md` also gained a rule: every change that ships gets one line in the
+Updates changelog, via `node scripts/log-update.mjs "title" "detail"`. The
+changelog is dated history and is never rewritten; this file is the moving
+picture and is overwritten as it moves.
+
 ## All three servers run from Task Scheduler now
 
 `OperatorServe` (5174), `OperatorViteMain` (5173), `OperatorViteAgent` (5175),
@@ -202,13 +218,19 @@ beneath it, and jobs from the Claude page would inherit it. Stop one with
 `schtasks /end /tn <name>`. Each shows a console window; closing it stops that
 server.
 
-## Throwaway files from the probe — safe to delete
+## The probe is kept, its output is not
 
-- `scripts/probe-permission.mjs`, `scripts/probe-task.cmd` (worktree, untracked)
-- `scripts/probe-result.txt`, `scripts/probe-result-echo.txt` — the two runs
-- `probe-touch.txt` in the worktree root — what the passing run wrote
-- scheduled task `OperatorSdkProbe` — **keep this one** unless the SDK is
-  dropped; it is the clean room
+Deleted 2026-08-19: `probe-result.txt`, `probe-result-echo.txt`,
+`probe-touch.txt`. Both runs are quoted verbatim above, so the files were
+duplicates.
+
+**Kept**, untracked in the worktree: `scripts/probe-permission.mjs`,
+`scripts/probe-task.cmd`, and the scheduled task `OperatorSdkProbe` that runs
+them. That trio is the only known way to measure the SDK on this machine
+without a Claude Code session contaminating the result. Re-run it after any
+Claude Code or SDK upgrade — the same standing instruction `jobs.mjs` carries
+for the deny-list checks. Deleting the `.mjs` leaves the task pointing at
+nothing, so remove all three together or none.
 
 ## Also open
 

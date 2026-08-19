@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ClipboardList, Plus, Pencil, Check, X, RotateCcw, CheckCircle2 } from "lucide-react";
 import { useUpdates } from "@/hooks/useUpdates";
+import HandoffCard from "@/components/updates/HandoffCard";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
@@ -40,7 +41,13 @@ function formatChangelogDate(dateKey: string): string {
 }
 
 /**
- * Two jobs on one page, and they're deliberately different shapes:
+ * Three jobs on one page, and they're deliberately different shapes:
+ *
+ * - **Handoff** — where the work actually is, read off disk from
+ *   `docs/handoffs/CURRENT.md` rather than stored here. Read-only on purpose:
+ *   the session doing the work owns that file, and a copy editable from two
+ *   places is a copy that goes wrong. It sits first because "what's happening"
+ *   comes before "what do you want doing".
  *
  * - **Queue** — what the owner wants doing. The capture box at the top is the
  *   point of the feature: it's how work gets handed over between sessions,
@@ -101,6 +108,9 @@ export default function Updates() {
           </p>
         </div>
       </div>
+
+      {/* --- Handoff (read-only, from docs/handoffs/CURRENT.md) --- */}
+      <HandoffCard />
 
       {/* --- Quick capture --- */}
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up space-y-2">
