@@ -106,9 +106,17 @@ documented in `jobs.mjs` — a rule that looks right and can never fire:
 - **Reviewed at the desk before merging.** `/api/jobs/:id/permission` sits
   behind `deviceAuthorised()`, the same device-list gate as the terminal — the
   "not behind `assertMine`" note is about job *ownership*, not authentication.
-- **Not yet exercised: the card itself, on a phone.** The events and the route
-  are proven; the React rendering has only been type-checked and built. **That
-  is the next thing to do after the restart.**
+- **The card is proven on the phone** (2026-08-19, after the restart). A `curl`
+  outside the pre-allow list emitted `permission_request id=perm-1`, the turn
+  held, and Allow / No / "Allow, and stop asking about this one" rendered on the
+  iPhone. Nothing about option C is unverified now.
+
+  Worth knowing for the next report of "it didn't work": the first attempt
+  looked like a failure because the phone still had the pre-merge bundle, which
+  has no concept of a live question and falls back to the old *"it couldn't ask,
+  so it stopped"* card. The server was correct throughout. **Check the bundle
+  before believing the UI** — the event log is the authority, and a
+  `permission_request` carrying an `id` is the new path.
 
 ## Landmines
 
