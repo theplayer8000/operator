@@ -426,6 +426,29 @@ const server = createServer(async (req, res) => {
           const body = await readBody(req);
           return json(res, 200, jobs.setModel(id, body?.model));
         }
+        /*
+          Answering a permission the running turn is suspended on (ADR 0012).
+
+          **Deliberately not behind `assertMine`**, on the same reasoning as
+          cancel: the turn is stopped dead until someone answers, and refusing
+          the device in the owner's hand because a different one started the job
+          would strand the work rather than protect anything. Every device that
+          reaches here is already authorised to run arbitrary commands through
+          the terminal, so answering yes to one grants nothing new.
+        */
+        if (action === "permission" && req.method === "POST") {
+          const body = await readBody(req);
+          return json(
+            res,
+            200,
+            jobs.answerPermission(
+              body?.permissionId,
+              body?.decision === "allow" ? "allow" : "deny",
+              body?.remember === true,
+              identity
+            )
+          );
+        }
       } catch (err) {
         const busy = /busy on/.test(err.message);
         return json(res, busy ? 409 : 400, { error: err.message });

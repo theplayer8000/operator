@@ -33,13 +33,23 @@ export interface JobSummary {
   restored?: boolean;
   queued: number;
   latest: number;
+  /** Questions this job has stopped to ask. Waiting on a person, not working. */
+  asking?: number;
 }
 
 /** Every event carries seq/at/type; the rest depends on the type. */
 export interface JobEvent {
   seq: number;
   at: string;
-  type: "prompt" | "text" | "tool_use" | "tool_result" | "permission_request" | "status" | "usage";
+  type:
+    | "prompt"
+    | "text"
+    | "tool_use"
+    | "tool_result"
+    | "permission_request"
+    | "permission_answer"
+    | "status"
+    | "usage";
   text?: string;
   raw?: boolean;
   error?: boolean;
@@ -47,6 +57,24 @@ export interface JobEvent {
   subject?: string;
   description?: string;
   rule?: string;
+  /*
+    Present only on a **live** question — one the turn is currently suspended
+    on, waiting to be answered (ADR 0012).
+
+    Its absence is the whole distinction the UI turns on. The same event type is
+    also emitted after the fact by the CLI fallback, describing a denial that
+    already ended a turn; that one has no `id`, nothing is waiting for it, and
+    rendering Allow/Deny buttons on it would offer a decision that resolves
+    nothing. An event log replayed from before a restart is the other case: the
+    question died with the process, so the buttons must not come back.
+  */
+  id?: string;
+  pending?: boolean;
+  /** The bridge's own sentence — "Claude wants to read foo.txt". */
+  title?: string;
+  /** On `permission_answer`: how the question ended. */
+  decision?: "allowed" | "denied" | "timeout" | "cancelled" | "abandoned";
+  by?: string | null;
   /*
     Which kind of refusal this is — the standing profile, or an ordinary
     missing rule. Optional because an event log from before the server was
@@ -70,6 +98,10 @@ interface JobsList {
   defaultModel?: string;
   /** The standing permission profile, named by the server rather than in prose. */
   deniedTools?: string[];
+  /** What runs without asking — option C's quiet half, also named by the server. */
+  allowedTools?: string[];
+  /** Which runner is behind these jobs. Only "sdk" can pause to ask. */
+  runner?: "sdk" | "cli";
   spentUsd?: number;
   budgetUsd?: number | null;
   scope?: string;
@@ -315,6 +347,45 @@ export function useJobs() {
     return body.added ? "allowed" : (body.reason ?? "already allowed");
   }, []);
 
+  /**
+   * Answer a question the running turn is suspended on.
+   *
+   * This is the one ADR 0012 was adopted for. The turn is sitting inside a
+   * `canUseTool` await on the server — not stopped, not restarted afterwards,
+   * the same turn with the same context — and this settles it. The reply comes
+   * back within the second, so the events are re-read immediately rather than
+   * waiting for the next poll: a tap that appears to do nothing for a second
+   * gets tapped again.
+   *
+   * `remember` stops it asking about that exact rule until the server restarts.
+   */
+  const answerPermission = useCallback(
+    async (
+      jobId: string,
+      permissionId: string,
+      decision: "allow" | "deny",
+      remember = false
+    ) => {
+      try {
+        const body = (await post(`/api/jobs/${encodeURIComponent(jobId)}/permission`, {
+          permissionId,
+          decision,
+          remember,
+        })) as { answered?: boolean; reason?: string };
+        await refreshEvents(jobId);
+        await refreshList();
+        // Answered false means the question had already gone — timed out,
+        // cancelled, or settled from another device. Worth saying, not worth
+        // an error state.
+        return body.answered === false ? (body.reason ?? "already settled") : null;
+      } catch (err) {
+        setError((err as Error).message);
+        return (err as Error).message;
+      }
+    },
+    [refreshEvents, refreshList]
+  );
+
   /** Show a blank conversation. What gets sent next starts a new job. */
   const startNew = useCallback(() => {
     setComposing(true);
@@ -331,6 +402,8 @@ export function useJobs() {
     models: list?.models ?? [],
     defaultModel: list?.defaultModel,
     deniedTools: list?.deniedTools ?? [],
+    allowedTools: list?.allowedTools ?? [],
+    runner: list?.runner ?? "sdk",
     runningId: list?.running ?? null,
     authorised: list?.authorised !== false,
     canManage: list?.canManage === true,
@@ -354,6 +427,7 @@ export function useJobs() {
     remove,
     clearAll,
     allowRule,
+    answerPermission,
     refreshList,
   };
 }

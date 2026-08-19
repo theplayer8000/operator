@@ -31,10 +31,24 @@
 // `--output-format json` gave one envelope at the end, which is why the page
 // could only ever say "Claude is working…".
 //
-// This is still `claude -p`. Streaming *output* is not the same as
-// `--input-format stream-json`, which is step 2 and is what finally lets a
-// permission be answered inside the same turn. Until then a denial still ends
-// the turn, and `permissions.mjs` is how it stops being a dead end.
+// ## A denial is no longer a dead end
+//
+// Turns run through the **Claude Agent SDK** (`runner.mjs`, ADR 0012), whose
+// `canUseTool` callback suspends the turn until it is answered. So a tool
+// Claude is not pre-approved for becomes a question on the phone with an Allow
+// and a Deny, and the same turn carries on with the answer — rather than ending
+// and being asked again from the beginning.
+//
+// The mode is the owner's decision of 2026-08-19, option C of three:
+// **`default` plus a broad pre-allow list** (ALLOWED_TOOLS). Ordinary work —
+// reading, editing, building, committing — never prompts because it is
+// pre-approved. Anything outside that pauses and asks. The deny list still
+// hard-stops `git push` and deletes, and those never reach the callback at all,
+// so they cannot be waved through by a mis-tap.
+//
+// The old `claude -p` spawn is still here behind `OPERATOR_JOB_RUNNER=cli`.
+// It is a fallback for the SDK path failing in a way that would otherwise leave
+// no working chat, not a supported second mode — see the note above runTurn.
 //
 // ## Same security gate as the terminal, deliberately
 //
@@ -49,6 +63,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
+import { runTurn as runProviderTurn } from "./runner.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -111,6 +126,25 @@ const IDLE_TIMEOUT_MS = Number(process.env.OPERATOR_JOB_IDLE_MS ?? 10 * 60_000) 
 */
 const TOOL_IDLE_TIMEOUT_MS =
   Number(process.env.OPERATOR_JOB_TOOL_IDLE_MS ?? 45 * 60_000) || 45 * 60_000;
+/*
+  How long a permission question waits for an answer before giving up.
+
+  It has to exist — a turn suspended on a question nobody will ever answer holds
+  the runner forever, and one job at a time means it holds every other job too.
+  It has to be *generous*, because the question lands on a phone that may be in
+  a pocket: the whole point is that the owner answers when he gets to it, not
+  that he is on call.
+
+  Timing out **denies**, and says so in the event log. The alternative — allow
+  on timeout — turns walking away from your phone into approval, which is the
+  one interpretation of silence nobody wants.
+
+  The idle timers below are suspended while a question is outstanding; see
+  `job.awaitingPermission`. Otherwise the tool-idle timeout would kill the turn
+  at 45 minutes for the crime of waiting to be answered.
+*/
+const PERMISSION_TIMEOUT_MS =
+  Number(process.env.OPERATOR_JOB_PERMISSION_MS ?? 30 * 60_000) || 30 * 60_000;
 /** stderr is kept for the failure message, not as a log. */
 const MAX_STDERR_CHARS = 20_000;
 
@@ -168,7 +202,27 @@ const MAX_STDOUT_BYTES = 4_000_000;
   Narrow it with OPERATOR_JOB_DENY if a setup ever wants less.
 */
 /*
-  The standing profile is **disabled** until the owner decides, because testing
+  DECIDED 2026-08-19 — option C. This constant is now the CLI fallback's switch
+  only; the SDK path ignores it and always runs `default` + ALLOWED_TOOLS.
+
+  The three options were mutually exclusive and the owner picked the third:
+
+    bypassPermissions   no interruptions, canUseTool never fires — ADR 0012
+                        buys nothing, and the Snapchat dead end stays.
+    default alone       every unapproved tool prompts. Answerable, but a
+                        workspace that asks to read a file is not a workspace.
+    default + pre-allow ordinary work is silent because it is pre-approved;
+                        anything else pauses and is answerable from the phone.
+
+  What made the third cheap was the probe of 2026-08-19: the SDK auto-approves
+  trivially safe calls without consulting the callback at all (`echo` never
+  reached it), so ALLOWED_TOOLS only has to cover the middle ground.
+
+  The note below is kept because it is still true of the CLI fallback, and it is
+  the reason the pre-allow list is a list of *what to run without asking* rather
+  than a blacklist of what not to.
+
+  The standing profile was **disabled** pending that decision, because testing
   it found the deny list is not a boundary.
 
   Verified 2026-08-01, one attempt each, no adversarial effort:
@@ -190,6 +244,26 @@ const MAX_STDOUT_BYTES = 4_000_000;
 */
 const PROFILE_ARMED = process.env.OPERATOR_JOB_PROFILE === "1";
 
+/*
+  The escape hatch back to spawning `claude -p`.
+
+  The SDK is the runner (ADR 0012) and this is not a supported second mode — it
+  is there because the failure it guards against is total. If the SDK path
+  breaks on an upgrade, the owner does not lose a feature, he loses the way he
+  works on this project, possibly from a phone, possibly with no way to fix it
+  except the thing that just broke. One environment variable and a restart is a
+  cheaper insurance policy than that risk deserves.
+
+  It does **not** get the permission pause — print mode cannot ask, which is the
+  entire reason ADR 0012 exists. Under `cli` a denial goes back to ending the
+  turn and being reported after the fact.
+
+  Delete this and the spawn path with it once the SDK has a few weeks of real
+  use. Two runners is a maintenance tax, and the note above is the only thing
+  keeping it honest about which one is real.
+*/
+const USE_CLI = process.env.OPERATOR_JOB_RUNNER === "cli";
+
 const DENIED_TOOLS = (
   process.env.OPERATOR_JOB_DENY ??
   [
@@ -198,6 +272,122 @@ const DENIED_TOOLS = (
     "Bash(rmdir:*)",
     "Bash(del:*)",
     "PowerShell(Remove-Item:*)",
+  ].join(",")
+)
+  .split(",")
+  .map((t) => t.trim())
+  .filter(Boolean);
+
+/*
+  The pre-allow list — what runs without asking. Option C's quiet half.
+
+  The line it draws: **the tools Claude uses constantly run silently; commands
+  that touch the machine rather than the repo pause and ask.** Installing a
+  package, killing a process or calling out to the network now suspend the turn
+  and put a question on the owner's phone, instead of ending it — which is the
+  entire point of ADR 0012.
+
+  ## Two forms, and they behave differently. Measured 2026-08-19.
+
+  **A bare tool name auto-approves that tool completely, before `canUseTool` is
+  consulted at all.** The SDK says so itself, on stderr:
+
+      [CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked for:
+      Read, Glob, Grep. Bare allowedTools entries auto-approve the whole tool
+      before the callback is consulted.
+
+  So `Write` here means every write, anywhere on the disk, unasked — not every
+  write inside the repo.
+
+  **The obvious fix does not work.** `Write(**)` was tried, and it matched
+  nothing: an in-repo write and a write to the temp directory *both* asked. That
+  is the worst outcome of the three, because a workspace that asks permission
+  for every file edit is one nobody will use, and the failure is silent — the
+  rule sits in the list looking effective, exactly like the two inert-grant bugs
+  this file already documents.
+
+  So the choice is binary, and `Write`/`Edit` are bare **deliberately**:
+
+    - It is the owner's actual decision. The standing profile is "everything
+      except `git push` and deleting files", and editing anywhere including
+      `server/` is named in it as recoverable from git.
+    - It is not a regression. Under the previously-armed `bypassPermissions`
+      profile, writes anywhere were already unasked.
+    - What contains the blast radius here is the **worktree**, not this list —
+      the same reasoning the threat model gives for the deny list being a speed
+      bump rather than a boundary.
+
+  If a narrower rule is wanted later, **measure it before shipping it**. Both
+  probes are in `scripts/` and cost about $0.35 each.
+
+  ## Bash entries
+
+  Patterns matched by Claude Code's own matcher, the same syntax as the deny
+  list, and they *are* scoped — these are prefixes, so `Bash(git commit:*)`
+  covers `git commit -m "…"` but not `git -C … commit`. The same under-matching
+  that makes a *deny* list useless makes an *allow* list safe: wrong in the
+  direction of asking too often, which is a tap, not a hazard.
+
+  Deliberately NOT here:
+    - `Bash(npm install:*)`  reaches the network and rewrites the lockfile
+    - `Bash(curl:*)` / WebFetch  outbound, and the owner approves hosts one by
+                                 one (CLAUDE.md) — that rule is not the SDK's to
+                                 relax
+    - `Bash(schtasks:*)`, `Bash(taskkill:*)`  machine state, not repo state
+
+  Widen it with OPERATOR_JOB_ALLOW (comma-separated) if the asking gets tedious
+  — but widen it deliberately, one entry at a time, or it becomes
+  bypassPermissions wearing a list.
+
+  One more shadow to know about, from the same warning: **allow rules in
+  `.claude/settings.local.json` also bypass the callback**, and the SDK cannot
+  see them to warn about them. The post-hoc grant button writes to that file, so
+  a rule granted there stops being a question rather than becoming an
+  auto-answered one. See SETTINGS_FILE.
+*/
+const ALLOWED_TOOLS = (
+  process.env.OPERATOR_JOB_ALLOW ??
+  [
+    // Reading and searching. Never destructive, and constant enough that
+    // asking about them would make the feature unusable.
+    "Read",
+    "Glob",
+    "Grep",
+    "NotebookRead",
+    "TodoWrite",
+    // Editing. The owner's standing profile explicitly covers this, including
+    // `server/`, because the worktree and git make it recoverable.
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    // The verification gate CLAUDE.md requires before anything is handed back.
+    "Bash(npm run build:*)",
+    "Bash(npx tsc:*)",
+    "Bash(npx vite:*)",
+    "Bash(node --check:*)",
+    "Bash(node scripts/log-update.mjs:*)",
+    // Git, minus the one that publishes — which the deny list stops outright.
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
+    "Bash(git branch:*)",
+    "Bash(git checkout:*)",
+    "Bash(git stash:*)",
+    "Bash(git worktree list:*)",
+    // Looking around the filesystem.
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(head:*)",
+    "Bash(tail:*)",
+    "Bash(wc:*)",
+    "Bash(find:*)",
+    "Bash(grep:*)",
+    "Bash(rg:*)",
+    "Bash(echo:*)",
+    "Bash(pwd:*)",
   ].join(",")
 )
   .split(",")
@@ -257,12 +447,30 @@ function matchesStanding(tool, subject) {
   });
 }
 
+/**
+ * Told to the model, because how it should behave depends on which refusal it
+ * hits, and the two are not the same.
+ *
+ * **Asking is now possible and retrying is now correct** — for everything
+ * except the two denied tools. Under the SDK a tool outside the pre-allow list
+ * suspends the turn and asks the owner, so "it stopped, ask again" is no longer
+ * the model's problem to work around. Telling it otherwise would make it avoid
+ * the exact tools the whole feature exists to unblock.
+ *
+ * The two denied ones are unchanged: they are refused before the question is
+ * ever asked, so retrying them is a loop with no exit.
+ */
 const APPEND_PROMPT = [
-  "You are running inside Operator, headless. You cannot be asked for approval mid-turn.",
-  `The following are denied and will never succeed: ${DENIED_TOOLS.join(", ")}.`,
-  "If your work needs one of them, DO NOT retry it and do not try to reach it another way.",
-  "Finish everything else, then write the exact command out for the owner to run in Operator's",
-  "terminal himself, and note it in docs/handoffs/CURRENT.md so it survives a restart.",
+  "You are running inside Operator.",
+  "Tools outside a pre-approved list pause the turn and ask the owner on his phone;",
+  "he may take a while to answer, and a denial there is a considered no — respect it",
+  "and carry on with the rest of the work rather than looking for another route to",
+  "the same thing.",
+  `Separately, these are denied outright and can never be approved: ${DENIED_TOOLS.join(", ")}.`,
+  "You will not be asked about those. If your work needs one, DO NOT retry it and do not",
+  "try to reach it another way. Finish everything else, then write the exact command out",
+  "for the owner to run in Operator's terminal himself, and note it in",
+  "docs/handoffs/CURRENT.md so it survives a restart.",
 ].join(" ");
 
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
@@ -394,8 +602,27 @@ function blankJob(id) {
     pending: [],
     events: [],
     eventSeq: 0,
+    /** The CLI fallback's child process, when that path is in use. */
     proc: null,
+    /** The SDK path's stop button. Aborts the turn *and* any open question. */
+    abort: null,
+    /** Set by the SDK path so `ask()` can stand the idle timer down. */
+    touchIdle: null,
+    /** Questions outstanding. Non-zero means waiting on a person, not stuck. */
+    awaitingPermission: 0,
   };
+}
+
+/**
+ * Stop whichever runner this job is using.
+ *
+ * Both paths, one call, because every caller wants "stop it" and none of them
+ * should have to know which runner is behind this job. Missing the SDK half was
+ * the obvious way to ship a Stop button that silently did nothing.
+ */
+function halt(job) {
+  if (job.proc) job.proc.kill();
+  if (job.abort) job.abort.abort();
 }
 
 /**
@@ -467,6 +694,178 @@ export function usage() {
   };
 }
 
+// --- questions ------------------------------------------------------------
+//
+// A permission the owner has not answered yet.
+//
+// This is the whole of ADR 0012 in one map. `canUseTool` hands us a promise's
+// worth of suspended turn; we park the resolver here, emit an event the phone
+// can render, and settle it when he taps. The turn is *inside* that await the
+// entire time — not polling, not restarted afterwards, the same turn with the
+// same context, waiting.
+//
+// Everything else in this section exists so that the await always ends: by an
+// answer, by the timeout, or by a cancel. A resolver that leaks is a job that
+// hangs forever and, since one job runs at a time, a queue that never moves.
+
+/** @type {Map<string, object>} permission id → the parked question. */
+const questions = new Map();
+let questionSeq = 0;
+
+/*
+  Rules the owner said to stop asking about, for as long as this server runs.
+
+  **In memory, deliberately, and not the same thing as `allowRule` below.**
+  Writing to `.claude/settings.local.json` is how the old post-hoc grant worked
+  and it survives a restart, but it is read by Claude Code when it builds a
+  session — so a rule written mid-conversation may not apply to the very turn
+  that is sitting there waiting for it. This set is checked by us, before we
+  ask, so "don't ask again" means it from the next question onwards with no
+  ambiguity about when it takes effect.
+
+  The cost is that it is forgotten on restart. That is the honest trade: a
+  remembered grant that quietly stops applying is worse than one you re-tap.
+*/
+const remembered = new Set();
+
+/** What the question is about, in one line, for a phone. */
+function questionRule(tool, subject) {
+  return subject ? `${tool}(${subject})` : tool;
+}
+
+/**
+ * Ask the owner, and suspend until he answers.
+ *
+ * @returns {Promise<boolean>} true to allow
+ */
+function ask(job, req) {
+  const rule = questionRule(req.tool, req.subject);
+
+  // Already answered once with "don't ask again" — honour it without a round
+  // trip. Checked before anything is emitted so the log doesn't fill with
+  // questions that were never really asked.
+  if (remembered.has(rule)) return Promise.resolve(true);
+
+  /*
+    Already stopping. `addEventListener` on a signal that has *already* aborted
+    never fires, so registering the teardown below would park a question nothing
+    could settle — and it would sit there for the full permission timeout on a
+    job the owner had stopped half an hour earlier. Narrow window (cancel landing
+    between the tool call and this callback) and easy to never see in testing,
+    which is why it is worth a line rather than a comment.
+  */
+  if (req.signal?.aborted) return Promise.resolve(false);
+
+  const id = `perm-${++questionSeq}`;
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (allowed, decision, by = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req.signal?.removeEventListener?.("abort", onAbort);
+      questions.delete(id);
+      job.awaitingPermission = Math.max(0, (job.awaitingPermission ?? 0) - 1);
+      emit(job, "permission_answer", { id, rule, decision, by });
+      // Silence means "stuck" again now that nobody is being waited on.
+      job.touchIdle?.();
+      resolve(allowed);
+    };
+
+    const timer = setTimeout(() => finish(false, "timeout"), PERMISSION_TIMEOUT_MS);
+    timer.unref?.();
+
+    /*
+      The third `canUseTool` argument earns its place here.
+
+      Without the signal, pressing Stop on a job that is waiting to be answered
+      would abort the SDK's turn while this promise stayed pending — the job
+      would report cancelled, the resolver would sit in this map forever, and
+      the runner claim would only come back at the permission timeout, half an
+      hour later, for a job the owner thought he had stopped.
+    */
+    const onAbort = () => finish(false, "cancelled");
+    req.signal?.addEventListener?.("abort", onAbort, { once: true });
+
+    questions.set(id, {
+      id,
+      jobId: job.id,
+      tool: req.tool,
+      subject: req.subject,
+      rule,
+      finish,
+    });
+    job.awaitingPermission = (job.awaitingPermission ?? 0) + 1;
+    // Stand the idle timer down. A turn waiting on a person is not a turn that
+    // has hung, and the tool-idle timeout would otherwise kill it at 45
+    // minutes for the crime of being patient.
+    job.touchIdle?.();
+
+    emit(job, "permission_request", {
+      id,
+      tool: req.tool,
+      subject: req.subject,
+      rule,
+      // The bridge's own sentence ("Claude wants to read foo.txt") when it gave
+      // us one — it knows things this file doesn't, such as which path inside a
+      // Bash command triggered the ask.
+      title: req.title || "",
+      description: req.description || "",
+      // Answerable, as opposed to the after-the-fact denial records the CLI
+      // path emits under this same type. The client keys its buttons on this:
+      // an old event log from before a restart has no `id` and must not render
+      // a button that resolves nothing.
+      pending: true,
+      standing: false,
+    });
+
+    console.log(`[operator] job ${job.id} is asking about ${rule}`);
+  });
+}
+
+/**
+ * Answer one. Called by the route the phone taps.
+ *
+ * @param {string} id
+ * @param {"allow"|"deny"} decision
+ * @param {boolean} remember  stop asking about this rule until the server restarts
+ */
+export function answerPermission(id, decision, remember, identity) {
+  const q = questions.get(id);
+  /*
+    Gone rather than wrong. A question disappears on its own three ways — the
+    timeout, a cancel, or the job being closed — and every one of them can race
+    a tap that was already on its way. Saying "that one has gone" is honest and
+    harmless; a 404 would render as a failure on a phone that did nothing wrong.
+  */
+  if (!q) return { answered: false, reason: "that question has already been settled" };
+
+  const allowed = decision === "allow";
+  if (allowed && remember) remembered.add(q.rule);
+  q.finish(allowed, allowed ? "allowed" : "denied", identity?.device ?? null);
+
+  console.log(
+    `[operator] ${allowed ? "allowed" : "denied"} by ${identity?.device ?? "unknown"}: ${q.rule}` +
+      (allowed && remember ? " (and won't ask again)" : "")
+  );
+  return { answered: true, rule: q.rule, decision, remembered: Boolean(allowed && remember) };
+}
+
+/** Questions outstanding on one job — so a reopened tab knows what it owes. */
+export function openQuestions(jobId) {
+  return [...questions.values()]
+    .filter((q) => q.jobId === jobId)
+    .map(({ id, tool, subject, rule }) => ({ id, tool, subject, rule }));
+}
+
+/** Tear down every question on a job. Used when it is cancelled or closed. */
+function dropQuestions(jobId, decision) {
+  for (const q of [...questions.values()]) {
+    if (q.jobId === jobId) q.finish(false, decision);
+  }
+}
+
 // --- the runner -----------------------------------------------------------
 
 /**
@@ -507,9 +906,173 @@ function pump() {
       before another call can observe it.
     */
     runningId = job.id;
-    void runTurn(job);
+    /*
+      An unhandled rejection here is not a lost turn, it is a dead server —
+      Node's default is to throw on one, and this is called from a `void` with
+      nobody downstream to catch it. Both runners handle their own failures, so
+      reaching this means something unforeseen; report it on the job, hand the
+      runner back, and let the queue carry on rather than taking Operator down
+      with it.
+    */
+    void runTurn(job).catch((err) => {
+      const detail = String(err?.message ?? err).slice(0, 500);
+      console.error(`[operator] job ${job.id} runner threw:`, detail);
+      job.error = detail;
+      setStatus(job, "failed", detail);
+      if (runningId === job.id) runningId = null;
+      queueMicrotask(pump);
+    });
     return;
   }
+}
+
+/**
+ * One turn, through the SDK. The real runner.
+ *
+ * Everything CLI-shaped is gone from this path: no argv, no NDJSON buffering,
+ * no stderr scraping, no `.cmd` resolution. `runner.mjs` hands back parsed
+ * events and this owns what they mean *to a job* — the accounting, the idle
+ * timers, the session id, the queue.
+ *
+ * The caller has already claimed the runner and reset the job's counters.
+ */
+async function runViaSdk(job, prompt) {
+  setStatus(job, "running");
+
+  /*
+    One controller for every way this turn can be stopped: the Stop button, the
+    idle timeout, and the job being closed. `runner.mjs` forwards it to the SDK
+    *and* to each open question, so a cancel unblocks a turn suspended on a
+    permission instead of leaving it parked until the permission timeout.
+  */
+  const abort = new AbortController();
+  job.abort = abort;
+
+  let idle = null;
+  function touch() {
+    if (idle) clearTimeout(idle);
+    idle = null;
+    /*
+      Three states, not two. Working (short fuse), waiting on a tool (long
+      fuse), and waiting on a person (no fuse at all — see PERMISSION_TIMEOUT_MS,
+      which is the bound on that one).
+    */
+    if ((job.awaitingPermission ?? 0) > 0) return;
+    const ms = (job.outstandingTools ?? 0) > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;
+    idle = setTimeout(() => {
+      job.error = `no output for ${Math.round(ms / 60000)} minutes — stopped`;
+      abort.abort();
+    }, ms);
+    idle.unref?.();
+  }
+  // `ask()` reaches for this by name when a question opens and closes.
+  job.touchIdle = touch;
+  touch();
+
+  console.log(
+    `[operator] job ${job.id} turn ${job.turns + 1} by ${job.device ?? "unknown"}` +
+      `${job.sessionId ? ` (resuming ${job.sessionId.slice(0, 8)})` : " (new session)"}`
+  );
+
+  let result;
+  try {
+    result = await runProviderTurn({
+      prompt,
+      model: job.model,
+      sessionId: job.sessionId,
+      cwd: JOB_CWD,
+      deniedTools: DENIED_TOOLS,
+      allowedTools: ALLOWED_TOOLS,
+      budgetUsd: BUDGET_USD || null,
+      appendSystemPrompt: APPEND_PROMPT,
+      /*
+        Option C. `default` is the only mode that consults the callback —
+        `bypassPermissions` decides for itself and would make every line of the
+        questions section above dead code.
+      */
+      permissionMode: "default",
+      signal: abort.signal,
+      onEvent: (type, data = {}) => {
+        switch (type) {
+          case "session":
+            // Persisted the moment it exists, not at the end of the turn.
+            if (data.sessionId && !job.sessionId) {
+              job.sessionId = data.sessionId;
+              void persist();
+            }
+            return;
+          case "tool_use":
+            // Tracked so the idle timer can tell "waiting on a build" from
+            // "stuck" — see TOOL_IDLE_TIMEOUT_MS.
+            job.outstandingTools = (job.outstandingTools ?? 0) + 1;
+            break;
+          case "tool_result":
+            job.outstandingTools = Math.max(0, (job.outstandingTools ?? 0) - 1);
+            break;
+          default:
+            break;
+        }
+        emit(job, type, data);
+        touch();
+      },
+      onPermission: (req) => ask(job, req),
+    });
+  } catch (err) {
+    // runner.mjs handles its own errors and returns them; this is the belt to
+    // that braces. An exception escaping here without releasing the runner
+    // would stall every queued job behind it.
+    result = { sessionId: job.sessionId, costUsd: 0, error: String(err?.message ?? err).slice(0, 500) };
+  } finally {
+    if (idle) clearTimeout(idle);
+    job.touchIdle = null;
+    job.abort = null;
+    job.outstandingTools = 0;
+    // Nothing should still be parked here — the abort tears questions down and
+    // a clean turn cannot end with one outstanding. If one is, it is a leaked
+    // resolver, and leaving it would hang the next thing that waits on it.
+    dropQuestions(job.id, "abandoned");
+    if (runningId === job.id) runningId = null;
+  }
+
+  job.turns += 1;
+  if (result.sessionId) job.sessionId = result.sessionId;
+
+  const cost = typeof result.costUsd === "number" ? result.costUsd : 0;
+  if (cost > 0) {
+    job.costUsd += cost;
+    spentUsd += cost;
+    maxTurnUsd = Math.max(maxTurnUsd, cost);
+    emit(job, "usage", {
+      // Reported by Claude Code as the API-equivalent cost. On a subscription
+      // login this is plan usage, not a charge — every label downstream must
+      // say so rather than render it as money.
+      turnUsd: cost,
+      jobUsd: job.costUsd,
+      spentUsd,
+      budgetUsd: BUDGET_USD || null,
+    });
+  }
+
+  // Cancelling is not failing. The status was set when Stop was pressed and the
+  // abort that followed is the expected end, not an error to report over it.
+  if (job.status === "cancelled") {
+    void persist();
+    pump();
+    return;
+  }
+
+  // `job.error` carries the idle timeout's reason, which the SDK reports as a
+  // plain abort with no message of its own.
+  const failure = result.error ?? job.error ?? null;
+  if (failure) {
+    job.error = failure;
+    setStatus(job, "failed", failure);
+  } else {
+    setStatus(job, "complete");
+  }
+
+  void persist();
+  pump();
 }
 
 async function runTurn(job) {
@@ -551,6 +1114,17 @@ async function runTurn(job) {
     return;
   }
 
+  // `runningId` was claimed by pump() before this ran — see the note there.
+  job.outstandingTools = 0;
+  job.awaitingPermission = 0;
+  job.startedAt = job.startedAt ?? new Date().toISOString();
+  job.error = null;
+
+  if (!USE_CLI) {
+    await runViaSdk(job, prompt);
+    return;
+  }
+
   const resolved = await resolveExecutable("claude");
   if (!resolved) {
     job.error = "couldn't find Claude Code on this machine — set OPERATOR_TERMINAL_BIN_CLAUDE";
@@ -559,10 +1133,6 @@ async function runTurn(job) {
     return;
   }
 
-  // `runningId` was claimed by pump() before this ran — see the note there.
-  job.outstandingTools = 0;
-  job.startedAt = job.startedAt ?? new Date().toISOString();
-  job.error = null;
   setStatus(job, "running");
 
   // `--resume` only on later turns: passing it with no prior session errors.
@@ -892,6 +1462,13 @@ function summary(job) {
     restored: job.restored,
     queued: job.pending.length,
     latest: job.eventSeq,
+    /*
+      Waiting on an answer, not working. The tab strip needs this: a job that
+      has stopped to ask looks identical to one that is thinking, and the whole
+      feature fails if the question is only visible to whoever happens to have
+      that tab open.
+    */
+    asking: job.awaitingPermission ?? 0,
   };
 }
 
@@ -911,6 +1488,14 @@ export function list() {
     // The standing profile, so the page states what it actually is rather than
     // repeating it in prose that drifts the first time OPERATOR_JOB_DENY is set.
     deniedTools: DENIED_TOOLS,
+    // What runs without asking, named by the server for the same reason the
+    // deny list is: so the page states the policy rather than describing it in
+    // prose that drifts the first time OPERATOR_JOB_ALLOW is set.
+    allowedTools: ALLOWED_TOOLS,
+    // Which runner is actually behind these jobs. The permission pause only
+    // exists on one of them, and a page promising a tappable question under the
+    // CLI fallback would be lying.
+    runner: USE_CLI ? "cli" : "sdk",
     ...usage(),
   };
 }
@@ -990,12 +1575,19 @@ export function input(id, body, identity) {
       turn instead of stopping. Stop means stop.
     */
     job.pending.length = 0;
-    if (job.proc) {
+    if (job.proc || job.abort) {
+      // Status first, then stop: the SDK path reads `job.status` when the turn
+      // unwinds to decide whether this was a cancellation or a failure, and the
+      // abort can get there before the next line would have.
       setStatus(job, "cancelled", "stopped from the app");
-      job.proc.kill();
+      halt(job);
     } else {
       setStatus(job, "cancelled", "stopped before it started");
     }
+    // A question outstanding on a job nobody is running any more is a promise
+    // nothing will ever settle. The abort above covers the SDK path; this
+    // covers a job stopped before its turn began.
+    dropQuestions(job.id, "cancelled");
     return summary(job);
   }
 
@@ -1034,10 +1626,11 @@ export function setModel(id, model) {
 export function remove(id, identity) {
   const job = jobs.get(id);
   if (!job) throw new Error("no such job");
-  if (job.proc) {
+  if (job.proc || job.abort) {
     setStatus(job, "cancelled", "closed from the app");
-    job.proc.kill();
+    halt(job);
   }
+  dropQuestions(id, "cancelled");
   jobs.delete(id);
   const at = waiting.indexOf(id);
   if (at !== -1) waiting.splice(at, 1);
@@ -1048,7 +1641,10 @@ export function remove(id, identity) {
 
 /** Close every job. The index file goes with them, or they'd return on restart. */
 export function clear(identity) {
-  for (const job of jobs.values()) if (job.proc) job.proc.kill();
+  for (const job of jobs.values()) {
+    halt(job);
+    dropQuestions(job.id, "cancelled");
+  }
   jobs.clear();
   waiting.length = 0;
   runningId = null;
@@ -1078,7 +1674,22 @@ export function clear(identity) {
 // finally makes the answer land *inside* the same turn. Until then this is how a
 // denial stops being a dead end.
 
-const SETTINGS_FILE = join(ROOT, ".claude", "settings.local.json");
+/*
+  **JOB_CWD, not ROOT.**
+
+  Claude Code reads `.claude/settings.local.json` relative to the directory it
+  is working in, and since OPERATOR_JOB_CWD sent jobs into the `agent` worktree
+  that is no longer where Operator itself is installed. Writing to ROOT put
+  every granted rule in the main checkout, to be read by a Claude running in the
+  worktree — a file that looks right, sits in the allow list, and can never
+  fire.
+
+  That is the same failure as the Windows path-matching bug documented below,
+  arriving from a different direction: a grant that silently does nothing. It
+  cost three denied grants to find the first time. Unset, JOB_CWD is ROOT and
+  this is exactly what it was.
+*/
+const SETTINGS_FILE = join(JOB_CWD, ".claude", "settings.local.json");
 
 /**
  * Turn a raw denial into something showable, plus the rule that would permit it.
@@ -1136,7 +1747,9 @@ export function describeDenial(d) {
 export function toRulePath(raw) {
   if (!raw) return "";
   const slashed = raw.replace(/\\/g, "/");
-  const root = ROOT.replace(/\\/g, "/").replace(/\/$/, "");
+  // Relative to where Claude works, not where Operator lives — the two are
+  // different checkouts now. See the note on SETTINGS_FILE.
+  const root = JOB_CWD.replace(/\\/g, "/").replace(/\/$/, "");
   // Case-insensitive because Windows paths are, and the drive letter's case
   // varies depending on which tool reported it.
   if (slashed.toLowerCase().startsWith(root.toLowerCase() + "/")) {
