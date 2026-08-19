@@ -109,7 +109,7 @@ documented in `jobs.mjs` — a rule that looks right and can never fire:
 - **The card is proven on the phone** (2026-08-19, after the restart). A `curl`
   outside the pre-allow list emitted `permission_request id=perm-1`, the turn
   held, and Allow / No / "Allow, and stop asking about this one" rendered on the
-  iPhone. Nothing about option C is unverified now.
+  iPhone.
 
   Worth knowing for the next report of "it didn't work": the first attempt
   looked like a failure because the phone still had the pre-merge bundle, which
@@ -117,6 +117,60 @@ documented in `jobs.mjs` — a rule that looks right and can never fire:
   so it stopped"* card. The server was correct throughout. **Check the bundle
   before believing the UI** — the event log is the authority, and a
   `permission_request` carrying an `id` is the new path.
+
+- **Then tested from inside a real job**, the running session running gated
+  commands against itself:
+
+  | Command | Outcome |
+  |---|---|
+  | `git remote -v` | ran silently — read-only, auto-approved by the SDK's classifier before the callback |
+  | `curl … \| node -e …` | `Refused from Operator.` — the deny path |
+  | `npm --version` | allowed from the phone; **the same turn resumed** and returned `11.18.0` |
+
+  So both answers work, and the line the pre-allow list draws lands in the right
+  place: read-only sails through, outbound and machine-state commands ask.
+
+### A long command made the card hard to answer
+
+`subject` is the whole command, rendered in a `<pre>` above the buttons. A
+`log-update.mjs` call carries a paragraph of prose, so the block grew until
+**Allow was pushed down the card** — and a card you cannot reach is
+indistinguishable, from the agent's side, from one you denied.
+
+Inferred from contrast, not observed directly: `npm --version` and `npm root`
+were answered immediately, while the same long command came back
+`Refused from Operator.` twice in a row. Same bundle, same gate, minutes apart,
+and the only variable was length. **It is possible those two were simply
+declined on purpose** — the agent cannot tell a deny from an unreachable button,
+which is itself the point.
+
+Fixed in `ClaudeChat.tsx` either way: the block is capped at `max-h-24` and
+scrolls, so the buttons stay reachable whatever is being asked about. **Not yet
+re-tested on the phone.** To reach the live app: merge, then
+
+```bash
+npm --prefix D:\Projects\Operator run build
+```
+
+No restart — it is `src/` only. **Not `npm run build` from the worktree**: that
+builds a `dist/` nothing serves, and it fails silently. CLAUDE.md now says so
+under "Editing Operator while it runs".
+
+### One rough edge, seen once, not reproduced
+
+On one attempt the tool came back with:
+
+```
+Tool permission request failed:
+AbortError: Tool permission stream closed before response received
+```
+
+That is **not** Operator's deny message — it is the SDK abandoning its own
+control stream before an answer arrived. Two candidate explanations, both
+consistent with it: a card that could not be reached until the SDK gave up
+(above), or a stale bundle rendering the old dead-end card so nothing was ever
+sent. Either way the server was doing the right thing. If it recurs, capture how
+long the card sat before the tap.
 
 ## Landmines
 
