@@ -202,13 +202,19 @@ beneath it, and jobs from the Claude page would inherit it. Stop one with
 `schtasks /end /tn <name>`. Each shows a console window; closing it stops that
 server.
 
-## Throwaway files from the probe — safe to delete
+## The probe is kept, its output is not
 
-- `scripts/probe-permission.mjs`, `scripts/probe-task.cmd` (worktree, untracked)
-- `scripts/probe-result.txt`, `scripts/probe-result-echo.txt` — the two runs
-- `probe-touch.txt` in the worktree root — what the passing run wrote
-- scheduled task `OperatorSdkProbe` — **keep this one** unless the SDK is
-  dropped; it is the clean room
+Deleted 2026-08-19: `probe-result.txt`, `probe-result-echo.txt`,
+`probe-touch.txt`. Both runs are quoted verbatim above, so the files were
+duplicates.
+
+**Kept**, untracked in the worktree: `scripts/probe-permission.mjs`,
+`scripts/probe-task.cmd`, and the scheduled task `OperatorSdkProbe` that runs
+them. That trio is the only known way to measure the SDK on this machine
+without a Claude Code session contaminating the result. Re-run it after any
+Claude Code or SDK upgrade — the same standing instruction `jobs.mjs` carries
+for the deny-list checks. Deleting the `.mjs` leaves the task pointing at
+nothing, so remove all three together or none.
 
 ## Also open
 
