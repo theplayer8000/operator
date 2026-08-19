@@ -27,53 +27,85 @@ function ago(iso: string | null): string {
  */
 const ON_DEV = import.meta.env.DEV;
 
+type Build = "live" | "dev" | "agent";
+
 /**
- * The other build's URL, derived from wherever this page is being served.
+ * Every build's URL, derived from wherever this page is being served.
  *
- * Four ways in, because of the proxy: 5173/5174 direct on the machine, and
- * 8443/443 through Tailscale. Each maps to its opposite number.
+ * Two ways in, and which one decides every port: **direct** on the machine
+ * (5173/5174/5175) or **through Tailscale** (443/8443/9443). Mixing them is
+ * what breaks — a tailnet page linking to `:5175` names a port the proxy isn't
+ * listening on. So the entry route is worked out once, and all three URLs come
+ * from it.
+ *
+ * Returns null from anywhere it can't be worked out, rather than guessing a
+ * host that won't resolve.
  */
-function otherUrl(): string | null {
+function buildUrls(): Record<Build, string> | null {
   if (typeof window === "undefined") return null;
   const { protocol, hostname, port } = window.location;
-  const swap: Record<string, string> = {
-    "5173": "5174",
-    "5174": "5173",
-    "8443": "", // dev over Tailscale → live is the bare name on 443
-    "": "8443", // live over Tailscale → dev is 8443
+  const direct = port === "5173" || port === "5174" || port === "5175";
+  const proxied = port === "" || port === "8443" || port === "9443";
+  if (!direct && !proxied) return null;
+  return {
+    live: `${protocol}//${hostname}${direct ? ":5174" : ""}`,
+    dev: `${protocol}//${hostname}:${direct ? "5173" : "8443"}`,
+    agent: `${protocol}//${hostname}:${direct ? "5175" : "9443"}`,
   };
-  const next = swap[port];
-  if (next === undefined) return null;
-  return `${protocol}//${hostname}${next ? `:${next}` : ""}`;
 }
 
 /**
- * The agent build, from wherever this page is served.
+ * Which build you are reading this on.
  *
- * Same swap as `otherUrl`, one port along: 5175 direct on the machine, 9443
- * through Tailscale. Returns null from anywhere it can't be worked out rather
- * than guessing a host that won't resolve.
+ * Port first, because the agent build and the dev build are both Vite and
+ * `import.meta.env.DEV` cannot tell them apart. Everything else falls back to
+ * the build-time flag, which is exact for dev-vs-live.
  */
-function agentUrl(): string | null {
-  if (typeof window === "undefined") return null;
-  const { protocol, hostname, port } = window.location;
-  const map: Record<string, string> = {
-    "5173": "5175",
-    "5174": "5175",
-    "5175": "5175",
-    "8443": "9443",
-    "9443": "9443",
-    "": "9443",
-  };
-  const next = map[port];
-  if (next === undefined) return null;
-  return `${protocol}//${hostname}:${next}`;
+function currentBuild(): Build {
+  const port = typeof window === "undefined" ? "" : window.location.port;
+  if (port === "5175" || port === "9443") return "agent";
+  return ON_DEV ? "dev" : "live";
 }
 
 function Dot({ tone }: { tone: "ok" | "warn" | "off" }) {
   const colour =
     tone === "ok" ? "bg-vital-up" : tone === "warn" ? "bg-xp" : "bg-ink-700";
   return <span className={`w-2 h-2 rounded-full shrink-0 ${colour}`} />;
+}
+
+/**
+ * The way to a build sits on the build's own row.
+ *
+ * It used to be one button under the whole list, offering "the other one",
+ * which worked while there were two and stopped working at three — the agent
+ * build had to grow its own inline link, and the card ended up saying the same
+ * thing two different ways. A row is a build; its link belongs to it.
+ *
+ * 44px, because this is opened from a phone.
+ */
+function OpenBuild({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      aria-label={`Open the ${label}`}
+      title={href}
+      className="w-11 h-11 shrink-0 -mt-1 rounded-badge border border-base-600 flex items-center justify-center text-ink-500 hover:text-xp hover:border-xp/40 transition-colors"
+    >
+      <ExternalLink size={14} />
+    </a>
+  );
+}
+
+/** The row you are reading this on — a link to itself would be a dead tap. */
+function YouAreHere({ hint }: { hint: string }) {
+  return (
+    <span
+      title={hint}
+      className="shrink-0 px-2 py-0.5 rounded-badge border border-rank/40 bg-rank/10 text-rank font-mono text-[10px]"
+    >
+      you
+    </span>
+  );
 }
 
 /**
@@ -108,6 +140,9 @@ export default function BuildStatus() {
     void refresh();
   }, [refresh]);
 
+  const urls = buildUrls();
+  const on = currentBuild();
+
   return (
     <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
       <header className="flex items-center justify-between gap-3 mb-3">
@@ -117,20 +152,6 @@ export default function BuildStatus() {
             <h2 className="font-display text-sm font-medium text-ink-300">Builds</h2>
             <p className="text-xs text-ink-700 truncate">What each URL is actually serving</p>
           </div>
-          <span
-            title={
-              ON_DEV
-                ? "This page is Vite, compiling src/ per request — changes show immediately."
-                : "This page is the built snapshot. It changes when you run npm run build."
-            }
-            className={`shrink-0 px-2 py-0.5 rounded-badge border font-mono text-[10px] ${
-              ON_DEV
-                ? "border-rank/40 bg-rank/10 text-rank"
-                : "border-xp/40 bg-xp/10 text-xp"
-            }`}
-          >
-            {ON_DEV ? "you: dev" : "you: live"}
-          </span>
         </div>
         <button
           onClick={() => void refresh()}
@@ -151,7 +172,7 @@ export default function BuildStatus() {
               <Dot tone={body.live.missing ? "off" : body.live.stale ? "warn" : "ok"} />
               <Globe size={14} className="text-ink-700" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm text-ink-100">
                 Live app{" "}
                 <span className="font-mono text-xs text-ink-700">
@@ -166,6 +187,11 @@ export default function BuildStatus() {
                     : "Matches the source."}
               </p>
             </div>
+            {on === "live" ? (
+              <YouAreHere hint="This page is the built snapshot. It changes when you run npm run build." />
+            ) : (
+              urls && !body.live.missing && <OpenBuild href={urls.live} label="live app" />
+            )}
           </li>
 
           <li className="flex items-start gap-2.5">
@@ -194,7 +220,7 @@ export default function BuildStatus() {
               <Dot tone={body.dev.running ? "ok" : "off"} />
               <Code2 size={14} className="text-ink-700" />
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm text-ink-100">
                 Dev server{" "}
                 <span className="font-mono text-xs text-ink-700">:{body.dev.port}</span>
@@ -205,6 +231,11 @@ export default function BuildStatus() {
                   : "Not running. Start it with npm run dev:web."}
               </p>
             </div>
+            {on === "dev" ? (
+              <YouAreHere hint="This page is Vite, compiling src/ per request — changes show immediately." />
+            ) : (
+              urls && body.dev.running && <OpenBuild href={urls.dev} label="dev build" />
+            )}
           </li>
           {body.agent && (
             <li className="flex items-start gap-2.5">
@@ -212,7 +243,7 @@ export default function BuildStatus() {
                 <Dot tone={body.agent.running ? "ok" : "off"} />
                 <GitBranch size={14} className="text-ink-700" />
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm text-ink-100">
                   Agent build{" "}
                   <span className="font-mono text-xs text-ink-700">:{body.agent.port}</span>
@@ -224,36 +255,19 @@ export default function BuildStatus() {
                       ? "What Claude is writing, on its own branch. Nothing here is live until it's merged."
                       : "Its checkout exists, but nothing is serving it — npx vite --port 5175 --host in the worktree."}
                 </p>
-                {body.agent.separate && body.agent.running && (
-                  <a
-                    href={agentUrl() ?? "#"}
-                    className="inline-flex items-center gap-1.5 mt-1.5 text-xs text-xp hover:underline"
-                  >
-                    <ExternalLink size={12} />
-                    Open it
-                  </a>
-                )}
               </div>
+              {on === "agent" ? (
+                <YouAreHere hint="This page is the agent's checkout, on branch `agent`. Nothing here is live until it's merged." />
+              ) : (
+                urls &&
+                body.agent.separate &&
+                body.agent.running && <OpenBuild href={urls.agent} label="agent build" />
+              )}
             </li>
           )}
         </ul>
       )}
 
-      {/*
-        One link, to the build you are not on. Two links would mean reading the
-        labels to work out which one you already have open — the only move worth
-        offering here is the other one.
-      */}
-      {otherUrl() && (
-        <a
-          href={otherUrl() as string}
-          className="mt-3 flex items-center justify-center gap-2 min-h-[44px] rounded-badge border border-base-600 text-sm text-ink-500 hover:text-ink-100 hover:border-base-500 transition-colors"
-        >
-          <ExternalLink size={14} />
-          Open the {ON_DEV ? "live" : "dev"} build
-          <span className="font-mono text-xs text-ink-700 truncate">{otherUrl()}</span>
-        </a>
-      )}
     </section>
   );
 }
