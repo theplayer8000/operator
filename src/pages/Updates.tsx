@@ -1,5 +1,14 @@
-import { useState } from "react";
-import { ClipboardList, Plus, Pencil, Check, X, RotateCcw, CheckCircle2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ClipboardList,
+  Plus,
+  Check,
+  X,
+  RotateCcw,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { useUpdates } from "@/hooks/useUpdates";
 import HandoffCard from "@/components/updates/HandoffCard";
 import ConfirmButton from "@/components/ui/ConfirmButton";
@@ -7,15 +16,14 @@ import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
 
 /**
- * The changelog opens showing this many days and grows by the same step.
+ * Days per page of changelog.
  *
- * By day rather than by entry, because a day is the unit the list is grouped
- * into — cutting at "20 entries" would slice a date group in half and imply
- * that was everything that shipped that day. Three days is roughly one screen
- * on a phone, which is the device it was unreadable on.
+ * Paged by day, not by entry: a day is the unit the list is grouped into, and
+ * cutting at "20 entries" would slice a date group across a page boundary and
+ * imply that was everything that shipped that day. Four days is about one phone
+ * screen once a day carries two or three changes.
  */
-const DAY_WINDOW = 3;
-const DAY_STEP = 5;
+const PAGE_DAYS = 4;
 
 const INPUT =
   "w-full bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors";
@@ -23,13 +31,12 @@ const INPUT =
 /** "Today", "Yesterday", else "Mon 27 July" — a changelog date heading. */
 function formatChangelogDate(dateKey: string): string {
   const relative = relativeDay(dateKey);
+  const date = fromDateKey(dateKey);
   if (relative === "Today" || relative === "Yesterday") {
-    const date = fromDateKey(dateKey);
     return date
       ? `${relative} · ${date.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`
       : relative;
   }
-  const date = fromDateKey(dateKey);
   return (
     date?.toLocaleDateString("en-GB", {
       weekday: "short",
@@ -37,6 +44,128 @@ function formatChangelogDate(dateKey: string): string {
       month: "long",
       year: "numeric",
     }) ?? dateKey
+  );
+}
+
+interface RowProps {
+  entry: UpdateEntry;
+  shipped: boolean;
+  editing: boolean;
+  onStartEdit: () => void;
+  onSave: (title: string, detail: string) => void;
+  onCancel: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+}
+
+/**
+ * One entry, queued or shipped.
+ *
+ * Written once and used by both lists — the two were copies of each other,
+ * sixty lines apart, which is how the queue and the changelog drifted into
+ * having subtly different edit forms.
+ *
+ * **Tap the text to edit.** That keeps one 44px control on the row instead of
+ * three cramped ones, and puts delete inside the editor where it belongs —
+ * without hiding anything behind a hover, which phones do not have.
+ */
+function EntryRow({
+  entry,
+  shipped,
+  editing,
+  onStartEdit,
+  onSave,
+  onCancel,
+  onToggle,
+  onDelete,
+}: RowProps) {
+  const [title, setTitle] = useState(entry.title);
+  const [detail, setDetail] = useState(entry.detail);
+
+  useEffect(() => {
+    if (editing) {
+      setTitle(entry.title);
+      setDetail(entry.detail);
+    }
+  }, [editing, entry.title, entry.detail]);
+
+  if (editing) {
+    return (
+      <li className="p-3 rounded-badge border border-xp/30 bg-xp/5 space-y-2">
+        <input
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onCancel();
+            if (e.key === "Enter") onSave(title, detail);
+          }}
+          aria-label="Title"
+          className={INPUT}
+        />
+        <input
+          value={detail}
+          onChange={(e) => setDetail(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onCancel();
+            if (e.key === "Enter") onSave(title, detail);
+          }}
+          placeholder="Detail"
+          aria-label="Detail"
+          className={INPUT}
+        />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onSave(title, detail)}
+            className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-badge bg-xp text-base-950 text-xs font-medium hover:bg-xp-bright transition-colors"
+          >
+            <Check size={14} /> Save
+          </button>
+          <button
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 transition-colors"
+          >
+            <X size={14} /> Cancel
+          </button>
+          <span className="ml-auto">
+            <ConfirmButton label={`Delete "${entry.title}"`} onConfirm={onDelete} compact />
+          </span>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li
+      className={`flex items-start gap-2 rounded-badge border transition-colors ${
+        shipped
+          ? "border-base-600 bg-base-700/20 hover:border-base-500"
+          : "border-rank/25 bg-rank/5 hover:border-rank/40"
+      }`}
+    >
+      <button
+        onClick={onStartEdit}
+        aria-label={`Edit "${entry.title}"`}
+        className="flex-1 min-w-0 text-left p-3 pr-0 rounded-badge"
+      >
+        <p className={`text-sm ${shipped ? "text-ink-300" : "text-ink-100"}`}>{entry.title}</p>
+        {entry.detail && (
+          <p className="text-xs text-ink-700 mt-0.5 leading-relaxed">{entry.detail}</p>
+        )}
+      </button>
+      <button
+        onClick={onToggle}
+        aria-label={
+          shipped ? `Move "${entry.title}" back to the queue` : `Mark "${entry.title}" shipped`
+        }
+        title={shipped ? "Back to the queue" : "Mark shipped"}
+        className={`w-11 h-11 shrink-0 m-1 flex items-center justify-center rounded-badge text-ink-700 transition-colors ${
+          shipped ? "hover:text-rank" : "hover:text-vital-up"
+        }`}
+      >
+        {shipped ? <RotateCcw size={15} /> : <CheckCircle2 size={17} />}
+      </button>
+    </li>
   );
 }
 
@@ -48,14 +177,12 @@ function formatChangelogDate(dateKey: string): string {
  *   the session doing the work owns that file, and a copy editable from two
  *   places is a copy that goes wrong. It sits first because "what's happening"
  *   comes before "what do you want doing".
- *
- * - **Queue** — what the owner wants doing. The capture box at the top is the
- *   point of the feature: it's how work gets handed over between sessions,
- *   rather than being remembered or retyped into a chat. Anything added here
- *   gets picked up next time.
- * - **Changelog** — what's shipped, grouped under date headings, newest day
- *   first. A flat list of finished items isn't a changelog; the dates are what
- *   make it readable as history.
+ * - **Queue** — what the owner wants doing. The capture box is the point of the
+ *   feature: it's how work gets handed over between sessions, rather than being
+ *   remembered or retyped into a chat.
+ * - **Changelog** — what's shipped, grouped under date headings, newest first,
+ *   a page at a time. The dates are what make it read as history rather than a
+ *   flat list of finished things.
  *
  * Calm/administrative register, the same as Settings — a utility page, not a
  * feature with a personality of its own.
@@ -64,18 +191,25 @@ export default function Updates() {
   const { pending, done, doneByDate, addEntry, updateEntry, markDone, markPending, deleteEntry } =
     useUpdates();
 
-  const [dayLimit, setDayLimit] = useState(DAY_WINDOW);
-  const visibleDays = doneByDate.slice(0, dayLimit);
-  const hiddenDays = doneByDate.length - visibleDays.length;
-  const hiddenChanges = doneByDate
-    .slice(dayLimit)
-    .reduce((total, day) => total + day.items.length, 0);
-
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editDetail, setEditDetail] = useState("");
+  const [page, setPage] = useState(0);
+
+  const pageCount = Math.max(1, Math.ceil(doneByDate.length / PAGE_DAYS));
+
+  // Deleting the last entries on the last page would otherwise strand you on a
+  // page that no longer exists, showing nothing.
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
+
+  const days = useMemo(
+    () => doneByDate.slice(page * PAGE_DAYS, page * PAGE_DAYS + PAGE_DAYS),
+    [doneByDate, page]
+  );
+
+  const shownOnPage = days.reduce((total, day) => total + day.items.length, 0);
 
   function submit() {
     if (!title.trim()) return;
@@ -84,14 +218,8 @@ export default function Updates() {
     setDetail("");
   }
 
-  function startEdit(entry: UpdateEntry) {
-    setEditingId(entry.id);
-    setEditTitle(entry.title);
-    setEditDetail(entry.detail);
-  }
-
-  function commitEdit(id: string) {
-    if (editTitle.trim()) updateEntry(id, { title: editTitle.trim(), detail: editDetail.trim() });
+  function save(id: string, nextTitle: string, nextDetail: string) {
+    if (nextTitle.trim()) updateEntry(id, { title: nextTitle.trim(), detail: nextDetail.trim() });
     setEditingId(null);
   }
 
@@ -101,10 +229,12 @@ export default function Updates() {
         <div className="w-10 h-10 rounded-badge bg-xp/10 border border-xp/25 flex items-center justify-center text-xp">
           <ClipboardList size={18} />
         </div>
-        <div>
+        <div className="min-w-0">
           <h1 className="font-display text-lg text-ink-100 leading-tight">Updates</h1>
           <p className="text-xs text-ink-500">
-            {pending.length} queued · {done.length} shipped
+            <span className="font-mono text-ink-300">{pending.length}</span> queued ·{" "}
+            <span className="font-mono text-ink-300">{done.length}</span> shipped over{" "}
+            <span className="font-mono text-ink-300">{doneByDate.length}</span> days
           </p>
         </div>
       </div>
@@ -145,11 +275,16 @@ export default function Updates() {
         </div>
       </section>
 
-      {/* --- Pending --- */}
+      {/* --- Queue --- */}
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
-        <header className="mb-3">
-          <h2 className="font-display text-sm font-medium text-ink-300">Queue</h2>
-          <p className="text-xs text-ink-700">Waiting to be built, newest of yours first.</p>
+        <header className="flex items-baseline justify-between gap-3 mb-3">
+          <div>
+            <h2 className="font-display text-sm font-medium text-ink-300">Queue</h2>
+            <p className="text-xs text-ink-700">Waiting to be built, newest of yours first.</p>
+          </div>
+          {pending.length > 0 && (
+            <span className="font-mono text-[11px] text-ink-700 shrink-0">{pending.length}</span>
+          )}
         </header>
 
         {pending.length === 0 ? (
@@ -157,75 +292,17 @@ export default function Updates() {
         ) : (
           <ul className="space-y-2">
             {pending.map((entry) => (
-              <li
+              <EntryRow
                 key={entry.id}
-                className="p-3 rounded-badge border border-rank/30 bg-rank/5"
-              >
-                {editingId === entry.id ? (
-                  <div className="space-y-2">
-                    <input
-                      autoFocus
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
-                      className={INPUT}
-                    />
-                    <input
-                      value={editDetail}
-                      onChange={(e) => setEditDetail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
-                      placeholder="Detail"
-                      className={INPUT}
-                    />
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => commitEdit(entry.id)}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge bg-xp text-base-950 text-xs font-medium hover:bg-xp-bright transition-colors"
-                      >
-                        <Check size={14} /> Save
-                      </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 transition-colors"
-                      >
-                        <X size={14} /> Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-ink-100">{entry.title}</p>
-                      {entry.detail && (
-                        <p className="text-xs text-ink-500 mt-0.5 leading-relaxed">
-                          {entry.detail}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => markDone(entry.id)}
-                      aria-label={`Mark "${entry.title}" done`}
-                      title="Mark done"
-                      className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-vital-up transition-colors"
-                    >
-                      <CheckCircle2 size={16} />
-                    </button>
-                    <button
-                      onClick={() => startEdit(entry)}
-                      aria-label={`Edit "${entry.title}"`}
-                      title="Edit"
-                      className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <ConfirmButton
-                      label={`Delete "${entry.title}"`}
-                      onConfirm={() => deleteEntry(entry.id)}
-                      compact
-                    />
-                  </div>
-                )}
-              </li>
+                entry={entry}
+                shipped={false}
+                editing={editingId === entry.id}
+                onStartEdit={() => setEditingId(entry.id)}
+                onSave={(t, d) => save(entry.id, t, d)}
+                onCancel={() => setEditingId(null)}
+                onToggle={() => markDone(entry.id)}
+                onDelete={() => deleteEntry(entry.id)}
+              />
             ))}
           </ul>
         )}
@@ -233,18 +310,25 @@ export default function Updates() {
 
       {/* --- Changelog --- */}
       <section className="card-base p-4 sm:p-5 animate-fade-up">
-        <header className="mb-4">
-          <h2 className="font-display text-sm font-medium text-ink-300">Changelog</h2>
-          <p className="text-xs text-ink-700">Everything that's shipped, newest day first.</p>
+        <header className="flex items-baseline justify-between gap-3 mb-4">
+          <div className="min-w-0">
+            <h2 className="font-display text-sm font-medium text-ink-300">Changelog</h2>
+            <p className="text-xs text-ink-700">Everything that's shipped, newest day first.</p>
+          </div>
+          {pageCount > 1 && (
+            <span className="font-mono text-[11px] text-ink-700 shrink-0">
+              page {page + 1}/{pageCount}
+            </span>
+          )}
         </header>
 
         {done.length === 0 ? (
           <p className="text-sm text-ink-700">Nothing logged yet.</p>
         ) : (
-          visibleDays.map(({ date, items }) => (
+          days.map(({ date, items }) => (
             <div key={date || "undated"} className="mb-5 last:mb-0">
-              {/* Date heading — this is what makes it read as a changelog
-                  rather than a flat list of finished things. */}
+              {/* The date heading is what makes this read as history rather
+                  than a flat list of finished things. */}
               <div className="flex items-baseline gap-2 mb-2 pb-1.5 border-b border-base-600">
                 <h3 className="font-display text-xs text-ink-100">
                   {date ? formatChangelogDate(date) : "Undated"}
@@ -256,91 +340,57 @@ export default function Updates() {
 
               <ul className="space-y-2">
                 {items.map((entry) => (
-              <li
-                key={entry.id}
-                className="p-3 rounded-badge border border-base-600 bg-base-700/30"
-              >
-                {editingId === entry.id ? (
-                  <div className="space-y-2">
-                    <input
-                      autoFocus
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
-                      className={INPUT}
-                    />
-                    <input
-                      value={editDetail}
-                      onChange={(e) => setEditDetail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Escape" && setEditingId(null)}
-                      placeholder="Detail"
-                      className={INPUT}
-                    />
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => commitEdit(entry.id)}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge bg-xp text-base-950 text-xs font-medium hover:bg-xp-bright transition-colors"
-                      >
-                        <Check size={14} /> Save
-                      </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 transition-colors"
-                      >
-                        <X size={14} /> Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-vital-up shrink-0 mt-1.5" aria-hidden />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-ink-300">{entry.title}</p>
-                      {entry.detail && (
-                        <p className="text-xs text-ink-700 mt-0.5 leading-relaxed">
-                          {entry.detail}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => markPending(entry.id)}
-                      aria-label={`Move "${entry.title}" back to pending`}
-                      title="Move back to pending"
-                      className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-rank transition-colors"
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                    <button
-                      onClick={() => startEdit(entry)}
-                      aria-label={`Edit "${entry.title}"`}
-                      title="Edit"
-                      className="w-9 h-9 shrink-0 flex items-center justify-center rounded-badge text-ink-700 hover:text-ink-300 transition-colors"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <ConfirmButton
-                      label={`Delete "${entry.title}"`}
-                      onConfirm={() => deleteEntry(entry.id)}
-                      compact
-                    />
-                  </div>
-                )}
-              </li>
+                  <EntryRow
+                    key={entry.id}
+                    entry={entry}
+                    shipped
+                    editing={editingId === entry.id}
+                    onStartEdit={() => setEditingId(entry.id)}
+                    onSave={(t, d) => save(entry.id, t, d)}
+                    onCancel={() => setEditingId(null)}
+                    onToggle={() => markPending(entry.id)}
+                    onDelete={() => deleteEntry(entry.id)}
+                  />
                 ))}
               </ul>
             </div>
           ))
         )}
 
-        {hiddenDays > 0 && (
-          <button
-            onClick={() => setDayLimit((n) => n + DAY_STEP)}
-            className="mt-4 w-full min-h-[44px] rounded-badge border border-base-600 bg-base-700/30 text-sm text-ink-300 hover:text-ink-100 hover:border-base-500 transition-colors"
-          >
-            Show earlier — {hiddenDays} more {hiddenDays === 1 ? "day" : "days"},{" "}
-            <span className="font-mono text-xs">{hiddenChanges}</span>{" "}
-            {hiddenChanges === 1 ? "change" : "changes"}
-          </button>
+        {/*
+          Pages, not a growing list. "Show earlier" made the page longer every
+          time it was pressed, so getting back to the top of a hundred entries
+          meant scrolling past all of them. Both controls stay mounted and
+          disable at the ends, so the row never reflows under a thumb.
+        */}
+        {pageCount > 1 && (
+          <nav className="mt-4 flex items-center gap-2" aria-label="Changelog pages">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              aria-label="Newer changes"
+              className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:text-ink-700 disabled:border-base-600 disabled:hover:border-base-600 transition-colors"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <p className="flex-1 text-center text-xs text-ink-700">
+              <span className="font-mono">{shownOnPage}</span>{" "}
+              {shownOnPage === 1 ? "change" : "changes"} ·{" "}
+              <span className="font-mono">
+                {page + 1}/{pageCount}
+              </span>
+            </p>
+
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={page >= pageCount - 1}
+              aria-label="Older changes"
+              className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:text-ink-700 disabled:border-base-600 disabled:hover:border-base-600 transition-colors"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </nav>
         )}
       </section>
     </div>
