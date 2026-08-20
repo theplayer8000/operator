@@ -92,7 +92,7 @@ function toolDeclarations() {
   ];
 }
 
-async function callGemini({ model, contents, systemInstruction, signal }) {
+async function callGemini({ model, contents, systemInstruction, signal, onRateLimit, retried = false }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     throw new Error(
@@ -115,12 +115,55 @@ async function callGemini({ model, contents, systemInstruction, signal }) {
 
   const body = await res.json().catch(() => null);
   if (!res.ok) {
+    /*
+      429 is the common one and it is not really an error — the free tier is
+      20 requests a minute, and Google says exactly how long to wait. Passing
+      its raw message through gave two paragraphs of billing URLs for what is
+      "busy, try in a minute", so the wait is honoured once and only the
+      failure after that is reported.
+    */
+    if (res.status === 429) {
+      const wait = retryAfterMs(body);
+      // Once only. A second wait would mean a turn sitting silent for two
+      // minutes, which from a phone is indistinguishable from a hang.
+      if (!retried && wait !== null && wait <= MAX_RETRY_WAIT_MS && !signal?.aborted) {
+        onRateLimit?.(Math.round(wait / 1000));
+        await new Promise((r) => setTimeout(r, wait));
+        return callGemini({ model, contents, systemInstruction, signal, onRateLimit, retried: true });
+      }
+      throw new Error(
+        `Gemini is rate-limited (free tier: 20 requests a minute)${
+          wait ? `. It asks for ${Math.round(wait / 1000)}s` : ""
+        } — try again shortly, or use Claude for this one.`
+      );
+    }
     // Google's error body carries a real reason; the status alone does not.
     // Never include the response headers or the request — the key is in there.
     const reason = body?.error?.message ?? `${res.status} ${res.statusText}`;
     throw new Error(`Gemini refused the request: ${reason}`);
   }
   return body;
+}
+
+/** Longest we'll sit on a rate limit before giving the turn back. */
+const MAX_RETRY_WAIT_MS = 65_000;
+
+/**
+ * How long Google wants us to wait, in ms, or null.
+ *
+ * It arrives two ways depending on the endpoint: a `RetryInfo` detail with a
+ * duration string ("48.9s"), or plain prose in the message. Both are read
+ * rather than picking one, because a missed delay means either failing a turn
+ * that would have succeeded, or sleeping a made-up amount of time.
+ */
+function retryAfterMs(body) {
+  const details = body?.error?.details ?? [];
+  for (const detail of details) {
+    const seconds = String(detail?.retryDelay ?? "").match(/^([\d.]+)s$/);
+    if (seconds) return Math.ceil(Number(seconds[1]) * 1000);
+  }
+  const prose = String(body?.error?.message ?? "").match(/retry in ([\d.]+)s/i);
+  return prose ? Math.ceil(Number(prose[1]) * 1000) : null;
 }
 
 /**
@@ -162,7 +205,16 @@ export async function runTurn({
       that a loop stops being a bill.
     */
     for (let round = 0; round < 10; round += 1) {
-      const body = await callGemini({ model, contents, systemInstruction: appendSystemPrompt, signal });
+      const body = await callGemini({
+        model,
+        contents,
+        systemInstruction: appendSystemPrompt,
+        signal,
+        // Said out loud, because a silent 48-second pause on a phone reads as
+        // a hang — and the event log is the only thing that can say otherwise.
+        onRateLimit: (seconds) =>
+          onEvent("text", { text: `_Rate-limited by Gemini — waiting ${seconds}s and retrying._` }),
+      });
 
       const candidate = body?.candidates?.[0];
       const parts = candidate?.content?.parts ?? [];
