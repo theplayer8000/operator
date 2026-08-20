@@ -156,6 +156,29 @@ No restart — it is `src/` only. **Not `npm run build` from the worktree**: tha
 builds a `dist/` nothing serves, and it fails silently. CLAUDE.md now says so
 under "Editing Operator while it runs".
 
+### The answered card contradicted itself — fixed
+
+Once a live question was answered, `answers[event.id]` was set, the live branch
+stopped rendering, and the event **fell through to the CLI card**. So a
+permission that had just been allowed rendered in red as *"Needed permission —
+it couldn't ask, so it stopped"*, with a grant button, directly above
+*"you allowed it · from tosin-pc"*.
+
+The three cards are now selected in an explicit order, written out above the
+`case`:
+
+| Condition | Renders |
+|---|---|
+| has an `id`, unanswered | the question, with the buttons |
+| has an `id`, answered | **nothing** — `tool_use` above named it, `permission_answer` below reports it |
+| `standing` | unchanged — hands over the command, no question to answer |
+| neither | the CLI fallback's report, **grant button removed** |
+
+The grant button is gone because it writes a rule the SDK path does not need —
+and worse, one that shadows `canUseTool` silently if the runner is ever switched
+back. `useJobs.allowRule` and `POST /api/jobs/allow` are now **unreferenced from
+the UI**; left in place, but they are candidates for removal with the CLI path.
+
 ### One rough edge, seen once, not reproduced
 
 On one attempt the tool came back with:

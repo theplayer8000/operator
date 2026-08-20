@@ -5,7 +5,6 @@ import {
   Plus,
   ShieldAlert,
   Loader2,
-  Check,
   Power,
   Square,
   Wrench,
@@ -59,15 +58,11 @@ const ANSWER_TONE: Record<string, { tone: string; label: string }> = {
 /** One event, rendered in the register its type deserves. */
 function Event({
   event,
-  onAllow,
-  grants,
   answers,
   answering,
   onAnswer,
 }: {
   event: JobEvent;
-  onAllow: (rule: string) => void;
-  grants: Record<string, string>;
   /** Questions already settled, by id — so a live card knows it isn't live. */
   answers: Record<string, JobEvent>;
   /** Ids with a tap in flight, so the buttons can't be double-fired. */
@@ -127,19 +122,26 @@ function Event({
       );
 
     /*
-      A denial is the one event that needs an action, so it is the one event
-      that looks like a card. Print mode can't stop and ask — the alternative is
-      the owner reading a refusal with no way to answer it from a phone.
+      A permission is the one event that needs an action, so it is the one event
+      that looks like a card. Three of them share this event type, and which one
+      renders is decided in this order — the order matters, because getting it
+      wrong is how a permission that had just been *allowed* came to render as
+      "it couldn't ask, so it stopped", in red, above the line saying it was
+      allowed:
 
-      Two different refusals share this event type, and the difference decides
-      what the card offers. A **standing** one — publishing, deleting — is the
-      owner's own decision and cannot be granted at all: the deny list is a deny,
-      and a deny beats an allow, so an "Allow this" button here would write a
-      rule that sits in settings.local.json looking effective and is refused
-      every time it is used. That is the same silently-inert grant the Windows
-      path bug produced, and it took three denied grants to spot. So the standing
-      card hands over the command instead, which is exactly what the profile says
-      should happen.
+        1. has an `id`   → the SDK path owns it. Waiting: the question, with
+                           buttons. Settled: nothing, because
+                           `permission_answer` below already says how it ended.
+        2. `standing`    → publishing or deleting. **Never a question** — the
+                           deny list is a deny, and deny beats allow, so a grant
+                           button here would write a rule that sits in
+                           settings.local.json looking effective and is refused
+                           every time. That is the silently-inert grant the
+                           Windows path bug produced, and it took three denied
+                           grants to spot. The card hands over the command
+                           instead, which is what the profile says should happen.
+        3. neither       → the CLI fallback, which genuinely cannot ask. A
+                           report of something already over, with no button.
     */
     case "permission_answer": {
       const shown = ANSWER_TONE[event.decision ?? ""] ?? { tone: "text-ink-700", label: "settled" };
@@ -152,23 +154,27 @@ function Event({
     }
 
     case "permission_request": {
-      const rule = event.rule ?? "";
-      const state = grants[rule];
-
       /*
-        A **live** question — the turn is suspended on it right now, and this is
-        what ADR 0012 was adopted for. Answering it here resumes the same turn
-        with the same context, instead of ending it and asking again from the
-        beginning.
+        **An `id` means the SDK path owns this event, and nothing below applies.**
 
-        Only rendered when the event carries an `id` and nothing has settled it.
-        Without that guard the two after-the-fact cards below would grow buttons
-        that resolve nothing: the CLI fallback emits this same type to describe a
-        denial that already ended a turn, and an event log replayed after a
-        restart describes questions that died with the process.
+        Two states, and only two: still waiting, or settled. There is no third
+        one where a grant button helps — the turn either resumed or it didn't,
+        and `permission_answer` right underneath already says which.
+
+        Falling through to the CLI card once `answers[id]` was set produced a
+        genuine contradiction on screen: a permission that had just been allowed
+        rendered as "it couldn't ask, so it stopped", in red, with a grant
+        button, directly above "you allowed it · from tosin-pc".
       */
-      if (event.id && event.pending && !answers[event.id]) {
+      if (event.id) {
         const id = event.id;
+        /*
+          Answered. Deliberately renders nothing rather than a second line:
+          `tool_use` above already names what was asked, and
+          `permission_answer` below already reports how it ended. A third
+          element between them would be the same fact a third time.
+        */
+        if (answers[id]) return null;
         const busy = answering[id] === true;
         return (
           <div className="rounded-badge border border-xp/40 bg-xp/5 p-3 space-y-3">
@@ -270,6 +276,19 @@ function Event({
         );
       }
 
+      /*
+        No `id`, so this is the **CLI fallback** (`OPERATOR_JOB_RUNNER=cli`),
+        which genuinely cannot ask: print mode has no channel to answer on, so
+        the turn ended at the refusal and this is a report of something already
+        over.
+
+        **No grant button.** It used to write a rule into
+        `.claude/settings.local.json`, which the SDK path does not need — a
+        refusal there is a question, not a dead end. Offering it here would be
+        offering the old workaround for a problem this runner doesn't have, and
+        the rule it writes shadows `canUseTool` silently if the runner is ever
+        switched back.
+      */
       return (
         <div className="rounded-badge border border-vital-down/30 bg-vital-down/5 p-3 space-y-2">
           <div className="flex items-center gap-2 text-xs text-vital-down">
@@ -280,23 +299,10 @@ function Event({
             <span className="font-mono text-ink-300">{event.tool}</span>
             {event.subject ? <span className="font-mono"> — {event.subject}</span> : null}
           </p>
-          <p className="text-[11px] font-mono text-ink-700 break-all">rule: {rule}</p>
-          {state === "allowed" || state === "already allowed" ? (
-            <p className="flex items-center gap-1.5 text-xs text-vital-up">
-              <Check size={13} /> {state} — send again to retry
-            </p>
-          ) : (
-            <button
-              onClick={() => onAllow(rule)}
-              disabled={state === "working"}
-              className="min-h-[44px] px-3 rounded-badge border border-xp/40 bg-xp/10 text-xs text-xp hover:bg-xp/20 disabled:opacity-50 transition-colors"
-            >
-              {state === "working" ? "Writing…" : "Allow this"}
-            </button>
-          )}
-          {state && !["working", "allowed", "already allowed"].includes(state) && (
-            <p className="text-xs text-vital-down">{state}</p>
-          )}
+          <p className="text-[11px] text-ink-700 leading-relaxed">
+            This job is on the CLI runner, which can&apos;t stop and ask. Send it again once
+            the tool is allowed, or run the command yourself from the Dev page.
+          </p>
         </div>
       );
     }
@@ -376,7 +382,6 @@ function Tab({
 export default function ClaudeChat() {
   const j = useJobs();
   const [draft, setDraft] = useState("");
-  const [grants, setGrants] = useState<Record<string, string>>({});
   const [answering, setAnswering] = useState<Record<string, boolean>>({});
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -425,16 +430,6 @@ export default function ClaudeChat() {
         delete next[id];
         return next;
       });
-    }
-  }
-
-  async function allow(rule: string) {
-    setGrants((p) => ({ ...p, [rule]: "working" }));
-    try {
-      const outcome = await j.allowRule(rule);
-      setGrants((p) => ({ ...p, [rule]: outcome }));
-    } catch (err) {
-      setGrants((p) => ({ ...p, [rule]: (err as Error).message }));
     }
   }
 
@@ -543,8 +538,6 @@ export default function ClaudeChat() {
                 <Event
                   key={e.seq}
                   event={e}
-                  onAllow={(r) => void allow(r)}
-                  grants={grants}
                   answers={answers}
                   answering={answering}
                   onAnswer={(id, decision, remember) => void answer(id, decision, remember)}
