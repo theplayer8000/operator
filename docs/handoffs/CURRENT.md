@@ -39,6 +39,47 @@ what's actually running now, not a proposal.
    modelled in full, with the reasoning in the type's own comment — revisit
    once a verifier or a second worker gives them real content.
 
+## Auto-routing — the orchestrator picks the worker, 2026-08-20
+
+`server/routing.mjs`. New jobs default to `provider: "auto"`; the chips are now
+an override rather than a requirement, and a `routed` event says which worker
+was chosen and why, in the log above the reply. **Routing that happens
+silently is indistinguishable from routing that is broken.**
+
+Rules first, classifier second, and that order is the important part — see
+below for why it isn't the other way round.
+
+### Two real bugs found while testing this, both silent
+
+**1. Gemini Flash is a thinking model, and thinking ate the whole budget.**
+The classifier asked a one-word question with `maxOutputTokens: 4` and got
+`finishReason: MAX_TOKENS`, `parts: null` — 61 tokens spent reasoning before
+emitting anything. Raising the cap does not help; the thinking scales to fill
+it. `thinkingConfig: { thinkingBudget: 0 }` returns `DATA` in a single token.
+**If a future model ignores that field the symptom is identical and silent:
+check `finishReason` before believing the router.**
+
+**2. The free tier rate-limits, and the fallback was the expensive worker.**
+An evening's testing hit `429`, after which every routing decision fell
+through to Claude Code — which is precisely the cost auto-routing exists to
+avoid, arriving quietly. It also made a whole test run look like bad
+classification when the classifier was never reached at all.
+
+Fixed by inverting the reliance: the rules now recognise the common shapes of
+a data request (capability-action phrasings, "what did I…", anything naming a
+feature Operator owns) so **12/12 test prompts route correctly with the
+classifier disabled entirely**. The model is now an enhancement for genuinely
+ambiguous phrasing, not a dependency. A non-200 from it is logged rather than
+swallowed.
+
+### The tie-break is deliberately asymmetric
+
+Anything uncertain goes to **Claude Code**, and "fix my gym page" must never
+be read as a data request — it looks like one and is code. Wrong-to-Claude
+costs money; wrong-to-Gemini means a worker with no filesystem cannot do the
+work at all and can only apologise convincingly, which costs trust in the
+routing.
+
 ## Gemini is wired in — the second worker, 2026-08-20
 
 **Approved by name** (CLAUDE.md's table): `generativelanguage.googleapis.com`,

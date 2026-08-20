@@ -15,6 +15,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  Route,
 } from "lucide-react";
 import Markdown from "@/components/ui/Markdown";
 import ConfirmButton from "@/components/ui/ConfirmButton";
@@ -197,6 +198,24 @@ function Event({
         3. neither       → the CLI fallback, which genuinely cannot ask. A
                            report of something already over, with no button.
     */
+    /*
+      Routing that happens silently is indistinguishable from routing that is
+      broken. Shown as a margin note rather than a card: it is context for the
+      reply beneath it, not something needing an action — but it has to be
+      visible, both to earn trust and to make a bad decision noticeable on the
+      day the router starts getting it wrong.
+    */
+    case "routed":
+      return (
+        <p className="flex items-start gap-2 text-[11px] font-mono text-ink-700">
+          <Route size={11} className="mt-0.5 shrink-0 text-rank" />
+          <span>
+            <span className="text-ink-500">{event.label ?? event.provider}</span>
+            {event.why ? ` — ${event.why}` : ""}
+          </span>
+        </p>
+      );
+
     case "permission_answer": {
       const shown = ANSWER_TONE[event.decision ?? ""] ?? { tone: "text-ink-700", label: "settled" };
       return (
@@ -796,6 +815,30 @@ export default function OrchestratorChat() {
           */}
           <div className="flex items-center justify-between gap-3 mt-2">
             <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+              {/*
+                Auto is the default and sits first, because choosing from a row
+                of chips is a menu and the orchestrator is meant to decide. The
+                explicit models stay as an override for when he knows better
+                than the router — but nothing has to be picked to start a job.
+
+                Only offered when there is a decision to make: with one worker
+                enabled, "Auto" and its single alternative are the same thing
+                said twice.
+              */}
+              {!j.selectedId && j.providers.length > 1 && (
+                <button
+                  onClick={() => setPendingModel(null)}
+                  disabled={running}
+                  title="Let the orchestrator pick the worker for this task"
+                  className={`shrink-0 px-2.5 h-8 rounded-badge border text-[11px] transition-colors disabled:opacity-40 ${
+                    pendingModel === null
+                      ? "border-rank/50 bg-rank/10 text-rank"
+                      : "border-base-600 text-ink-700 hover:text-ink-300"
+                  }`}
+                >
+                  Auto
+                </button>
+              )}
               {(j.selectedId
                 ? j.providers.filter((p) => p.id === (j.selected?.provider ?? "claude-code"))
                 : j.providers
@@ -807,11 +850,18 @@ export default function OrchestratorChat() {
                     </span>
                   )}
                   {provider.models.map((m) => {
+                    /*
+                      Nothing is highlighted while Auto is selected — a chip
+                      lit up next to an active "Auto" would claim the worker
+                      is already decided when the whole point is that it
+                      isn't yet. With one worker there is no Auto chip, so the
+                      default stays lit as before.
+                    */
                     const active = j.selectedId
                       ? (j.selected?.model ?? j.defaultModel) === m.id
                       : pendingModel
                         ? pendingModel.model === m.id
-                        : m.id === j.defaultModel;
+                        : j.providers.length <= 1 && m.id === j.defaultModel;
                     return (
                       <button
                         key={m.id}

@@ -84,6 +84,7 @@ export interface JobEvent {
     | "tool_result"
     | "permission_request"
     | "permission_answer"
+    | "routed"
     | "status"
     | "usage";
   text?: string;
@@ -111,6 +112,10 @@ export interface JobEvent {
   /** On `permission_answer`: how the question ended. */
   decision?: "allowed" | "denied" | "timeout" | "cancelled" | "abandoned";
   by?: string | null;
+  /** On `routed`: which worker the orchestrator picked, and its reasoning. */
+  provider?: string;
+  label?: string;
+  why?: string;
   /*
     Which kind of refusal this is — the standing profile, or an ordinary
     missing rule. Optional because an event log from before the server was

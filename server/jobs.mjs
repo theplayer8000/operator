@@ -65,6 +65,7 @@ import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
 import { claimResources, removeJobResources } from "./uploads.mjs";
 import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
+import { routeTask } from "./routing.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -1666,10 +1667,29 @@ function assertMine(identity) {
   throw new Error(`Claude is busy on "${jobs.get(held.id)?.title ?? held.id}" from ${held.device ?? "another device"}`);
 }
 
-export async function create(prompt, model, identity, resources = [], provider = DEFAULT_PROVIDER, taskKind = "coding") {
+export async function create(prompt, model, identity, resources = [], provider = "auto", taskKind = "coding") {
   const text = String(prompt ?? "").trim();
   if (!text) throw new Error("nothing to send");
   assertMine(identity);
+
+  /*
+    "auto" is the default, and the point of the page.
+
+    Choosing from a row of chips is a menu; the orchestrator is supposed to
+    decide. An explicit provider still wins — the chips remain an override for
+    when he knows better than the router — but nothing has to be chosen for a
+    job to start.
+
+    Routed here rather than in `pump()` so the decision is made once, at
+    creation, and the job carries one worker for its whole life. Re-routing per
+    turn would mean a conversation whose worker changes underneath it, and the
+    two workers' sessions are not interchangeable.
+  */
+  let routed = null;
+  if (!provider || provider === "auto") {
+    routed = await routeTask(text, listProviders().map((p) => p.id));
+    provider = routed.provider;
+  }
 
   const selection = selectWorker(provider, model);
   const job = blankJob(`job-${++jobSeq}`);
@@ -1683,6 +1703,23 @@ export async function create(prompt, model, identity, resources = [], provider =
   const turn = promptWithResources(text, claimed);
 
   jobs.set(job.id, job);
+  /*
+    Say what was chosen and why, before the prompt.
+
+    Routing that happens silently is indistinguishable from routing that is
+    broken — the owner needs to see "this went to Gemini because it read as a
+    data question" to trust it, and to spot the day it starts getting that
+    wrong. Only emitted when the router actually decided; an explicit choice
+    needs no explanation.
+  */
+  if (routed) {
+    emit(job, "routed", {
+      provider: job.provider,
+      model: job.model,
+      label: listProviders().find((p) => p.id === job.provider)?.label ?? job.provider,
+      why: routed.why,
+    });
+  }
   emit(job, "prompt", { text, resources: claimed.map((resource) => resource.name) });
   job.pending.push(turn);
   waiting.push(job.id);
