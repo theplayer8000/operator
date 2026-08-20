@@ -39,6 +39,54 @@ what's actually running now, not a proposal.
    modelled in full, with the reasoning in the type's own comment — revisit
    once a verifier or a second worker gives them real content.
 
+## Gemini is wired in — the second worker, 2026-08-20
+
+**Approved by name** (CLAUDE.md's table): `generativelanguage.googleapis.com`,
+key in `GEMINI_API_KEY`, env only. `server/gemini.mjs` implements the same
+`runTurn` contract as `runner.mjs`, so `jobs.mjs` dispatches to it through
+`providers.mjs` without knowing the difference.
+
+**It proved the whole architecture.** Asked in plain English to create a
+mission, Gemini called `mission_create` itself and a correctly-shaped record
+landed in the store — activity log, status, difficulty, all of it. No
+Mission Board code was written for Gemini. That is what the capability layer
+was for, and it worked on the first real test.
+
+**13/13 live against the real API**: a plain turn, memory across two turns in
+one session, the capability action above, and a deliberately bad action id
+returning an error the model self-corrected from. Test used a throwaway store,
+never `data/operator.json`.
+
+Deliberate limits, all declared in its `capabilities` rather than hidden:
+
+- **No filesystem, no shell.** It is a model that answers and calls capability
+  actions. `onPermission` is accepted and never called, because everything it
+  can do is pre-approved by definition — there is no "wants to run an arbitrary
+  command" case. If it ever gains an open-ended tool that stops being true.
+- **Sessions are in-memory and die with a restart.** Gemini's API is stateless,
+  so "the conversation" is the history replayed each request. A restored tab
+  starts fresh and **the UI now says so** rather than repeating Claude's "it
+  still remembers", which would be a lie the owner only finds by being confused
+  at the reply.
+- **No cost reported.** The response carries token counts, not money;
+  converting would mean a hardcoded price list that goes stale silently.
+- **Raw `fetch`, no SDK** — ADR 0012 bounded npm imports to `runner.mjs`, and
+  one POST does not justify reopening that.
+- **Tool loop bounded at 10 rounds.** This runs unattended from a phone with
+  the owner's data on the other end; a runaway is a bill and a mess.
+
+**The worker is chosen when a conversation starts, not mid-thread.** A job
+holds one worker's session for life and the two aren't interchangeable, so
+switching mid-thread would silently start a new conversation wearing the old
+one's tab. New chat → model chips show every worker; existing job → only that
+worker's models (Opus ↔ Sonnet, as before).
+
+`dev/ClaudeChat.tsx` → `orchestrator/OrchestratorChat.tsx`, and it is now
+genuinely provider-agnostic: heading, placeholder, chips and footer all read
+the job's provider and capabilities. **Its footer was also stale in a way that
+mattered** — it still claimed the worker "can't stop and ask you anything,
+print mode is one-way", which option C made false hours earlier.
+
 ## The capability layer — built 2026-08-20, uncommitted
 
 **An AI worker can now change Operator's data without editing code.**

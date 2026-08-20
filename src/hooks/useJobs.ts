@@ -127,9 +127,20 @@ export interface JobEvent {
   budgetUsd?: number | null;
 }
 
+/** A worker the server has enabled, and what it can actually do. */
+export interface JobProvider {
+  id: string;
+  label: string;
+  defaultModel: string;
+  models: { id: string; label: string }[];
+  capabilities?: Record<string, unknown>;
+}
+
 interface JobsList {
   jobs: JobSummary[];
   running: string | null;
+  /** Every enabled worker. Only Claude Code until a key makes another possible. */
+  providers?: JobProvider[];
   models?: { id: string; label: string }[];
   defaultModel?: string;
   /** The standing permission profile, named by the server rather than in prose. */
@@ -303,12 +314,20 @@ export function useJobs() {
     return parsed;
   }
 
-  /** Start a new job. Returns its id so the caller can select it. */
+  /**
+   * Start a new job. Returns its id so the caller can select it.
+   *
+   * `provider` is chosen here and only here: a job holds one worker's session
+   * for its whole life, and the two workers' sessions are not interchangeable
+   * (Claude Code owns one on disk, Gemini's is a replayed history in the
+   * server's memory). Switching worker mid-thread would silently start a new
+   * conversation wearing the old one's tab, so the choice belongs at creation.
+   */
   const create = useCallback(
-    async (prompt: string, model?: string, resources: JobResource[] = []) => {
+    async (prompt: string, model?: string, resources: JobResource[] = [], provider?: string) => {
       setError(null);
       try {
-        const body = await post("/api/jobs", { prompt, model, resources });
+        const body = await post("/api/jobs", { prompt, model, resources, provider });
         setComposing(false);
         await refreshList();
         if (body.id) await select(body.id);
@@ -496,6 +515,7 @@ export function useJobs() {
     list,
     jobs: list?.jobs ?? [],
     models: list?.models ?? [],
+    providers: list?.providers ?? [],
     defaultModel: list?.defaultModel,
     deniedTools: list?.deniedTools ?? [],
     allowedTools: list?.allowedTools ?? [],

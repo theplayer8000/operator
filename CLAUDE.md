@@ -60,12 +60,14 @@ Approved so far — this list is the whole set:
 |---|---|---|
 | Google Fonts | `fonts.googleapis.com` | pre-existing, in `index.html` |
 | Claude service status | `status.claude.com` | v11, `server/status.mjs` |
+| Anthropic (Claude Code worker) | Anthropic's API, via the Agent SDK | [ADR 0012](docs/decisions/0012-claude-agent-sdk.md), 2026-08-04. Runs on the Pro subscription, no API key |
+| **Google Gemini** | `generativelanguage.googleapis.com` | **2026-08-20**, `server/gemini.mjs`. What leaves the machine: the prompt and whatever job context is attached. Key in `GEMINI_API_KEY`, env only |
 
-**AI model providers are approved in principle but not yet individually.** The
-AI Provider Manager was approved on 2026-07-30 (ADR 0009); approving the router
-did **not** approve its occupants. Each provider — Anthropic, OpenAI, anything
-later — needs its own named approval before integration, and then goes in the
-table above. Three hard conditions come with it:
+**Each AI provider needs its own named approval.** The AI Provider Manager was
+approved on 2026-07-30 (ADR 0009); approving the router did **not** approve its
+occupants, and approving Gemini does not approve the next one. OpenAI/Codex and
+anything later still needs asking for by name, and then goes in the table above.
+Three hard conditions come with each:
 
 - **The frontend never talks to a provider.** Server-side only, same as
   `server/status.mjs`.
@@ -330,6 +332,9 @@ src/
     ui/                      — Card, EmptyState, StatCounter, ShieldProgress,
                                 Confetti, ConfirmButton — shared primitives
     homelab/                  — ServiceTile, ServiceForm
+    orchestrator/              — OrchestratorChat. Provider-agnostic: reads each
+                                  job's provider and capabilities, never assumes
+                                  a worker. Was dev/ClaudeChat.tsx until Gemini
     updates/                   — HandoffCard (renders docs/handoffs/CURRENT.md)
     dashboard/                — one file per Dashboard widget
     routine/                    — RoutineSectionCard, RoutineSummary,
@@ -429,7 +434,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Orchestrator | `/orchestrator` | Built — **renamed from "Claude" 2026-08-20**, the milestone rather than a relabel: `server/providers.mjs` now sits between `jobs.mjs` and the worker that runs a turn, so a job is a task dispatched to whichever worker is enabled, not "a Claude conversation." Only one worker is enabled today (`claude-code`); the page name says what it's *for* (ADR 0009's multi-provider chat) rather than what it currently, incidentally, only does. `/chat` redirects here. Conversations are **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, an append-only event log that outlives the request, a `session_id` per job with `--resume` so a tab remembers. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C, merged and live): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. **Jobs can carry local file attachments** (`server/uploads.mjs`) — staged outside `operator.json`, claimed onto a turn, the worker gets the local path. **A failed, blocked, or cancelled turn can be retried** with one tap instead of retyping. Every attempt is recorded (`task`/`attempts`/`handoff` on the job) — dormant on the frontend today, the bookkeeping a future verifier or second worker will read, not something a person needs to see while there is only one worker and the owner reads results directly. Same gate as the terminal — armable from this page. `src/components/dev/ClaudeChat.tsx` keeps its name: it is still specifically the Claude Code worker's chat surface, one implementation of the contract `providers.mjs` describes — renaming it would claim a generality it doesn't have until a second worker exists |
+| Orchestrator | `/orchestrator` | Built — **renamed from "Claude" 2026-08-20**, the milestone rather than a relabel: `server/providers.mjs` now sits between `jobs.mjs` and the worker that runs a turn, so a job is a task dispatched to whichever worker is enabled, not "a Claude conversation." **Two workers are enabled** — `claude-code` (the Agent SDK, full tool access) and `gemini` (approved 2026-08-20, `server/gemini.mjs`, capability actions only, registered solely when `GEMINI_API_KEY` is set). `/chat` redirects here. Conversations are **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, an append-only event log that outlives the request, a `session_id` per job with `--resume` so a tab remembers. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C, merged and live): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. **Jobs can carry local file attachments** (`server/uploads.mjs`) — staged outside `operator.json`, claimed onto a turn, the worker gets the local path. **A failed, blocked, or cancelled turn can be retried** with one tap instead of retyping. Every attempt is recorded (`task`/`attempts`/`handoff` on the job) — dormant on the frontend today, the bookkeeping a future verifier or second worker will read, not something a person needs to see while there is only one worker and the owner reads results directly. Same gate as the terminal — armable from this page. **The worker is chosen when a conversation starts, not mid-thread**: a job holds one worker's session for life and the two aren't interchangeable (Claude Code's lives on disk and resumes; Gemini's is a replayed history in server memory and dies with a restart — the UI says which). The chat surface is `src/components/orchestrator/OrchestratorChat.tsx`, renamed from `dev/ClaudeChat.tsx` the day Gemini landed; it reads each job's provider and declared `capabilities` rather than assuming Claude Code's |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |

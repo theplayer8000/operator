@@ -21,13 +21,22 @@ import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useJobs, type JobAttempt, type JobEvent, type JobSummary } from "@/hooks/useJobs";
 
 /**
- * The Claude workspace.
+ * The orchestrator's conversation surface — was `dev/ClaudeChat.tsx`, renamed
+ * and moved 2026-08-20.
+ *
+ * It kept the Claude name for one commit while it genuinely only spoke to one
+ * worker; that stopped being true the moment `server/gemini.mjs` registered a
+ * second. Nothing in here is provider-specific any more: the heading, the
+ * placeholder, the model chips and the footer all read the selected job's
+ * provider and its declared `capabilities`, rather than assuming Claude Code's.
+ * A component named for one implementation of an interface it now renders
+ * generically is a comment that lies by filename.
  *
  * Each conversation is a **job** with an append-only event log, so this shows
  * two things the old chat couldn't: a strip of jobs to switch between, and what
- * Claude is doing *while* it does it — which file it read, which command it
- * ran. Ten minutes of "Claude is working…" is a spinner; ten minutes of watching
- * it read three files and run a build is information.
+ * the worker is doing *while* it does it — which file it read, which command it
+ * ran. Ten minutes of "working…" is a spinner; ten minutes of watching it read
+ * three files and run a build is information.
  *
  * Polls rather than streams, for the reason the terminal established: stream
  * readers deliver nothing on the owner's iPhone, and a reply that silently
@@ -424,12 +433,14 @@ function Tab({
   );
 }
 
-export default function ClaudeChat() {
+export default function OrchestratorChat() {
   const j = useJobs();
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  /** Worker+model for the *next* new chat. Null means the server's default. */
+  const [pendingModel, setPendingModel] = useState<{ provider: string; model: string } | null>(null);
   const [answering, setAnswering] = useState<Record<string, boolean>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -470,7 +481,7 @@ export default function ClaudeChat() {
     setDraft("");
     setAttachments([]);
     if (j.selectedId) await j.send(j.selectedId, text, resources);
-    else await j.create(text, undefined, resources);
+    else await j.create(text, pendingModel?.model, resources, pendingModel?.provider);
   }
 
   function addFiles(files: FileList | null) {
@@ -532,7 +543,16 @@ export default function ClaudeChat() {
         <div className="flex items-center gap-2 min-w-0">
           <MessageSquare size={15} className="text-ink-500 shrink-0" />
           <div className="min-w-0">
-            <h2 className="font-display text-sm font-medium text-ink-300">Claude</h2>
+            {/*
+              The worker this conversation is actually talking to, not a fixed
+              "Claude" — with two providers enabled, a heading that always says
+              Claude is wrong half the time. Falls back to the label rather
+              than the raw id so an unknown provider still reads as a name.
+            */}
+            <h2 className="font-display text-sm font-medium text-ink-300">
+              {j.providers.find((p) => p.id === j.selected?.provider)?.label ??
+                (j.selected ? j.selected.provider : "Orchestrator")}
+            </h2>
             <p className="text-xs text-ink-700 truncate">
               {notAuthorised
                 ? j.reason
@@ -601,10 +621,22 @@ export default function ClaudeChat() {
                   : "New conversation. What you send starts a fresh one."}
               </p>
             ) : j.events.length === 0 ? (
+              /*
+                Whether a restored tab remembers depends on the worker, and
+                saying "it still remembers" for one that doesn't would be a lie
+                the owner only discovers by being confused at the reply. Claude
+                Code holds its session on disk and genuinely resumes; Gemini's
+                history lives in this server's memory and died with the old
+                process. `sessions` in the provider's capabilities is what
+                distinguishes them.
+              */
               <p className="text-sm text-ink-700">
-                {j.selected?.restored
-                  ? "From before a restart — the log isn't kept, but Claude still remembers. Send a message to carry on."
-                  : "No events yet."}
+                {!j.selected?.restored
+                  ? "No events yet."
+                  : j.providers.find((p) => p.id === j.selected?.provider)?.capabilities
+                      ?.sessions === "in-memory"
+                    ? "From before a restart — this worker keeps its history in memory, so it starts fresh. Earlier turns are gone."
+                    : "From before a restart — the log isn't kept, but the worker still remembers. Send a message to carry on."}
               </p>
             ) : (
               j.events.map((e) => (
@@ -713,7 +745,15 @@ export default function ClaudeChat() {
                 }
               }}
               rows={2}
-              placeholder={fresh ? "resume operator build" : "Ask Claude about this project…"}
+              placeholder={
+                fresh
+                  ? "resume operator build"
+                  : j.selected
+                    ? `Ask ${
+                        j.providers.find((p) => p.id === j.selected?.provider)?.label ?? "it"
+                      }…`
+                    : "Ask about this project…"
+              }
               className="flex-1 min-w-0 bg-base-700/40 border border-base-600 rounded-badge px-3 py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 resize-none transition-colors"
             />
             {running ? (
@@ -737,25 +777,62 @@ export default function ClaudeChat() {
             )}
           </div>
 
+          {/*
+            Two jobs for one row of chips, because which one it is depends on
+            whether a conversation exists yet:
+
+            - **No job selected (a new chat)** — every enabled worker's models,
+              and tapping one chooses the worker this conversation will use.
+              That choice is only available here: a job holds one worker's
+              session for its whole life, and the two aren't interchangeable
+              (Claude Code owns a session on disk, Gemini's is a replayed
+              history in memory). Offering a switch mid-thread would silently
+              start a new conversation wearing the old one's tab.
+            - **A job selected** — only that worker's own models, which is the
+              switch that has always worked (Opus ↔ Sonnet keeps the session).
+
+            Grouped by worker only when there is more than one; a lone "Claude
+            Code" label above two chips is noise.
+          */}
           <div className="flex items-center justify-between gap-3 mt-2">
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-              {j.models.map((m) => {
-                const active = (j.selected?.model ?? j.defaultModel) === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    onClick={() => j.selectedId && void j.setModel(j.selectedId, m.id)}
-                    disabled={!j.selectedId || running}
-                    className={`shrink-0 px-2.5 h-8 rounded-badge border text-[11px] transition-colors disabled:opacity-40 ${
-                      active
-                        ? "border-xp/40 bg-xp/10 text-xp"
-                        : "border-base-600 text-ink-700 hover:text-ink-300"
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+              {(j.selectedId
+                ? j.providers.filter((p) => p.id === (j.selected?.provider ?? "claude-code"))
+                : j.providers
+              ).map((provider) => (
+                <div key={provider.id} className="flex items-center gap-1.5 shrink-0">
+                  {!j.selectedId && j.providers.length > 1 && (
+                    <span className="text-[10px] font-mono text-ink-700 shrink-0">
+                      {provider.label}
+                    </span>
+                  )}
+                  {provider.models.map((m) => {
+                    const active = j.selectedId
+                      ? (j.selected?.model ?? j.defaultModel) === m.id
+                      : pendingModel
+                        ? pendingModel.model === m.id
+                        : m.id === j.defaultModel;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() =>
+                          j.selectedId
+                            ? void j.setModel(j.selectedId, m.id)
+                            : setPendingModel({ provider: provider.id, model: m.id })
+                        }
+                        disabled={running}
+                        className={`shrink-0 px-2.5 h-8 rounded-badge border text-[11px] transition-colors disabled:opacity-40 ${
+                          active
+                            ? "border-xp/40 bg-xp/10 text-xp"
+                            : "border-base-600 text-ink-700 hover:text-ink-300"
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
             <p
               className="shrink-0 text-[11px] font-mono text-ink-700"
@@ -766,19 +843,42 @@ export default function ClaudeChat() {
             </p>
           </div>
 
-          <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
-            Runs Claude Code against this project and remembers across messages — the same
-            conversation you can pick up at the desk. It has tool access and one standing
-            permission:{" "}
-            <strong className="font-normal text-ink-500">
-              everything except publishing and deleting
-            </strong>
-            . Those two can&apos;t be undone, so it writes the command out and you run it. It{" "}
-            <strong className="font-normal text-ink-500">can&apos;t stop and ask you anything</strong>{" "}
-            either — print mode is one-way — so anything else it&apos;s refused shows the rule that
-            would allow it, one tap. Conversations survive a restart; the event log doesn&apos;t,
-            but Claude&apos;s own session does, so a restored one carries on where it left off.
-          </p>
+          {/*
+            Describes the worker in front of you, not Claude Code always.
+
+            The previous version said it "can't stop and ask you anything —
+            print mode is one-way", which was true of the CLI and stopped being
+            true the day ADR 0012's option C landed. A blurb that confidently
+            describes behaviour the app no longer has is worse than none: it is
+            the thing the owner reads to find out what the tool does.
+          */}
+          {(j.providers.find((p) => p.id === j.selected?.provider)?.capabilities?.tools ===
+          "capability-actions" ? (
+            <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+              A model with access to Operator&apos;s own data — it can change the Mission Board,
+              the calendar, the gym log and the daily routine through{" "}
+              <strong className="font-normal text-ink-500">named, validated actions</strong>, the
+              same ones the app&apos;s own pages use. No file access and no shell, so there is
+              nothing for it to ask permission about. Its memory of a conversation lives in this
+              server and{" "}
+              <strong className="font-normal text-ink-500">does not survive a restart</strong>.
+            </p>
+          ) : (
+            <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+              Runs Claude Code against this project and remembers across messages — the same
+              conversation you can pick up at the desk. It has tool access and one standing
+              permission:{" "}
+              <strong className="font-normal text-ink-500">
+                everything except publishing and deleting
+              </strong>
+              . Those two can&apos;t be undone, so it writes the command out and you run it.
+              Anything else outside the pre-approved list{" "}
+              <strong className="font-normal text-ink-500">pauses the turn and asks you</strong>,
+              and answering carries the same turn on. Conversations survive a restart; the event
+              log doesn&apos;t, but its own session does, so a restored one picks up where it
+              left off.
+            </p>
+          ))}
 
           <p className="flex items-center gap-1.5 text-[11px] text-ink-700 mt-1.5">
             <FileText size={11} className="shrink-0" />

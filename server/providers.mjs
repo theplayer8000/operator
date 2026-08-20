@@ -7,6 +7,7 @@
 // approved its host, credentials and data disclosure.
 
 import { runTurn as runClaudeTurn } from "./runner.mjs";
+import { runTurn as runGeminiTurn } from "./gemini.mjs";
 
 const CLAUDE_CODE = {
   id: "claude-code",
@@ -26,7 +27,43 @@ const CLAUDE_CODE = {
   runTurn: runClaudeTurn,
 };
 
-const WORKERS = new Map([[CLAUDE_CODE.id, CLAUDE_CODE]]);
+/**
+ * Gemini, approved by name 2026-08-20 (see CLAUDE.md's table).
+ *
+ * Its capabilities differ from Claude Code's in ways that matter, and saying
+ * so here is the point of this field existing: no filesystem, no shell, no
+ * mid-turn permission prompt — everything it can do is a pre-approved
+ * capability action, so there is nothing to ask about. `attachments: false`
+ * because uploads are passed to a worker as local paths, which is meaningless
+ * to a worker that cannot read the disk.
+ *
+ * Only registered when a key is actually configured. A worker listed in the
+ * model picker that fails on first use with "GEMINI_API_KEY is not set" is a
+ * worse experience than one that isn't offered — and the server is where the
+ * key's absence is knowable.
+ */
+const GEMINI = {
+  id: "gemini",
+  label: "Gemini",
+  defaultModel: "gemini-flash-latest",
+  models: [
+    { id: "gemini-flash-latest", label: "Gemini Flash" },
+    { id: "gemini-pro-latest", label: "Gemini Pro" },
+  ],
+  capabilities: {
+    tools: "capability-actions",
+    attachments: false,
+    permissions: "pre-approved",
+    sessions: "in-memory",
+    verification: "worker-reported",
+  },
+  runTurn: runGeminiTurn,
+};
+
+const WORKERS = new Map([
+  [CLAUDE_CODE.id, CLAUDE_CODE],
+  ...(process.env.GEMINI_API_KEY ? [[GEMINI.id, GEMINI]] : []),
+]);
 
 /** Safe metadata for the client. Never expose a worker implementation. */
 function describe(worker) {

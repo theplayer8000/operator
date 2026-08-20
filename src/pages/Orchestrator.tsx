@@ -1,5 +1,5 @@
 import { MessageSquare } from "lucide-react";
-import ClaudeChat from "@/components/dev/ClaudeChat";
+import OrchestratorChat from "@/components/orchestrator/OrchestratorChat";
 
 /**
  * The orchestrator — was "Claude", renamed 2026-08-20.
@@ -10,12 +10,12 @@ import ClaudeChat from "@/components/dev/ClaudeChat";
  * is enabled for it. Only one is, today. The page name says what it's *for*
  * rather than what it currently, incidentally, only does.
  *
- * `ClaudeChat.tsx` keeps its name deliberately. It is still exactly what it
- * says: the chat surface for Claude Code, one implementation of the worker
- * contract `providers.mjs` describes. Renaming it would claim a generality the
- * component doesn't have yet — the day a second worker exists, its own
- * component earns this page's chrome (tab strip, composer, event log) the same
- * way this one does, not by this file pretending to be both.
+ * The component below was `dev/ClaudeChat.tsx` until 2026-08-20, kept that way
+ * on the argument that it only ever spoke to one worker. Gemini landing the
+ * same day ended that argument, so it is now
+ * `orchestrator/OrchestratorChat.tsx` and reads each job's provider and
+ * declared capabilities rather than assuming Claude Code's — which is also
+ * what stopped its footer describing behaviour the app no longer had.
  *
  * It started on `/dev` because that's where the terminal lives and the two
  * share a gate. The owner uses this to actually work — from a phone, away from
@@ -37,7 +37,7 @@ export default function Orchestrator() {
         </div>
       </div>
 
-      <ClaudeChat />
+      <OrchestratorChat />
     </div>
   );
 }
