@@ -25,6 +25,7 @@ file states the rule and the document explains it.
 | [`docs/development.md`](docs/development.md) | Running, verifying, or handing off work |
 | [`docs/decisions/`](docs/decisions/) | Before "fixing" something that looks wrong, or changing an established pattern |
 | [`docs/decisions/0012-claude-agent-sdk.md`](docs/decisions/0012-claude-agent-sdk.md) | Before touching the job runner, or adding anything to `server/`'s dependencies |
+| [`docs/decisions/0013-usage-accounting.md`](docs/decisions/0013-usage-accounting.md) | **Before writing anything that counts tokens, cost, or quota** — including any budget or ceiling. Explains why the reported "$40" is not necessarily money |
 | [`docs/handoffs/`](docs/handoffs/) | At the end of every milestone — template and naming convention |
 
 ## What this is
@@ -700,11 +701,25 @@ guessing; guessing is the failure mode this list exists to prevent.
 3. **Concurrency** — one job at a time, or several? One matches a single user on
    a phone; several matters if a long build should run while he asks something
    else.
-4. **Usage ceiling** — should a job stop at a token or cost limit? He is on Pro
-   with usage credits enabled, so overflow past a plan limit is real money
-   (£10.66 of £40 as of 2026-07-31). A counter can only report *Operator's own*
-   usage — there is no `claude usage` subcommand — so never present it as plan
-   usage.
+4. **Usage ceiling — the accounting is DECIDED ([ADR 0013](docs/decisions/0013-usage-accounting.md),
+   2026-08-20), the ceilings are not built.** Read that ADR before writing
+   anything that counts tokens, cost or quota. The short version:
+
+   - **Tokens are the stored record; USD is derived** from a versioned price
+     table, so a mispricing is re-derivable rather than permanent.
+   - **Every record carries a `basis`** — `billed` / `valuation` / `unpriced` —
+     and **aggregates must not sum across them.** The ≈$40 of Claude usage on
+     2026-08-20 is a `valuation`: Claude Code prices tokens locally at API list
+     rates, but the SDK runs on the Pro subscription, so it is what the work
+     *would* have cost, not what was charged. Usage credits mean overflow past
+     plan limits genuinely is money — and Operator cannot see plan headroom, so
+     it cannot tell which portion. Never present any figure as plan usage.
+   - **Quota is a separate ledger from cost.** Gemini's free tier is 20
+     requests per *day*; on 2026-08-20 it became unusable while reporting
+     $0.00. A dollar meter would have shown headroom on the provider that had
+     none.
+   - The old `OPERATOR_USAGE_BUDGET_USD` accumulator in `server/jobs.mjs` is
+     superseded — it sums one number that means several things.
 
 Plus the two renames in the next section, which have been waiting since before
 2026-07-30.
