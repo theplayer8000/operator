@@ -126,6 +126,39 @@ Two things here are load-bearing and easy to break:
 boundary". That was false — the server binds `0.0.0.0` and the store was readable
 from the LAN. It is true *now*, and only while the two points above hold.
 
+### AI workers change data through the capability layer, not through code
+
+An AI asked to tick off a gym session, add a mission or drop something on the
+calendar must **not** edit source to do it. `server/actions.mjs` exposes named,
+validated actions for exactly this, run via
+`node scripts/operator-action.mjs <action> '<json>'` (`list` shows them all).
+Each mirrors what the matching hook in `src/hooks/` does — same id generation,
+same date-key handling, same invariants — so the write is indistinguishable
+from one made through the feature's own page. Editing source is for changing
+how Operator *works*, not what it currently *holds*.
+
+Three rules keep this from rotting into the thing it replaced:
+
+- **It is not a generic write gateway, and must never become one.** Every action
+  has a fixed name and a fixed parameter shape and can only do what the owner
+  could already do through the UI. `PUT /api/state/<key>` — which *is* generic
+  and unvalidated — stays a maintenance backdoor, not something a worker is
+  pointed at.
+- **A new action mirrors its hook, it does not invent behaviour.** If the UI
+  archives before deleting, the action does too. Where the two disagree, the
+  hook is right and the action is a bug.
+- **A CLI, deliberately, not an SDK-native tool.** The Agent SDK's `tool()`
+  helper needs zod, which is not a declared dependency here (it exists only as
+  something the SDK pulled in), and declaring it needs an ADR. A CLI is also
+  worker-agnostic — Claude, Gemini and Codex call it identically, which is the
+  entire point of having a capability layer rather than one integration per
+  model. Revisit only if a worker can't run commands.
+
+Everything here touches **Operator's own data only**. Anything reaching an
+external host — GitHub, email, Slack, Drive — is a separate decision under the
+approval rule above, one named host at a time, however tempting a "capability
+registry" makes it look like a single step.
+
 ## Tech stack
 
 React 18 + TypeScript + Vite + Tailwind + React Router v6 + Recharts +
@@ -223,6 +256,16 @@ server/
                           is suspended on, answerable from the phone. Same gate as
                           the terminal: a job has tool access, so it is execution.
                           Step 1 of docs/ai-workspace-design.md
+  store.mjs             — the ONE in-memory copy of data/operator.json, and the
+                          only place in server/ allowed to read or write it.
+                          withState() is the race-safe read-modify-write every
+                          action goes through — read its comment before adding
+                          a second writer
+  actions.mjs           — the capability layer. Named, validated changes to
+                          Operator's OWN data (gym, missions, calendar,
+                          routine) that an AI worker can call. Mirrors each
+                          feature hook exactly. NOT a generic write gateway —
+                          see its header before adding anything
   providers.mjs         — the worker boundary between jobs.mjs and a turn. One
                           worker registered (claude-code → runner.mjs); adding a
                           speculative second one is exactly the "extending a
@@ -243,6 +286,10 @@ scripts/
   dev.mjs               — starts the API and Vite together
   log-update.mjs        — append one entry to the Updates changelog. No deps.
                           Goes through the API, not the file — see the rule above
+  operator-action.mjs   — run one capability action (server/actions.mjs). How an
+                          AI worker changes DATA instead of editing code. A CLI
+                          rather than an SDK tool on purpose: every worker calls
+                          it identically, which is the point of the layer
   backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
                           never calls the API, so `npm run backup` works when
                           everything is down. index.mjs imports runBackup() and runs

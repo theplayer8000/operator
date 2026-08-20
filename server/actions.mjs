@@ -1,0 +1,661 @@
+// The capability layer: named, validated actions an AI worker can call to
+// change Operator's own data — tick a gym exercise, create a mission, drop a
+// calendar event — without editing source code or touching the raw state API.
+//
+// Each action mirrors exactly what the matching frontend hook does
+// (src/hooks/use*.ts) — same id generation, same date-key handling, same
+// defaults, same invariants (deleting a mission sweeps it out of every other
+// mission's dependsOn; an emptied gym day drops its key rather than storing
+// an empty array). The write an action produces is meant to be
+// indistinguishable from one a human made through that feature's own UI.
+//
+// **This is deliberately not a generic "write anything to any key" gateway.**
+// `PUT /api/state/<key>` already exists and already does that, unvalidated —
+// it is a maintenance backdoor (CLAUDE.md's own architecture note calls it
+// exactly that), not a feature. Every action here has a fixed name and a
+// fixed parameter shape, and can only do what a human could already do
+// through that feature's page. Two features are deliberately absent:
+// Homelab (service tiles describe infrastructure, not tasks) and Updates
+// (already has its own mechanism — scripts/log-update.mjs / the API it
+// wraps — and duplicating it here would be a second copy of the same thing).
+//
+// Runs in-process, through server/store.mjs's withState() — nothing here
+// makes an HTTP call to itself. That is what makes two actions in the same
+// turn (or from two devices) safe against clobbering each other; see the
+// comment on withState().
+
+import { randomUUID } from "node:crypto";
+import { withState, readState } from "./store.mjs";
+
+export class ActionError extends Error {}
+
+function required(value, name) {
+  if (value === undefined || value === null || value === "") {
+    throw new ActionError(`${name} is required`);
+  }
+  return value;
+}
+
+function oneOf(value, choices, name) {
+  if (value !== undefined && !choices.includes(value)) {
+    throw new ActionError(`${name} must be one of: ${choices.join(", ")}`);
+  }
+  return value;
+}
+
+/**
+ * Server-side id minting. Mirrors `src/lib/id.ts` in spirit rather than
+ * byte-for-byte: that file's fallback branch exists only because a browser on
+ * an insecure origin (Operator's own phone case) can't call
+ * `crypto.randomUUID`. Nothing here is a browser, so there is no such
+ * restriction — Node's `crypto.randomUUID` is always available. Nothing reads
+ * an id's *format*, only its identity, so a real UUID from here and a
+ * timestamp-based fallback id from a phone already coexist in the store today.
+ */
+function generateId() {
+  return randomUUID();
+}
+
+/** Matches `src/lib/time.ts`'s `toDateKey()` — local calendar day, never UTC. */
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A date param, defaulting to today when omitted — every action that takes
+    one accepts "today" as a bare word too, since that's how a task is phrased. */
+function dateArg(value, name = "date") {
+  if (value === undefined || value === "today") return todayKey();
+  if (typeof value !== "string" || !DATE_KEY_RE.test(value) || Number.isNaN(new Date(value).getTime())) {
+    throw new ActionError(`${name} must be "YYYY-MM-DD" or "today"`);
+  }
+  return value;
+}
+
+// --- Gym --------------------------------------------------------------------
+// Mirrors src/hooks/useGym.ts. gym.sessions (the templates) is read-only here
+// — sessions are fixed by weekday and there is no UI to create one, so there
+// is nothing for an action to add.
+
+async function gymToggleExercise({ date, exerciseId }) {
+  required(exerciseId, "exerciseId");
+  const key = dateArg(date);
+
+  const sessions = (await readState("gym.sessions")) ?? [];
+  const weekday = new Date(`${key}T00:00:00`).getDay();
+  const isoWeekday = weekday === 0 ? 7 : weekday;
+  const session = sessions.find((s) => s.weekday === isoWeekday);
+  if (session && !session.exercises.some((e) => e.id === exerciseId)) {
+    throw new ActionError(
+      `"${exerciseId}" is not in ${key}'s session (${session.name}). Exercise ids: ` +
+        session.exercises.map((e) => e.id).join(", ")
+    );
+  }
+
+  const next = await withState("gym.completions", (current) => {
+    const prev = current ?? {};
+    const day = prev[key] ?? [];
+    const updated = day.includes(exerciseId)
+      ? day.filter((id) => id !== exerciseId)
+      : [...day, exerciseId];
+    // Drop the key entirely when a day is emptied — same as the hook, so the
+    // store doesn't accumulate a growing map of empty arrays over months.
+    if (updated.length === 0) {
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    }
+    return { ...prev, [key]: updated };
+  });
+
+  const done = next[key]?.includes(exerciseId) ?? false;
+  return { date: key, exerciseId, done };
+}
+
+async function gymSkipDay({ date }) {
+  const key = dateArg(date);
+  await withState("gym.skipped", (current) => {
+    const prev = current ?? [];
+    return prev.includes(key) ? prev : [...prev, key];
+  });
+  // skipDay also clears that day's ticks in the hook — a half-ticked, also-
+  // skipped day is two answers to one question.
+  await withState("gym.completions", (current) => {
+    const prev = current ?? {};
+    if (!(key in prev)) return prev;
+    const { [key]: _removed, ...rest } = prev;
+    return rest;
+  });
+  return { date: key, skipped: true };
+}
+
+async function gymUnskipDay({ date }) {
+  const key = dateArg(date);
+  await withState("gym.skipped", (current) => (current ?? []).filter((d) => d !== key));
+  return { date: key, skipped: false };
+}
+
+// --- Mission Board ------------------------------------------------------------
+// Mirrors src/hooks/useMissionBoard.ts.
+
+const MISSION_CATEGORIES = [
+  "server", "homelab", "darams", "ai", "learning", "career", "gym", "forex", "custom",
+];
+const MISSION_DIFFICULTIES = ["easy", "moderate", "hard", "epic"];
+const MISSION_STATUSES = ["not_started", "in_progress", "blocked", "complete"];
+
+function activityEntry(label) {
+  return { id: generateId(), label, timestamp: new Date().toISOString() };
+}
+
+function withActivity(mission, label) {
+  return { ...mission, activity: [activityEntry(label), ...mission.activity].slice(0, 30) };
+}
+
+async function missionCreate({ name, description = "", category, difficulty }) {
+  required(name, "name");
+  oneOf(category, MISSION_CATEGORIES, "category");
+  oneOf(difficulty, MISSION_DIFFICULTIES, "difficulty");
+  required(category, "category");
+  required(difficulty, "difficulty");
+
+  const record = {
+    id: generateId(),
+    name: String(name).trim(),
+    description: String(description).trim(),
+    category,
+    difficulty,
+    status: "not_started",
+    progress: 0,
+    timeInvestedHours: 0,
+    nextObjective: "",
+    objectivesNotes: "",
+    notes: "",
+    milestones: [],
+    dependsOn: [],
+    relatedLearning: "",
+    relatedJourneyMilestone: "",
+    whyItMatters: "",
+    unlocks: "",
+    knowledgeNeeded: "",
+    activity: [activityEntry("Mission created")],
+    archived: false,
+    createdAt: new Date().toISOString(),
+  };
+  await withState("missions.records", (current) => [record, ...(current ?? [])]);
+  return { id: record.id, name: record.name };
+}
+
+function findMission(missions, id) {
+  const mission = missions.find((m) => m.id === id);
+  if (!mission) throw new ActionError(`no mission with id "${id}"`);
+  return mission;
+}
+
+async function missionSetStatus({ id, status }) {
+  required(id, "id");
+  oneOf(status, MISSION_STATUSES, "status");
+  required(status, "status");
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    return missions.map((m) =>
+      m.id === id ? withActivity({ ...m, status }, `Status changed to "${status.replace("_", " ")}"`) : m
+    );
+  });
+  return { id, status };
+}
+
+async function missionSetProgress({ id, progress }) {
+  required(id, "id");
+  const pct = Number(progress);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    throw new ActionError("progress must be a number between 0 and 100");
+  }
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    return missions.map((m) =>
+      m.id === id ? withActivity({ ...m, progress: pct }, `Progress moved to ${pct}%`) : m
+    );
+  });
+  return { id, progress: pct };
+}
+
+/** Everything else a mission can have edited on it in one go — the parts of
+    updateMission() that make sense for a task rather than a UI form. */
+async function missionUpdate({ id, ...patch }) {
+  required(id, "id");
+  const allowed = [
+    "name", "description", "nextObjective", "objectivesNotes", "notes",
+    "whyItMatters", "unlocks", "knowledgeNeeded", "relatedLearning",
+    "relatedJourneyMilestone", "timeInvestedHours",
+  ];
+  const clean = {};
+  for (const key of allowed) {
+    if (patch[key] !== undefined) clean[key] = patch[key];
+  }
+  if (Object.keys(clean).length === 0) {
+    throw new ActionError(`nothing to update — pass one of: ${allowed.join(", ")}`);
+  }
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    return missions.map((m) => (m.id === id ? { ...m, ...clean } : m));
+  });
+  return { id, updated: Object.keys(clean) };
+}
+
+async function missionArchive({ id, archived = true }) {
+  required(id, "id");
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    return missions.map((m) =>
+      m.id === id
+        ? withActivity({ ...m, archived }, archived ? "Mission archived" : "Mission restored")
+        : m
+    );
+  });
+  return { id, archived };
+}
+
+async function missionAddMilestone({ id, title, dueDate }) {
+  required(id, "id");
+  required(title, "title");
+  const milestone = {
+    id: generateId(),
+    title: String(title).trim(),
+    status: "pending",
+    ...(dueDate ? { dueDate: dateArg(dueDate, "dueDate") } : {}),
+  };
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    return missions.map((m) =>
+      m.id === id
+        ? withActivity(
+            { ...m, milestones: [...m.milestones, milestone] },
+            `Milestone "${milestone.title}" added`
+          )
+        : m
+    );
+  });
+  return { id, milestoneId: milestone.id };
+}
+
+async function missionUpdateMilestone({ id, milestoneId, status }) {
+  required(id, "id");
+  required(milestoneId, "milestoneId");
+  oneOf(status, ["pending", "in_progress", "complete"], "status");
+  required(status, "status");
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    const mission = findMission(missions, id);
+    if (!mission.milestones.some((ms) => ms.id === milestoneId)) {
+      throw new ActionError(`mission "${id}" has no milestone "${milestoneId}"`);
+    }
+    return missions.map((m) => {
+      if (m.id !== id) return m;
+      const updated = {
+        ...m,
+        milestones: m.milestones.map((ms) => (ms.id === milestoneId ? { ...ms, status } : ms)),
+      };
+      if (status === "complete") {
+        const ms = m.milestones.find((x) => x.id === milestoneId);
+        return withActivity(updated, `Milestone "${ms.title}" completed`);
+      }
+      return updated;
+    });
+  });
+  return { id, milestoneId, status };
+}
+
+async function missionDelete({ id }) {
+  required(id, "id");
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    findMission(missions, id);
+    // Deleting sweeps the id out of every other mission's dependsOn in the
+    // same write — same invariant the hook keeps, and for the same reason:
+    // a leftover id is not a broken link that shows up anywhere, it is an
+    // invisible one that quietly means something different if the id is
+    // ever reused.
+    return missions
+      .filter((m) => m.id !== id)
+      .map((m) =>
+        m.dependsOn.includes(id) ? { ...m, dependsOn: m.dependsOn.filter((d) => d !== id) } : m
+      );
+  });
+  return { id, deleted: true };
+}
+
+// --- Calendar -----------------------------------------------------------------
+// Mirrors src/hooks/useEvents.ts. Internally still events.records/CalendarEvent
+// — only the user-facing label changed when Calendar was renamed from
+// "Events". Recurrence is read-only here: a rule interacts with skip state and
+// expansion in ways worth a deliberate second pass rather than guessing at
+// today, in the first cut of an action an AI calls unsupervised.
+
+const EVENT_KINDS = ["work", "personal", "admin", "health", "other"];
+
+function resolveEventId(id) {
+  return id.includes("@") ? id.slice(0, id.indexOf("@")) : id;
+}
+
+function findEvent(events, id) {
+  const realId = resolveEventId(id);
+  const event = events.find((e) => e.id === realId);
+  if (!event) throw new ActionError(`no calendar event with id "${id}"`);
+  return { realId, event };
+}
+
+async function eventCreate({ title, date, time, durationMinutes, kind, notes }) {
+  required(title, "title");
+  const key = dateArg(date, "date");
+  oneOf(kind, EVENT_KINDS, "kind");
+  if (time !== undefined && !/^\d{1,2}:\d{2}$/.test(time)) {
+    throw new ActionError('time must be "HH:MM"');
+  }
+
+  const record = {
+    id: generateId(),
+    title: String(title).trim(),
+    date: key,
+    notes: notes ? String(notes).trim() : "",
+    kind: kind ?? "other",
+    ...(time ? { time } : {}),
+    ...(time && Number(durationMinutes) > 0 ? { durationMinutes: Math.round(Number(durationMinutes)) } : {}),
+  };
+  await withState("events.records", (current) => [...(current ?? []), record]);
+  return { id: record.id, title: record.title, date: record.date };
+}
+
+async function eventUpdate({ id, ...patch }) {
+  required(id, "id");
+  const allowed = ["title", "notes", "kind", "time", "durationMinutes"];
+  if (patch.kind !== undefined) oneOf(patch.kind, EVENT_KINDS, "kind");
+  const clean = {};
+  for (const key of allowed) {
+    if (patch[key] !== undefined) clean[key] = patch[key];
+  }
+  if (Object.keys(clean).length === 0) {
+    throw new ActionError(`nothing to update — pass one of: ${allowed.join(", ")}`);
+  }
+  await withState("events.records", (current) => {
+    const events = current ?? [];
+    const { realId } = findEvent(events, id);
+    return events.map((e) => (e.id === realId ? { ...e, ...clean } : e));
+  });
+  return { id, updated: Object.keys(clean) };
+}
+
+/** Whole record — for a series, every occurrence. Use skip for one day of one. */
+async function eventDelete({ id }) {
+  required(id, "id");
+  await withState("events.records", (current) => {
+    const events = current ?? [];
+    const { realId } = findEvent(events, id);
+    return events.filter((e) => e.id !== realId);
+  });
+  return { id, deleted: true };
+}
+
+async function eventSkipOccurrence({ id, date }) {
+  required(id, "id");
+  const key = dateArg(date, "date");
+  await withState("events.records", (current) => {
+    const events = current ?? [];
+    const { realId, event } = findEvent(events, id);
+    if (!event.recurrence) throw new ActionError(`"${id}" does not repeat — delete it instead`);
+    return events.map((e) =>
+      e.id === realId && !(e.skipDates ?? []).includes(key)
+        ? { ...e, skipDates: [...(e.skipDates ?? []), key] }
+        : e
+    );
+  });
+  return { id, date: key, skipped: true };
+}
+
+async function eventUnskipOccurrence({ id, date }) {
+  required(id, "id");
+  const key = dateArg(date, "date");
+  await withState("events.records", (current) => {
+    const events = current ?? [];
+    const { realId } = findEvent(events, id);
+    return events.map((e) =>
+      e.id === realId ? { ...e, skipDates: (e.skipDates ?? []).filter((d) => d !== key) } : e
+    );
+  });
+  return { id, date: key, skipped: false };
+}
+
+// --- Daily Routine --------------------------------------------------------
+// Mirrors src/hooks/useRoutineData.ts. Sections are fixed by the type (seven,
+// no create/delete) — only their tasks are mutable here.
+
+const ROUTINE_SECTIONS = ["morning", "work", "gym", "learning", "forex", "evening", "sleep"];
+
+function findSectionAndTask(sections, sectionKey, taskId) {
+  const section = sections.find((s) => s.key === sectionKey);
+  if (!section) throw new ActionError(`no routine section "${sectionKey}"`);
+  const task = section.tasks.find((t) => t.id === taskId);
+  if (!task) throw new ActionError(`section "${sectionKey}" has no task "${taskId}"`);
+  return { section, task };
+}
+
+/** Toggles a step, exactly as the hook's two-store split does: a repeating
+    step is a fact about the date (routine.completions), a one-off step is a
+    fact about the step itself (routine.sections). */
+async function routineToggleTask({ sectionKey, taskId, date }) {
+  oneOf(sectionKey, ROUTINE_SECTIONS, "sectionKey");
+  required(sectionKey, "sectionKey");
+  required(taskId, "taskId");
+
+  const sections = (await readState("routine.sections")) ?? [];
+  const { task } = findSectionAndTask(sections, sectionKey, taskId);
+
+  if (!task.repeatDaily) {
+    await withState("routine.sections", (current) =>
+      (current ?? []).map((s) =>
+        s.key !== sectionKey
+          ? s
+          : { ...s, tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, done: !t.done } : t)) }
+      )
+    );
+    return { sectionKey, taskId, done: !task.done };
+  }
+
+  const key = dateArg(date);
+  const next = await withState("routine.completions", (current) => {
+    const prev = current ?? {};
+    const day = prev[key] ?? [];
+    const updated = day.includes(taskId) ? day.filter((id) => id !== taskId) : [...day, taskId];
+    if (updated.length === 0) {
+      const { [key]: _dropped, ...rest } = prev;
+      return rest;
+    }
+    return { ...prev, [key]: updated };
+  });
+  return { sectionKey, taskId, date: key, done: next[key]?.includes(taskId) ?? false };
+}
+
+async function routineAddTask({ sectionKey, title, estimatedMinutes = 10 }) {
+  oneOf(sectionKey, ROUTINE_SECTIONS, "sectionKey");
+  required(sectionKey, "sectionKey");
+  required(title, "title");
+  const minutes = Number(estimatedMinutes);
+  if (!Number.isFinite(minutes) || minutes < 0) {
+    throw new ActionError("estimatedMinutes must be a non-negative number");
+  }
+
+  const task = {
+    id: generateId(),
+    title: String(title).trim(),
+    done: false,
+    estimatedMinutes: minutes,
+    repeatDaily: true,
+  };
+  await withState("routine.sections", (current) => {
+    const sections = current ?? [];
+    if (!sections.some((s) => s.key === sectionKey)) {
+      throw new ActionError(`no routine section "${sectionKey}"`);
+    }
+    return sections.map((s) => (s.key === sectionKey ? { ...s, tasks: [...s.tasks, task] } : s));
+  });
+  return { sectionKey, taskId: task.id, title: task.title };
+}
+
+async function routineDeleteTask({ sectionKey, taskId }) {
+  oneOf(sectionKey, ROUTINE_SECTIONS, "sectionKey");
+  required(sectionKey, "sectionKey");
+  required(taskId, "taskId");
+  await withState("routine.sections", (current) => {
+    const sections = current ?? [];
+    findSectionAndTask(sections, sectionKey, taskId);
+    return sections.map((s) =>
+      s.key !== sectionKey ? s : { ...s, tasks: s.tasks.filter((t) => t.id !== taskId) }
+    );
+  });
+  return { sectionKey, taskId, deleted: true };
+}
+
+// --- registry ---------------------------------------------------------------
+
+/**
+ * name → { description, params, handler }.
+ *
+ * `params` is documentation, not a schema library: a short line per parameter,
+ * good enough to hand to `runner.mjs` as a tool description and to a human
+ * reading this file. `CLAUDE.md` is explicit about not reaching for a generic
+ * validator here — every action already validates its own inputs by hand,
+ * above, which is also what keeps each error message specific to what was
+ * actually wrong.
+ */
+const ACTIONS = {
+  gym_toggle_exercise: {
+    description: "Tick or untick one exercise on a gym day. Untick by calling it again.",
+    params: "date? (YYYY-MM-DD or \"today\"), exerciseId",
+    handler: gymToggleExercise,
+  },
+  gym_skip_day: {
+    description: "Mark a gym day as scheduled but not trained. Clears any ticks on it.",
+    params: "date? (YYYY-MM-DD or \"today\")",
+    handler: gymSkipDay,
+  },
+  gym_unskip_day: {
+    description: "Undo gym_skip_day.",
+    params: "date? (YYYY-MM-DD or \"today\")",
+    handler: gymUnskipDay,
+  },
+  mission_create: {
+    description: "Create a new mission on the Mission Board.",
+    params:
+      "name, description?, category (server|homelab|darams|ai|learning|career|gym|forex|custom), difficulty (easy|moderate|hard|epic)",
+    handler: missionCreate,
+  },
+  mission_set_status: {
+    description: "Change a mission's status.",
+    params: "id, status (not_started|in_progress|blocked|complete)",
+    handler: missionSetStatus,
+  },
+  mission_set_progress: {
+    description: "Set a mission's progress percentage.",
+    params: "id, progress (0-100)",
+    handler: missionSetProgress,
+  },
+  mission_update: {
+    description: "Edit a mission's text fields (name, description, notes, objectives, etc).",
+    params: "id, plus any of: name, description, nextObjective, objectivesNotes, notes, whyItMatters, unlocks, knowledgeNeeded, relatedLearning, relatedJourneyMilestone, timeInvestedHours",
+    handler: missionUpdate,
+  },
+  mission_archive: {
+    description: "Archive or restore a mission. Non-destructive — archived missions stay findable.",
+    params: "id, archived? (true to archive, false to restore — defaults to true)",
+    handler: missionArchive,
+  },
+  mission_add_milestone: {
+    description: "Add a milestone to a mission.",
+    params: "id, title, dueDate? (YYYY-MM-DD)",
+    handler: missionAddMilestone,
+  },
+  mission_update_milestone: {
+    description: "Change a milestone's status.",
+    params: "id, milestoneId, status (pending|in_progress|complete)",
+    handler: missionUpdateMilestone,
+  },
+  mission_delete: {
+    description: "Permanently delete a mission. Prefer mission_archive unless asked explicitly to delete.",
+    params: "id",
+    handler: missionDelete,
+  },
+  calendar_create_event: {
+    description: "Add an event to the calendar. One-off only — recurring series are not created by this action.",
+    params: "title, date (YYYY-MM-DD or \"today\"), time? (HH:MM), durationMinutes?, kind? (work|personal|admin|health|other), notes?",
+    handler: eventCreate,
+  },
+  calendar_update_event: {
+    description: "Edit an event's title, notes, kind, time, or duration.",
+    params: "id, plus any of: title, notes, kind, time, durationMinutes",
+    handler: eventUpdate,
+  },
+  calendar_delete_event: {
+    description: "Delete a calendar event. For a recurring series this removes every occurrence — use calendar_skip_occurrence for one day of it.",
+    params: "id",
+    handler: eventDelete,
+  },
+  calendar_skip_occurrence: {
+    description: "Drop a single day out of a recurring event without touching the series.",
+    params: "id, date (YYYY-MM-DD or \"today\")",
+    handler: eventSkipOccurrence,
+  },
+  calendar_unskip_occurrence: {
+    description: "Undo calendar_skip_occurrence.",
+    params: "id, date (YYYY-MM-DD or \"today\")",
+    handler: eventUnskipOccurrence,
+  },
+  routine_toggle_task: {
+    description: "Tick or untick a Daily Routine step.",
+    params: "sectionKey (morning|work|gym|learning|forex|evening|sleep), taskId, date? (YYYY-MM-DD or \"today\" — ignored for one-off steps)",
+    handler: routineToggleTask,
+  },
+  routine_add_task: {
+    description: "Add a new step to a Daily Routine section.",
+    params: "sectionKey (morning|work|gym|learning|forex|evening|sleep), title, estimatedMinutes? (default 10)",
+    handler: routineAddTask,
+  },
+  routine_delete_task: {
+    description: "Remove a step from a Daily Routine section.",
+    params: "sectionKey (morning|work|gym|learning|forex|evening|sleep), taskId",
+    handler: routineDeleteTask,
+  },
+};
+
+/** For the tool layer to advertise, and for a human reading /api/actions. */
+export function listActions() {
+  return Object.entries(ACTIONS).map(([name, { description, params }]) => ({
+    name,
+    description,
+    params,
+  }));
+}
+
+/**
+ * Run one action by name.
+ *
+ * Throws `ActionError` for anything the caller got wrong (bad params, unknown
+ * id) — the caller's job is to decide how that surfaces, same as every other
+ * handler in this codebase. An unknown action name is the same kind of error,
+ * not a 500: nothing here should ever throw for a reason a caller could not
+ * have avoided by reading `listActions()`.
+ */
+export async function runAction(name, params = {}) {
+  const action = ACTIONS[name];
+  if (!action) {
+    throw new ActionError(`no such action "${name}". Known actions: ${Object.keys(ACTIONS).join(", ")}`);
+  }
+  return action.handler(params ?? {});
+}

@@ -39,6 +39,49 @@ what's actually running now, not a proposal.
    modelled in full, with the reasoning in the type's own comment — revisit
    once a verifier or a second worker gives them real content.
 
+## The capability layer — built 2026-08-20, uncommitted
+
+**An AI worker can now change Operator's data without editing code.**
+`server/actions.mjs` exposes 19 named, validated actions across Gym, Mission
+Board, Calendar and Daily Routine; a worker calls them with
+`node scripts/operator-action.mjs <action> '<json>'` (`list` prints the
+catalogue), or over `GET`/`POST /api/actions`.
+
+This is the thing that makes a second provider cheap: Gemini and Codex will
+call the same CLI, so the capability layer knows *how* and no worker needs
+bespoke integration code. That was the whole argument for building it before
+adding another provider.
+
+**`server/store.mjs` is new and matters more than it looks.** `index.mjs` had
+the store's cache, migrations and load/persist inline, so a second writer
+would have been a second in-memory copy that could disagree with the first.
+It's now one module, and `withState()` is a race-safe read-modify-write —
+proven by test, two concurrent ticks both land rather than clobbering.
+**Read its comment before adding another writer.**
+
+Deliberately excluded: Homelab (service tiles describe infrastructure, not
+tasks) and Updates (already has `log-update.mjs`; a second mechanism for the
+same thing is worse than none). Calendar recurrence is read-only — creating a
+rule interacts with skip state and expansion in ways worth a deliberate pass,
+not a guess in the first cut of something a worker calls unsupervised.
+
+**Verified, 27/27** in an isolated test against a throwaway store: every
+action, every validation path, the `dependsOn` sweep on mission delete, the
+empty-day-key drop on both gym and routine, and the concurrency case. Then
+over real HTTP on an isolated server (`:5188`): catalogue lists, a real call
+succeeds, a bad one returns `400` with the reason a model can correct itself
+from, and `GET`/`PUT /api/state` still behave exactly as before the
+extraction. `node --check` on all four server files; `tsc -b` and
+`vite build` clean.
+
+Four test failures on the first run were **the test's bug, not the code's** —
+it imported `actions.mjs` twice (once cache-busted), so `err instanceof
+ActionError` compared across two module instances with two separate classes.
+Worth knowing if a future test does the same thing.
+
+**Not restarted.** `server/` changed, so the live API is still on the previous
+code until someone restarts it.
+
 ## The audit — kept for the reasoning, already acted on
 
 ## Uploads — complete, reviewed, safe to commit on its own

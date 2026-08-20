@@ -357,6 +357,16 @@ const ALLOWED_TOOLS = (
     "Bash(npx vite:*)",
     "Bash(node --check:*)",
     "Bash(node scripts/log-update.mjs:*)",
+    /*
+      The capability layer (server/actions.mjs). Pre-allowed for the same
+      reason log-update is: it is how a worker is *supposed* to change the
+      owner's data, and every action behind it is named, validated, and
+      limited to something he could already do through that feature's own
+      page. Asking permission per call would make the intended path the
+      annoying one — and the unintended path (editing source, or a raw
+      PUT /api/state) is the one that stays gated.
+    */
+    "Bash(node scripts/operator-action.mjs:*)",
     // Git, minus the one that publishes — which the deny list stops outright.
     "Bash(git status:*)",
     "Bash(git diff:*)",
@@ -462,6 +472,20 @@ const APPEND_PROMPT = [
   "try to reach it another way. Finish everything else, then write the exact command out",
   "for the owner to run in Operator's terminal himself, and note it in",
   "docs/handoffs/CURRENT.md so it survives a restart.",
+  /*
+    The capability layer, stated plainly, because the wrong instinct here is
+    an expensive one: asked to tick off a gym session or add a mission, a
+    coding agent's default is to go and edit source code. That is the slow,
+    risky path to a data change — it needs a build, sometimes a restart, and
+    it puts a code diff in the way of what was meant to be one row changing.
+  */
+  "To change the owner's own data — gym, missions, calendar, daily routine —",
+  "use the capability layer, NOT source edits:",
+  "`node scripts/operator-action.mjs list` shows every action and its parameters,",
+  "and `node scripts/operator-action.mjs <action> '<json params>'` runs one.",
+  "These are pre-approved, validated, and do exactly what the app's own UI does.",
+  "Only edit source when the request is genuinely about changing how Operator",
+  "*works*, rather than what it currently holds.",
 ].join(" ");
 
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
