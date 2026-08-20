@@ -123,6 +123,20 @@ async function callGemini({ model, contents, systemInstruction, signal, onRateLi
       failure after that is reported.
     */
     if (res.status === 429) {
+      /*
+        A daily cap and a per-minute burst are the same status code and both
+        carry a `retryDelay`, but only one of them is worth waiting for. The
+        free tier's real limit is **20 requests per DAY**
+        (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), and it still
+        says "retry in 18s" — waiting that out just fails again, having told
+        the owner something untrue about why.
+      */
+      if (isDailyCap(body)) {
+        throw new Error(
+          "Gemini's free tier is spent for today (20 requests a day). It resets tomorrow — " +
+            "use Claude for now, or add billing to the Google project."
+        );
+      }
       const wait = retryAfterMs(body);
       // Once only. A second wait would mean a turn sitting silent for two
       // minutes, which from a phone is indistinguishable from a hang.
@@ -147,6 +161,22 @@ async function callGemini({ model, contents, systemInstruction, signal, onRateLi
 
 /** Longest we'll sit on a rate limit before giving the turn back. */
 const MAX_RETRY_WAIT_MS = 65_000;
+
+/**
+ * Is this the daily allowance, rather than a burst limit?
+ *
+ * Read from `quotaId` rather than the prose, which is identical for both. The
+ * free tier's daily figure is small enough to matter — 20 requests, where a
+ * single conversation with a few tool calls can spend several.
+ */
+function isDailyCap(body) {
+  for (const detail of body?.error?.details ?? []) {
+    for (const violation of detail?.violations ?? []) {
+      if (/PerDay/i.test(String(violation?.quotaId ?? ""))) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * How long Google wants us to wait, in ms, or null.
