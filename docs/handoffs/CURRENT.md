@@ -425,6 +425,54 @@ consistent with it: a card that could not be reached until the SDK gave up
 sent. Either way the server was doing the right thing. If it recurs, capture how
 long the card sat before the tap.
 
+## Restarting the server: two traps that stack (2026-08-20)
+
+Both hit at once while adding Gemini, and together they look exactly like
+"the new provider code is broken" when nothing is wrong with it.
+
+**1. `schtasks /end` does not stop the server.** `npm run serve` runs under
+`scripts/supervise.mjs`, so ending the task kills the wrapper and leaves the
+node process holding port 5174. The relaunched task then can't bind, exits
+**1**, and the *old* process keeps serving — so everything looks restarted,
+the API answers, `/api/build` even reports a recent `startedAt`, and none of
+the new code is running. Check `(Get-ScheduledTaskInfo -TaskName
+OperatorServe).LastTaskResult`: a `1` means this happened.
+
+To actually restart it, stop the listener as well:
+
+```powershell
+schtasks /end /tn OperatorServe
+Get-NetTCPConnection -LocalPort 5174 -State Listen |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+schtasks /run /tn OperatorServe
+```
+
+**2. Task Scheduler caches the user environment.** It builds the block when
+the *service* starts, so a variable set with `setx` afterwards never reaches a
+task it launches — no amount of restarting the task helps. This is the same
+family as the `setx` note below, one level deeper and harder to see.
+
+`scripts/`-adjacent fix, already applied in the launch wrapper: read the value
+out of the registry at launch instead of trusting what was inherited.
+
+```cmd
+for /f "tokens=2,*" %%A in ('reg query "HKCU\Environment" /v GEMINI_API_KEY 2^>nul') do set "GEMINI_API_KEY=%%B"
+```
+
+The wrapper also writes `GEMINI_API_KEY: present` or `MISSING` into
+`serve.log` on every start, so the next person sees which it was in one line
+rather than inferring it from a provider list.
+
+### Never type a secret into Operator's terminal
+
+The Gemini key had to be reissued twice, the second time because it was set
+with `setx GEMINI_API_KEY <key>` **through the Operator terminal** — which
+logs every command it runs, by design (that audit line is the whole point of
+ADR 0011). The key went straight into `serve.log` in plaintext.
+
+Set secrets from a normal shell at the desk. The terminal being audited is a
+feature; it is exactly what makes it the wrong place for a key.
+
 ## Landmines
 
 - **`git add -A` is banned here** (`CLAUDE.md`). Two writers share this tree.
