@@ -199,9 +199,12 @@ Files and images ride the job, not a separate mechanism: a job carries
 Claude Code takes files by path, so this is a write-to-disk-then-mention, not an
 upload protocol.
 
-Constraints worth fixing now: a gitignored directory outside the store (JSON is
-the wrong home for binaries), a per-file size cap, and a sweep when the
-conversation resets. A provider that cannot take file input declares it via
+Implemented for Claude jobs: `POST /api/jobs/resources` stages one raw file
+locally (10 MB per file by default; `OPERATOR_RESOURCE_MAX_BYTES` overrides it),
+then the next create/input claims it into `data/job-resources/job-*`. Its binary
+never enters `operator.json`; the job stores only resource metadata and the
+local path Claude is told to read. Closing or clearing the conversation removes
+its directory. A provider that cannot take file input declares it via
 `capabilities()` and the UI hides the control.
 
 ## What this costs

@@ -43,6 +43,7 @@ import {
   subscribe,
 } from "./terminal.mjs";
 import * as jobs from "./jobs.mjs";
+import { resourceLimit, stageUpload } from "./uploads.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 import { buildStatus } from "./build.mjs";
 
@@ -364,7 +365,18 @@ const server = createServer(async (req, res) => {
         }
         const body = await readBody(req);
         try {
-          return json(res, 202, jobs.create(body?.prompt, body?.model, identity));
+          return json(
+            res,
+            202,
+            await jobs.create(
+              body?.prompt,
+              body?.model,
+              identity,
+              body?.resources,
+              body?.provider,
+              body?.taskKind
+            )
+          );
         } catch (err) {
           // 409 rather than 400 when another device holds the runner: it isn't a
           // bad request, it's a busy one, and the client shows it differently.
@@ -400,6 +412,18 @@ const server = createServer(async (req, res) => {
       return json(res, 200, jobs.clear(identity));
     }
 
+    // Raw local files are staged before a first job exists, then claimed by
+    // jobs.create()/input(). This remains behind the same device gate as chat.
+    if (pathname === "/api/jobs/resources" && req.method === "POST") {
+      const allowed = deviceAuthorised(identity);
+      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      try {
+        return json(res, 201, { resource: await stageUpload(req), maxBytes: resourceLimit() });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
     // /api/jobs/:id, and /api/jobs/:id/<action>
     if (pathname.startsWith("/api/jobs/")) {
       const allowed = deviceAuthorised(identity);
@@ -420,11 +444,14 @@ const server = createServer(async (req, res) => {
         }
         if (action === "input" && req.method === "POST") {
           const body = await readBody(req);
-          return json(res, 202, jobs.input(id, body, identity));
+          return json(res, 202, await jobs.input(id, body, identity));
         }
         if (action === "model" && req.method === "POST") {
           const body = await readBody(req);
           return json(res, 200, jobs.setModel(id, body?.model));
+        }
+        if (action === "retry" && req.method === "POST") {
+          return json(res, 202, jobs.retry(id, identity));
         }
         /*
           Answering a permission the running turn is suspended on (ADR 0012).

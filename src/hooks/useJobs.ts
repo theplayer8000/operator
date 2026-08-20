@@ -35,6 +35,17 @@ export interface JobSummary {
   latest: number;
   /** Questions this job has stopped to ask. Waiting on a person, not working. */
   asking?: number;
+  resources?: JobResource[];
+}
+
+/** A local file attached to a Claude job; its binary never enters operator.json. */
+export interface JobResource {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  path: string;
+  createdAt: string;
 }
 
 /** Every event carries seq/at/type; the rest depends on the type. */
@@ -269,10 +280,10 @@ export function useJobs() {
 
   /** Start a new job. Returns its id so the caller can select it. */
   const create = useCallback(
-    async (prompt: string, model?: string) => {
+    async (prompt: string, model?: string, resources: JobResource[] = []) => {
       setError(null);
       try {
-        const body = await post("/api/jobs", { prompt, model });
+        const body = await post("/api/jobs", { prompt, model, resources });
         setComposing(false);
         await refreshList();
         if (body.id) await select(body.id);
@@ -287,10 +298,10 @@ export function useJobs() {
 
   /** Send another turn into an existing job. */
   const send = useCallback(
-    async (id: string, text: string) => {
+    async (id: string, text: string, resources: JobResource[] = []) => {
       setError(null);
       try {
-        await post(`/api/jobs/${encodeURIComponent(id)}/input`, { text });
+        await post(`/api/jobs/${encodeURIComponent(id)}/input`, { text, resources });
         await refreshEvents(id);
         await refreshList();
       } catch (err) {
@@ -299,6 +310,31 @@ export function useJobs() {
     },
     [refreshEvents, refreshList]
   );
+
+  /** Upload raw local resources before the turn that references them starts. */
+  const upload = useCallback(async (files: File[]) => {
+    setError(null);
+    try {
+      const resources: JobResource[] = [];
+      for (const file of files) {
+        const res = await fetch("/api/jobs/resources", {
+          method: "POST",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            "x-operator-file-name": file.name,
+          },
+          body: file,
+        });
+        const body = (await res.json().catch(() => ({}))) as { resource?: JobResource; error?: string };
+        if (!res.ok || !body.resource) throw new Error(body.error ?? `couldn't upload ${file.name}`);
+        resources.push(body.resource);
+      }
+      return resources;
+    } catch (err) {
+      setError((err as Error).message);
+      return null;
+    }
+  }, []);
 
   const cancel = useCallback(
     async (id: string) => {
@@ -310,6 +346,28 @@ export function useJobs() {
       }
     },
     [refreshList]
+  );
+
+  /**
+   * Requeue a job's last failed, blocked, or cancelled attempt.
+   *
+   * `server/jobs.mjs` grew this route with the attempts model; nothing on the
+   * frontend called it until now. The prompt that started the attempt is kept
+   * in memory only — never persisted, because it can carry owner content — so
+   * a job that outlived a server restart has nothing to replay, and the server
+   * says exactly that back rather than silently failing.
+   */
+  const retry = useCallback(
+    async (id: string) => {
+      try {
+        await post(`/api/jobs/${encodeURIComponent(id)}/retry`);
+        await refreshEvents(id);
+        await refreshList();
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    },
+    [refreshEvents, refreshList]
   );
 
   const setModel = useCallback(
@@ -435,7 +493,9 @@ export function useJobs() {
     select,
     create,
     send,
+    upload,
     cancel,
+    retry,
     setModel,
     remove,
     clearAll,

@@ -10,6 +10,9 @@ import {
   Wrench,
   FileText,
   History,
+  Paperclip,
+  X,
+  RotateCcw,
 } from "lucide-react";
 import Markdown from "@/components/ui/Markdown";
 import ConfirmButton from "@/components/ui/ConfirmButton";
@@ -37,6 +40,9 @@ const STATUS_TONE: Record<string, string> = {
   blocked: "text-vital-down",
   cancelled: "text-ink-700",
 };
+
+/** Matches the server's own check in `jobs.mjs`'s `retry()` — keep them in step. */
+const RETRYABLE = new Set(["failed", "blocked", "cancelled"]);
 
 function ago(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -382,8 +388,12 @@ function Tab({
 export default function ClaudeChat() {
   const j = useJobs();
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [answering, setAnswering] = useState<Record<string, boolean>>({});
   const logRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   /*
     Which questions have been settled, keyed by id.
@@ -404,12 +414,36 @@ export default function ClaudeChat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [j.events.length, j.busy]);
 
+  async function retryTurn() {
+    if (!j.selectedId || retrying) return;
+    setRetrying(true);
+    await j.retry(j.selectedId);
+    setRetrying(false);
+  }
+
   async function submit() {
     const text = draft.trim();
     if (!text) return;
+    setUploading(true);
+    const resources = attachments.length ? await j.upload(attachments) : [];
+    setUploading(false);
+    if (resources === null) return;
     setDraft("");
-    if (j.selectedId) await j.send(j.selectedId, text);
-    else await j.create(text);
+    setAttachments([]);
+    if (j.selectedId) await j.send(j.selectedId, text, resources);
+    else await j.create(text, undefined, resources);
+  }
+
+  function addFiles(files: FileList | null) {
+    if (!files?.length) return;
+    setAttachments((current) => {
+      const next = [...current];
+      for (const file of Array.from(files)) {
+        if (!next.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)) next.push(file);
+      }
+      return next;
+    });
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   /**
@@ -562,6 +596,25 @@ export default function ClaudeChat() {
           {j.error && <p className="text-xs text-vital-down mb-2 break-words">{j.error}</p>}
 
           {/*
+            Only for a job that has actually stopped this way — never while
+            running or queued, which `RETRYABLE` mirrors from the server's own
+            check so the button doesn't offer something `retry()` will refuse.
+            A restart-orphaned attempt is still offered: the server's refusal
+            ("send the instruction again") lands in `j.error` above, which
+            teaches the one real limit without the button pre-guessing it.
+          */}
+          {j.selected && RETRYABLE.has(j.selected.status) && (
+            <button
+              onClick={() => void retryTurn()}
+              disabled={retrying}
+              className="mb-2 inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-badge border border-base-600 text-xs text-ink-300 hover:text-ink-100 hover:border-base-500 disabled:opacity-50 transition-colors"
+            >
+              <RotateCcw size={13} className={retrying ? "animate-spin" : undefined} />
+              {retrying ? "Retrying…" : "Retry this turn"}
+            </button>
+          )}
+
+          {/*
             Sending while a question is outstanding queues the message behind a
             turn that cannot move — so it reads as a stuck job you just nudged,
             when really you added a second thing behind a blocked one. Say so
@@ -578,7 +631,37 @@ export default function ClaudeChat() {
             </p>
           )}
 
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {attachments.map((file) => (
+                <span key={`${file.name}-${file.lastModified}-${file.size}`} className="inline-flex items-center gap-1 rounded-badge border border-base-600 bg-base-700/40 pl-2 pr-1 h-8 text-xs text-ink-400 max-w-full">
+                  <Paperclip size={11} className="shrink-0 text-ink-600" />
+                  <span className="truncate max-w-[13rem]">{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) => current.filter((item) => item !== file))}
+                    aria-label={`Remove ${file.name}`}
+                    className="w-7 h-7 shrink-0 rounded-badge text-ink-600 hover:text-ink-100 transition-colors"
+                  >
+                    <X size={13} className="mx-auto" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
+            <input ref={fileRef} type="file" multiple className="sr-only" onChange={(e) => addFiles(e.target.files)} />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={running || uploading}
+              aria-label="Attach files"
+              title="Attach files (up to 10 MB each)"
+              className="w-11 h-11 shrink-0 rounded-badge border border-base-600 flex items-center justify-center text-ink-500 hover:text-ink-100 hover:border-base-500 disabled:opacity-40 transition-colors"
+            >
+              <Paperclip size={15} />
+            </button>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -604,11 +687,11 @@ export default function ClaudeChat() {
             ) : (
               <button
                 onClick={() => void submit()}
-                disabled={!draft.trim()}
+                disabled={!draft.trim() || uploading}
                 aria-label="Send"
                 className="w-11 h-11 shrink-0 rounded-badge border border-xp/40 bg-xp/10 flex items-center justify-center text-xp hover:bg-xp/20 disabled:text-ink-700 disabled:border-base-600 disabled:bg-transparent transition-colors"
               >
-                <Send size={14} />
+                {uploading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               </button>
             )}
           </div>

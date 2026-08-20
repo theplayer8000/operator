@@ -63,7 +63,8 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
-import { runTurn as runProviderTurn } from "./runner.mjs";
+import { claimResources, removeJobResources } from "./uploads.mjs";
+import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -89,17 +90,7 @@ const JOB_CWD = process.env.OPERATOR_JOB_CWD
   : ROOT;
 if (JOB_CWD !== ROOT) console.log(`[operator] jobs will run in ${JOB_CWD}`);
 
-/**
- * Models a job may use. Claude Code takes `--model`, verified returning
- * `modelUsage: ["claude-opus-5"]`, so this is a real switch rather than a label.
- * Opus 5 is the default because the owner asked for it; the cheaper option is
- * there for quick questions where the difference does not earn its latency.
- */
-export const MODELS = [
-  { id: "claude-opus-5", label: "Opus 5" },
-  { id: "claude-sonnet-5", label: "Sonnet 5" },
-];
-const DEFAULT_MODEL = MODELS[0].id;
+const DEFAULT_MODEL = selectWorker(DEFAULT_PROVIDER).model;
 
 // --- policy ---------------------------------------------------------------
 //
@@ -516,12 +507,27 @@ function indexOf(job) {
   return {
     id: job.id,
     title: job.title,
+    provider: job.provider,
     sessionId: job.sessionId,
     model: job.model,
     device: job.device,
     turns: job.turns,
     costUsd: job.costUsd,
     createdAt: job.createdAt,
+    resources: job.resources,
+    task: job.task,
+    handoff: job.handoff,
+    // Prompts stay out of the index: a restored tab keeps its provider session,
+    // not a second private transcript. Attempts retain only operational facts.
+    attempts: job.attempts.map(({ number, provider, model, status, startedAt, endedAt, error }) => ({
+      number,
+      provider,
+      model,
+      status,
+      startedAt,
+      endedAt,
+      error,
+    })),
   };
 }
 
@@ -556,12 +562,17 @@ async function restore() {
       const job = blankJob(entry.id);
       Object.assign(job, {
         title: entry.title ?? "Untitled",
+        provider: entry.provider ?? DEFAULT_PROVIDER,
         sessionId: entry.sessionId,
         model: entry.model ?? DEFAULT_MODEL,
         device: entry.device ?? null,
         turns: Number(entry.turns) || 0,
         costUsd: Number(entry.costUsd) || 0,
         createdAt: entry.createdAt ?? new Date().toISOString(),
+        resources: Array.isArray(entry.resources) ? entry.resources : [],
+        task: entry.task && typeof entry.task === "object" ? entry.task : blankTask(),
+        handoff: entry.handoff && typeof entry.handoff === "object" ? entry.handoff : null,
+        attempts: Array.isArray(entry.attempts) ? entry.attempts : [],
         status: "complete",
         // Said out loud rather than shown as an empty thread, because an empty
         // thread reads as "it forgot" — and it hasn't; Claude still holds the
@@ -586,7 +597,7 @@ function blankJob(id) {
   return {
     id,
     title: "Untitled",
-    provider: "claude-code",
+    provider: DEFAULT_PROVIDER,
     model: DEFAULT_MODEL,
     status: "queued",
     sessionId: null,
@@ -610,6 +621,14 @@ function blankJob(id) {
     touchIdle: null,
     /** Questions outstanding. Non-zero means waiting on a person, not stuck. */
     awaitingPermission: 0,
+    /** Local files attached to this conversation, never stored in operator.json. */
+    resources: [],
+    /** The orchestrator's provider-neutral description of the current work. */
+    task: blankTask(),
+    /** Last completed worker-to-owner handoff; a later worker can consume it. */
+    handoff: null,
+    /** In-memory retry payload plus persistable execution facts. */
+    attempts: [],
   };
 }
 
@@ -643,12 +662,69 @@ function emit(job, type, data = {}) {
 function setStatus(job, status, detail = null) {
   job.status = status;
   emit(job, "status", { status, ...(detail ? { detail } : {}) });
+  const attempt = job.attempts.at(-1);
+  if (attempt?.status === "running" && ["complete", "failed", "blocked", "cancelled"].includes(status)) {
+    attempt.status = status;
+    attempt.endedAt = new Date().toISOString();
+    attempt.error = detail;
+    job.task.verification = {
+      requested: job.task.verification?.requested === true,
+      status: "not-run",
+      note: "No separate verifier is configured; worker tool output remains the evidence.",
+    };
+    job.handoff = {
+      from: { provider: attempt.provider, model: attempt.model, attempt: attempt.number },
+      to: "owner-or-next-worker",
+      status,
+      at: attempt.endedAt,
+      resourceIds: job.resources.map((resource) => resource.id),
+      verification: job.task.verification,
+      ...(detail ? { detail } : {}),
+    };
+    emit(job, "handoff", { handoff: job.handoff });
+  }
+}
+
+function blankTask(kind = "coding") {
+  return {
+    kind,
+    context: { resourceIds: [] },
+    // Deliberately a request, not a claim. A future verifier worker may satisfy
+    // it; until then the event log/tool results are the evidence.
+    verification: { requested: true, status: "not-run", note: "No separate verifier is configured." },
+  };
+}
+
+function beginAttempt(job, prompt) {
+  const attempt = {
+    number: job.attempts.length + 1,
+    provider: job.provider,
+    model: job.model,
+    status: "running",
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+    error: null,
+    // Never persisted — it can carry owner content and is only needed for a
+    // deliberate retry while this server is alive.
+    prompt,
+  };
+  job.attempts.push(attempt);
+  job.task.context = { resourceIds: job.resources.map((resource) => resource.id) };
+  job.handoff = null;
+  return attempt;
 }
 
 /** One line, short enough for a tab. */
 function titleFrom(prompt) {
   const line = String(prompt).replace(/\s+/g, " ").trim();
   return line.length > 60 ? `${line.slice(0, 57)}…` : line || "Untitled";
+}
+
+/** Claude Code accepts files by local path, so name each newly attached path plainly. */
+function promptWithResources(text, resources) {
+  if (!resources.length) return text;
+  const files = resources.map((resource) => `- ${resource.name}: ${resource.path}`).join("\n");
+  return `Attached files (read these local paths if relevant):\n${files}\n\n${text}`;
 }
 
 /** Drop the oldest finished jobs once there are too many. Never drops a live one. */
@@ -659,6 +735,7 @@ function prune() {
     );
     if (!victim) return;
     jobs.delete(victim.id);
+    void removeJobResources(victim.id);
   }
 }
 
@@ -976,7 +1053,7 @@ async function runViaSdk(job, prompt) {
 
   let result;
   try {
-    result = await runProviderTurn({
+    result = await runWorkerTurn(job.provider, {
       prompt,
       model: job.model,
       sessionId: job.sessionId,
@@ -1099,6 +1176,21 @@ async function runTurn(job) {
     if (runningId === job.id) runningId = null;
     queueMicrotask(pump);
   };
+
+  /*
+    Begun before the budget check, not after.
+
+    `setStatus()`'s handoff logic closes out whichever attempt is currently
+    "running" — and until this call happens, that is whatever attempt last ran,
+    including one a crash left stuck at "running" forever, since `restore()`
+    rebuilds `attempts` verbatim from disk with no way to know one never
+    finished. Beginning the attempt first means a budget block always closes out
+    its own attempt, never a stale unrelated one, and gives a blocked turn the
+    same handoff record every other terminal status gets — previously it left
+    whatever `job.handoff` a *previous* attempt had set, unrelated to why the
+    job is blocked now.
+  */
+  beginAttempt(job, prompt);
 
   const blocked = budgetBlock();
   if (blocked) {
@@ -1469,6 +1561,18 @@ function summary(job) {
       that tab open.
     */
     asking: job.awaitingPermission ?? 0,
+    resources: job.resources,
+    task: job.task,
+    handoff: job.handoff,
+    attempts: job.attempts.map(({ number, provider, model, status, startedAt, endedAt, error }) => ({
+      number,
+      provider,
+      model,
+      status,
+      startedAt,
+      endedAt,
+      error,
+    })),
   };
 }
 
@@ -1483,7 +1587,8 @@ export function list() {
   return {
     jobs: [...jobs.values()].map(summary),
     running: runningId,
-    models: MODELS,
+    providers: listProviders(),
+    models: selectWorker(DEFAULT_PROVIDER).worker.models,
     defaultModel: DEFAULT_MODEL,
     // The standing profile, so the page states what it actually is rather than
     // repeating it in prose that drifts the first time OPERATOR_JOB_DENY is set.
@@ -1537,19 +1642,25 @@ function assertMine(identity) {
   throw new Error(`Claude is busy on "${jobs.get(held.id)?.title ?? held.id}" from ${held.device ?? "another device"}`);
 }
 
-export function create(prompt, model, identity) {
+export async function create(prompt, model, identity, resources = [], provider = DEFAULT_PROVIDER, taskKind = "coding") {
   const text = String(prompt ?? "").trim();
   if (!text) throw new Error("nothing to send");
   assertMine(identity);
 
+  const selection = selectWorker(provider, model);
   const job = blankJob(`job-${++jobSeq}`);
   job.title = titleFrom(text);
   job.device = identity?.device ?? null;
-  if (MODELS.some((m) => m.id === model)) job.model = model;
+  job.provider = selection.provider;
+  job.model = selection.model;
+  job.task = blankTask(typeof taskKind === "string" && taskKind.trim() ? taskKind.trim().slice(0, 48) : "coding");
+  const claimed = await claimResources(job.id, resources);
+  job.resources.push(...claimed);
+  const turn = promptWithResources(text, claimed);
 
   jobs.set(job.id, job);
-  emit(job, "prompt", { text });
-  job.pending.push(text);
+  emit(job, "prompt", { text, resources: claimed.map((resource) => resource.name) });
+  job.pending.push(turn);
   waiting.push(job.id);
   prune();
   pump();
@@ -1557,7 +1668,7 @@ export function create(prompt, model, identity) {
 }
 
 /** Another turn on an existing job, or a cancellation. */
-export function input(id, body, identity) {
+export async function input(id, body, identity) {
   const job = jobs.get(id);
   if (!job) throw new Error("no such job");
 
@@ -1599,11 +1710,37 @@ export function input(id, body, identity) {
   // reads this to say "busy on X from <device>", and naming the wrong device
   // makes that message actively misleading on a two-device setup.
   job.device = identity?.device ?? job.device;
+  const claimed = await claimResources(job.id, body?.resources);
+  job.resources.push(...claimed);
+  const turn = promptWithResources(text, claimed);
 
-  emit(job, "prompt", { text });
-  job.pending.push(text);
+  emit(job, "prompt", { text, resources: claimed.map((resource) => resource.name) });
+  job.pending.push(turn);
   if (!waiting.includes(job.id)) waiting.push(job.id);
   if (job.status !== "running") setStatus(job, "queued");
+  pump();
+  return summary(job);
+}
+
+/** Requeue the last failed/cancelled live attempt. Never retries automatically. */
+export function retry(id, identity) {
+  const job = jobs.get(id);
+  if (!job) throw new Error("no such job");
+  if (job.proc || job.abort || job.status === "running") throw new Error("job is still running");
+  assertMine(identity);
+  const attempt = job.attempts.at(-1);
+  if (!attempt?.prompt) {
+    throw new Error("this attempt cannot be retried after a server restart; send the instruction again");
+  }
+  if (!["failed", "blocked", "cancelled"].includes(attempt.status)) {
+    throw new Error("only a failed, blocked, or cancelled attempt can be retried");
+  }
+  job.device = identity?.device ?? job.device;
+  job.pending.unshift(attempt.prompt);
+  job.error = null;
+  setStatus(job, "queued", "retry requested from the app");
+  emit(job, "retry", { attempt: attempt.number, provider: job.provider, model: job.model });
+  if (!waiting.includes(job.id)) waiting.push(job.id);
   pump();
   return summary(job);
 }
@@ -1611,7 +1748,7 @@ export function input(id, body, identity) {
 export function setModel(id, model) {
   const job = jobs.get(id);
   if (!job) throw new Error("no such job");
-  if (MODELS.some((m) => m.id === model)) job.model = model;
+  job.model = selectWorker(job.provider, model).model;
   return summary(job);
 }
 
@@ -1632,6 +1769,7 @@ export function remove(id, identity) {
   }
   dropQuestions(id, "cancelled");
   jobs.delete(id);
+  void removeJobResources(id);
   const at = waiting.indexOf(id);
   if (at !== -1) waiting.splice(at, 1);
   console.log(`[operator] job ${id} closed by ${identity?.device ?? "unknown"}`);
@@ -1644,6 +1782,7 @@ export function clear(identity) {
   for (const job of jobs.values()) {
     halt(job);
     dropQuestions(job.id, "cancelled");
+    void removeJobResources(job.id);
   }
   jobs.clear();
   waiting.length = 0;

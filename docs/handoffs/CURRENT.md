@@ -1,13 +1,122 @@
 # CURRENT — work in progress
 
-**Updated:** 2026-08-19
-**`main`:** option C merged (`9d41470` via `agent`). **Needs a restart** — the
-API is loaded into memory at boot, so the live app is still on the CLI runner
-until then.
-**`agent`:** merged into `main`, nothing outstanding but untracked probes.
+**Updated:** 2026-08-20
+**`main`:** clean history is at `976777f`. **Uncommitted on top of it**: a
+complete uploads feature plus dormant provider/orchestrator scaffolding, both
+written by Codex, audited below rather than taken on trust. Nothing has been
+committed, pushed, or restarted since this audit started.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 
-## What changes for you next
+## The live server is running code that predates the working tree
+
+`/api/build` reports `server.stale: true` — the process was last restarted
+2026-08-20T01:59:42Z, and `server/` has been edited since. **Do not restart it
+as part of this work without telling him first.** The tree it would load is
+unreviewed and, per the audit below, contains at least one real bug. A restart
+now would put that in production silently.
+
+## Uploads — complete, reviewed, safe to commit on its own
+
+`server/uploads.mjs` (staging, 10 MB cap, safe filenames, path-escape checks,
+cleanup), wired into `jobs.mjs` (`claimResources`/`removeJobResources`,
+`promptWithResources`), `useJobs.upload()`, and a paperclip button + removable
+attachment chips in `ClaudeChat.tsx`.
+
+Independently verified, not just re-read: all four files pass `node --check`
+on the real binary; the modules load cleanly; `npx tsc -b` is clean; and
+`POST /api/jobs/resources` was hit directly against the live server and
+returned `201`. No reference to the old `jobs.mjs` `MODELS` export survives
+outside this file (checked — the only other hits are in dead `workspace.mjs`).
+`data/job-resources/` is covered by the existing blanket `data/` gitignore
+entry, so nothing binary risks being committed.
+
+**This is genuinely done** — the surviving half of design-doc step 2 and an
+original ask, going back to the very first handoffs on this feature.
+
+## Orchestrator scaffolding — present, inert, one real bug found
+
+`server/providers.mjs` (new) plus additions to `jobs.mjs`: `task`, `attempts`,
+`handoff`, `verification`, a `retry` route. This is genuine new architecture,
+not part of uploads — the two are interleaved in the same functions
+(`create`, `input`, `indexOf`, `restore`, `blankJob`, `summary`) because Codex
+built them together, not because they need to be.
+
+**Confirmed dormant.** Nothing in `useJobs.ts` or `ClaudeChat.tsx` reads
+`task`, `handoff`, or `attempts` — only `provider: string` exists on the
+frontend type and nothing consumes it. So leaving this in the tree changes
+nothing about how the app behaves today; it is inactive data modelling, not a
+live code path.
+
+**`providers.mjs` respects the provider-approval rule correctly** — one worker
+registered (Claude), and its own header comment states outright that adding a
+speculative Codex/OpenAI adapter now would be an unapproved integration. That
+part was built the right way round.
+
+**The bug — fixed.** Found by tracing every `setStatus()` call site against
+`beginAttempt()`: in `runTurn()`, the budget-ceiling early return
+(`budgetBlock()`) called `setStatus(job, "blocked", …)` *before* `beginAttempt`
+had run for that turn — every other early return in the function called it
+after. Ordinarily harmless, because the guard in `setStatus` only closes out
+an attempt whose status is currently `"running"`, and a fresh or already-
+finished attempt never matches that. But `restore()` rebuilds a job's
+`attempts` array verbatim from disk, including whatever status an attempt was
+in at the moment of a crash — so a job that crashed mid-turn, was restored,
+and later hit the budget ceiling on its *next* genuine turn would have had its
+stale, already-abandoned `"running"` attempt incorrectly closed out as
+`"blocked"`, with a `handoff` event describing the wrong attempt.
+
+`beginAttempt(job, prompt)` now runs unconditionally at the top of `runTurn`,
+before `budgetBlock()` is even checked — every turn, blocked or not, closes
+out its own attempt and gets its own handoff record, which also fixes the
+smaller inconsistency where a blocked turn got no handoff at all. Re-verified
+after the change: `node --check`, module load, `tsc -b`, full `vite build`,
+all clean.
+
+## Retry is now reachable — it wasn't
+
+`server/jobs.mjs` grew `retry()` and `POST /api/jobs/:id/retry` with the
+attempts model, and nothing called it: no method on `useJobs`, no button in
+`ClaudeChat.tsx`. A server action nobody can trigger is the same class of gap
+as the ordering bug — half a feature, not a whole one — so it's finished
+rather than left dormant next to the rest of the scaffolding.
+
+`useJobs.retry(id)` posts to the route and re-reads events/list. A **"Retry
+this turn"** button appears next to the job's error line whenever
+`status` is `failed`, `blocked`, or `cancelled` — the exact set the server
+itself will act on, kept as one `RETRYABLE` constant on the frontend with a
+comment pointing at the server check so the two can't quietly drift apart.
+The one real limit — an attempt that can't be replayed because its prompt
+didn't survive a restart — isn't pre-guessed by the button; the server's own
+refusal surfaces through the existing `j.error` line, which teaches the limit
+once rather than the UI getting it wrong twice.
+
+`task`/`handoff`/`attempts` themselves are still not rendered anywhere. That
+remains a real decision, not an oversight — see *Next*.
+
+## What the owner actually said, so this isn't re-litigated
+
+He wants the orchestrator hierarchy built — confirmed directly, not inferred
+from Codex's own "the owner approved" line in its handoff, which was
+unverifiable when written and is superseded now. What he asked for is
+**sequencing**: uploads isolated and safe first, this audit before anything
+new is added to the orchestrator, nothing committed/pushed/restarted until
+the boundary between the two is mapped — which is what this section is.
+
+## Next
+
+1. **Committed** — one combined commit, described accurately as carrying both
+   uploads and the orchestrator scaffolding, per his direct instruction rather
+   than a manufactured split. See the commit message for the itemised list.
+2. **Restart, once he says so** — not automatic. The live server is still on
+   the pre-audit code until then; see the note above.
+3. Decide whether `task`/`handoff`/`attempts` get a frontend surface now or
+   stay backend-only until a second provider makes them earn their keep. Retry
+   was finished because it was already half-built and reachable through the
+   UI; the rest is still a deliberate choice, not a gap to close on sight.
+4. The narrower items from before this audit are still open and unaffected:
+   concurrency, the usage ceiling, deleting `server/workspace.mjs`, the CLI
+   fallback's eventual removal, and "stop asking" matching an exact command
+   rather than a family.
 
 **Permissions are answerable from the phone now.** A tool outside the pre-allow
 list suspends the turn, puts a card in the chat with **Allow / No / Allow and
