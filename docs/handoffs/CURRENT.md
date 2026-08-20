@@ -145,8 +145,14 @@ declined on purpose** — the agent cannot tell a deny from an unreachable butto
 which is itself the point.
 
 Fixed in `ClaudeChat.tsx` either way: the block is capped at `max-h-24` and
-scrolls, so the buttons stay reachable whatever is being asked about. **Not yet
-re-tested on the phone.** To reach the live app: merge, then
+scrolls, so the buttons stay reachable whatever is being asked about.
+
+**Merged, built and confirmed on the phone** (`ca05a4c`, 2026-08-19). Both this
+and the contradiction below were re-tested end to end: a gated command raised the
+card, Allow was tapped, the turn resumed, and no false refusal rendered
+underneath.
+
+To reach the live app after a `src/` change: merge, then
 
 ```bash
 npm --prefix D:\Projects\Operator run build
@@ -154,7 +160,9 @@ npm --prefix D:\Projects\Operator run build
 
 No restart — it is `src/` only. **Not `npm run build` from the worktree**: that
 builds a `dist/` nothing serves, and it fails silently. CLAUDE.md now says so
-under "Editing Operator while it runs".
+under "Editing Operator while it runs". Note the backslashes are correct for
+PowerShell and Operator's own terminal, but Git Bash eats them — use
+`"D:/Projects/Operator"` there.
 
 ### The answered card contradicted itself — fixed
 
