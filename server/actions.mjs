@@ -523,6 +523,191 @@ async function routineDeleteTask({ sectionKey, taskId }) {
   return { sectionKey, taskId, deleted: true };
 }
 
+// --- reads ------------------------------------------------------------------
+//
+// Added 2026-08-20, after watching a worker spend 129 seconds and $0.92
+// answering "what's my gym session today". Every action above is a *write*, so
+// there was no way to simply ask — it grepped source, read seed files, curled
+// the raw state API and computed an ISO weekday by hand, tripping the shadowed
+// `node` on the way. Its own transcript said it plainly: "No read action in
+// the capability layer, so I'll read the gym data directly."
+//
+// A worker with no filesystem (Gemini) could not have answered at all. A
+// capability layer that can change everything and report nothing is half a
+// layer, and the missing half is the one a question needs.
+//
+// These mirror the *derived* views their hooks expose, not the raw slices —
+// `sessionOn`, `byDay`, the recurrence expansion — because those derivations
+// are where the real logic lives. Returning raw state would just move the
+// spelunking into the model.
+
+/** Mirrors `isoWeekday()` in src/lib/time.ts: 1 = Monday … 7 = Sunday. */
+function isoWeekdayOf(dateKey) {
+  const day = new Date(`${dateKey}T00:00:00`).getDay();
+  return day === 0 ? 7 : day;
+}
+
+async function gymDay({ date }) {
+  const key = dateArg(date);
+  const [sessions, completions, skipped] = await Promise.all([
+    readState("gym.sessions"),
+    readState("gym.completions"),
+    readState("gym.skipped"),
+  ]);
+
+  const weekday = isoWeekdayOf(key);
+  const session = (sessions ?? []).find((s) => s.weekday === weekday) ?? null;
+  const done = (completions ?? {})[key] ?? [];
+  const isSkipped = (skipped ?? []).includes(key);
+
+  // A rest day is a real answer, not an absence — say so rather than
+  // returning an empty session and letting the model infer it.
+  if (!session) {
+    return { date: key, weekday, restDay: true, skipped: isSkipped, session: null };
+  }
+  return {
+    date: key,
+    weekday,
+    restDay: false,
+    skipped: isSkipped,
+    session: {
+      name: session.name,
+      exercises: session.exercises.map((e) => ({
+        id: e.id,
+        name: e.name,
+        detail: e.detail ?? e.target ?? "",
+        done: done.includes(e.id),
+      })),
+      doneCount: session.exercises.filter((e) => done.includes(e.id)).length,
+      total: session.exercises.length,
+    },
+  };
+}
+
+/**
+ * Calendar occurrences on a day, or across a window.
+ *
+ * Expands recurring series the same way `useEvents` does — one record per
+ * series, materialised per day, honouring `skipDates`. Without this a worker
+ * reading `events.records` raw would report the rule ("every Tuesday") and
+ * miss both the skips and what actually lands on the date asked about.
+ */
+function occurrencesBetween(events, fromKey, toKey) {
+  const out = [];
+  const from = new Date(`${fromKey}T00:00:00`);
+  const to = new Date(`${toKey}T00:00:00`);
+
+  for (const event of events) {
+    if (!event.recurrence) {
+      if (event.date >= fromKey && event.date <= toKey) {
+        out.push({ ...event, seriesId: event.id });
+      }
+      continue;
+    }
+    const skip = new Set(event.skipDates ?? []);
+    const wanted = new Set(event.recurrence.weekdays ?? []);
+    const cursor = new Date(Math.max(from, new Date(`${event.date}T00:00:00`)));
+    const end = new Date(
+      Math.min(to, new Date(`${event.recurrence.until ?? toKey}T00:00:00`))
+    );
+    // setDate rather than adding 86_400_000ms — the millisecond walk drifts
+    // across a DST boundary, twice a year, which is exactly the class of bug
+    // OPS-009 already cost this project once.
+    while (cursor <= end) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(
+        cursor.getDate()
+      ).padStart(2, "0")}`;
+      if (wanted.has(isoWeekdayOf(key)) && !skip.has(key)) {
+        out.push({ ...event, date: key, seriesId: event.id, recurring: true });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  return out
+    .map((e) => ({
+      id: e.seriesId,
+      title: e.title,
+      date: e.date,
+      time: e.time ?? null,
+      durationMinutes: e.durationMinutes ?? null,
+      kind: e.kind,
+      notes: e.occurrenceNotes?.[e.date] || e.notes || "",
+      recurring: e.recurring === true,
+    }))
+    .sort((a, b) => (a.date === b.date ? (a.time ?? "").localeCompare(b.time ?? "") : a.date.localeCompare(b.date)));
+}
+
+async function calendarRange({ from, days = 7 }) {
+  const start = dateArg(from, "from");
+  const count = Math.min(Math.max(Number(days) || 7, 1), 90);
+  const end = new Date(`${start}T00:00:00`);
+  end.setDate(end.getDate() + count - 1);
+  const endKey = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(
+    end.getDate()
+  ).padStart(2, "0")}`;
+
+  const events = (await readState("events.records")) ?? [];
+  const occurrences = occurrencesBetween(events, start, endKey);
+  return { from: start, to: endKey, count: occurrences.length, events: occurrences };
+}
+
+async function missionsList({ status, includeArchived = false }) {
+  oneOf(status, MISSION_STATUSES, "status");
+  const missions = (await readState("missions.records")) ?? [];
+  const filtered = missions
+    .filter((m) => (includeArchived ? true : !m.archived))
+    .filter((m) => (status ? m.status === status : true));
+  return {
+    count: filtered.length,
+    missions: filtered.map((m) => ({
+      id: m.id,
+      name: m.name,
+      category: m.category,
+      difficulty: m.difficulty,
+      status: m.status,
+      progress: m.progress,
+      nextObjective: m.nextObjective || "",
+      archived: m.archived === true,
+      milestones: `${m.milestones.filter((ms) => ms.status === "complete").length}/${m.milestones.length}`,
+    })),
+  };
+}
+
+async function routineDay({ date }) {
+  const key = dateArg(date);
+  const [sections, completions] = await Promise.all([
+    readState("routine.sections"),
+    readState("routine.completions"),
+  ]);
+  const doneToday = (completions ?? {})[key] ?? [];
+
+  // Mirrors `isDoneOn`: a repeating step is a fact about the date, a one-off
+  // is a fact about the step. Reading `done` for everything would report
+  // yesterday's repeating ticks as today's.
+  const out = (sections ?? []).map((s) => ({
+    key: s.key,
+    label: s.label,
+    startTime: s.startTime ?? null,
+    notes: s.notes || "",
+    tasks: s.tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      estimatedMinutes: t.estimatedMinutes,
+      repeatDaily: t.repeatDaily !== false,
+      done: t.repeatDaily === false ? t.done === true : doneToday.includes(t.id),
+    })),
+  }));
+
+  const all = out.flatMap((s) => s.tasks);
+  return {
+    date: key,
+    doneCount: all.filter((t) => t.done).length,
+    total: all.length,
+    sections: out,
+  };
+}
+
 // --- registry ---------------------------------------------------------------
 
 /**
@@ -536,6 +721,35 @@ async function routineDeleteTask({ sectionKey, taskId }) {
  * actually wrong.
  */
 const ACTIONS = {
+  /*
+    Reads first, deliberately — `listActions()` output is what a worker reads
+    to decide what it can do, and a catalogue that opens with four ways to
+    change the gym log and no way to look at it is what sent one spelunking
+    through source for two minutes.
+  */
+  gym_day: {
+    description:
+      "What the gym session is on a date: its exercises, which are ticked, whether it's a rest day or was skipped. Use this to answer any question about training — never read the store directly.",
+    params: "date? (YYYY-MM-DD or \"today\")",
+    handler: gymDay,
+  },
+  calendar_range: {
+    description:
+      "Calendar events from a date onwards, with recurring series already expanded and skipped days removed. Use for \"what's on today/this week\".",
+    params: "from? (YYYY-MM-DD or \"today\"), days? (default 7, max 90)",
+    handler: calendarRange,
+  },
+  missions_list: {
+    description: "The Mission Board: names, ids, status, progress, milestone counts.",
+    params: "status? (not_started|in_progress|blocked|complete), includeArchived? (default false)",
+    handler: missionsList,
+  },
+  routine_day: {
+    description:
+      "The Daily Routine for a date — every section, its steps, and which are done on that date.",
+    params: "date? (YYYY-MM-DD or \"today\")",
+    handler: routineDay,
+  },
   gym_toggle_exercise: {
     description: "Tick or untick one exercise on a gym day. Untick by calling it again.",
     params: "date? (YYYY-MM-DD or \"today\"), exerciseId",

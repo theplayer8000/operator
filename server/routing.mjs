@@ -62,8 +62,20 @@ const NEEDS_CODE = [
  * data and is code.
  */
 const JUST_DATA = [
-  /^what('s| is| are)\b.{0,60}\b(on|due|left|today|this week|tomorrow)\b/i,
-  /^(when|how many|how much|do i have|did i|have i)\b/i,
+  /*
+    Apostrophes optional throughout — the owner types "whats", "hows", "im".
+    A real misroute proved this: "whats my gym session look like for today"
+    matched nothing, fell through to the classifier, and on a spent quota
+    landed on Claude Code for $0.92. `'?` after every contraction, and the
+    feature nouns below catch the same sentence a second way.
+  */
+  /^(what|hows?|when|where)('?s| is| are)?\b.{0,60}\b(on|due|left|today|tonight|this week|tomorrow|next week)\b/i,
+  /^(when|how many|how much|do i have|did i|have i|whats|what's)\b/i,
+  // Naming a feature Operator owns, without naming code. "My gym session",
+  // "my missions", "the routine" cannot mean the source of those pages —
+  // "the gym page" can, and is caught by NEEDS_CODE first.
+  /\b(my|the) (gym|training) (session|day|plan)\b/i,
+  /\b(my|the) (missions?|mission board|calendar|diary|routine|schedule)\b/i,
   // Capability actions, phrased the way a person actually phrases them.
   /\b(tick|check) (off|it)\b/i,
   /\b(add|create|make|log|put|schedule|book)\b.{0,40}\b(mission|event|appointment|task|step|session|reminder)\b/i,

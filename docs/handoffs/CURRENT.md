@@ -39,6 +39,47 @@ what's actually running now, not a proposal.
    modelled in full, with the reasoning in the type's own comment — revisit
    once a verifier or a second worker gives them real content.
 
+## The capability layer could only write, never read — fixed
+
+Diagnosed from a real job (`job-7`): **"whats my gym session look like for
+today" took 129 seconds, nine permission prompts and $0.92.** Its own
+transcript says why — *"No read action in the capability layer, so I'll read
+the gym data directly"* — after which it grepped source, read seed files,
+curled the raw state API, hit the shadowed-`node` trap, and computed an ISO
+weekday by hand.
+
+Three separate faults, all now fixed:
+
+1. **No read actions existed.** Everything built earlier was a write, so a
+   question had no path through the layer at all. Gemini would have been
+   *worse* than Claude here — no filesystem, so it could not have answered by
+   any route. Added `gym_day`, `calendar_range`, `missions_list`,
+   `routine_day`, listed first in the catalogue.
+2. **Routing missed it.** The rules wanted `what's` and he types `whats`. It
+   fell to the classifier, which was rate-limited, so it landed on Claude
+   Code. Apostrophes are optional throughout now, and naming a feature
+   ("my gym session", "my missions") is itself a data signal.
+3. **The server was stale** — routing had never been live for that job.
+
+**A new feature needs a read action, not just writes.** That is the rule this
+produced, and it is in `CLAUDE.md` next to `actions.mjs`.
+
+The reads mirror each hook's *derived* view rather than its raw slice, which
+is where the real work is: `calendar_range` expands recurring series and drops
+skipped days, `routine_day` honours the repeating-vs-one-off distinction
+`isDoneOn` makes. 18/18 on an isolated store, including a skipped occurrence,
+a per-occurrence note overriding a series note, and a one-off step still
+reading done on a different date.
+
+## Dead files removed
+
+- **`server/workspace.mjs`** — no importer since the job model merged; the
+  header note said it was kept only because deleting it was denied to Claude.
+- **`AGENTS.md`** — untracked, and not merely a duplicate: a find-and-replace
+  copy of `CLAUDE.md` with "Claude" swapped for "Codex", inventing
+  `status.Codex.com` and `docs/decisions/0012-Codex-agent-sdk.md`. A future
+  agent reading it as fact is a worse outcome than the clutter.
+
 ## Auto-routing — the orchestrator picks the worker, 2026-08-20
 
 `server/routing.mjs`. New jobs default to `provider: "auto"`; the chips are now

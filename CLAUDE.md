@@ -268,11 +268,16 @@ server/
                           withState() is the race-safe read-modify-write every
                           action goes through — read its comment before adding
                           a second writer
-  actions.mjs           — the capability layer. Named, validated changes to
-                          Operator's OWN data (gym, missions, calendar,
-                          routine) that an AI worker can call. Mirrors each
-                          feature hook exactly. NOT a generic write gateway —
-                          see its header before adding anything
+  actions.mjs           — the capability layer. Named, validated READS and
+                          writes of Operator's OWN data (gym, missions,
+                          calendar, routine) that an AI worker can call.
+                          Mirrors each feature hook exactly, including its
+                          derived views — recurrence expansion, isDoneOn.
+                          **A new feature needs a read action, not just
+                          writes**: without one a worker greps source to
+                          answer a question, which cost $0.92 and two minutes
+                          the one time it happened. NOT a generic write
+                          gateway — see its header before adding anything
   providers.mjs         — the worker boundary between jobs.mjs and a turn. One
                           worker registered (claude-code → runner.mjs); adding a
                           speculative second one is exactly the "extending a
@@ -285,8 +290,9 @@ server/
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job
                           closes or clears — nothing here outlives its job
-  workspace.mjs         — DEAD. The one-shot chat jobs.mjs replaced. No importer;
-                          kept only because deleting it is denied to Claude
+  routing.mjs           — picks the worker for a new job. Rules first (they work
+                          with no network and no quota), a Flash call only for
+                          genuinely ambiguous phrasing. Uncertain → Claude Code
   clients.mjs           — in-memory record of which devices are connected
   status.mjs            — Claude service status. The only outbound call; see the rule above
 scripts/
