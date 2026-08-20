@@ -223,9 +223,18 @@ server/
                           is suspended on, answerable from the phone. Same gate as
                           the terminal: a job has tool access, so it is execution.
                           Step 1 of docs/ai-workspace-design.md
+  providers.mjs         — the worker boundary between jobs.mjs and a turn. One
+                          worker registered (claude-code → runner.mjs); adding a
+                          speculative second one is exactly the "extending a
+                          permitted boundary because it's there" ADR 0009 forbids
+                          — don't, until a provider is actually approved by name
   runner.mjs            — one turn, through the Claude Agent SDK. The ONLY file in
-                          server/ that imports from npm — ADR 0012 bounded the
-                          dependency there deliberately. Keep it that way
+                          server/ that imports an npm package — ADR 0012 bounded
+                          the dependency there deliberately. Keep it that way
+  uploads.mjs           — local files attached to a job. Staged outside
+                          operator.json (10 MB cap), claimed onto a turn, the
+                          worker gets told the local path. Swept when a job
+                          closes or clears — nothing here outlives its job
   workspace.mjs         — DEAD. The one-shot chat jobs.mjs replaced. No importer;
                           kept only because deleting it is denied to Claude
   clients.mjs           — in-memory record of which devices are connected
@@ -286,7 +295,7 @@ src/
   pages/
     Dashboard.tsx, DailyRoutine.tsx, MissionBoard.tsx, MissionDetail.tsx,
     Homelab.tsx, Events.tsx, Settings.tsx, Updates.tsx, ActivityLog.tsx,
-    Contents.tsx, Dev.tsx, Chat.tsx,
+    Contents.tsx, Dev.tsx, Orchestrator.tsx,
     ComingSoon.tsx           — placeholder for any route not yet built
 ```
 
@@ -373,7 +382,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Homelab | `/homelab` | Built — tile per service on the box, with a server-side up/down probe. Also a read-only section on the Dashboard |
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
-| Claude | `/chat` | Built — conversations as **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, and an append-only event log that outlives the request, so you watch which file it read and which command it ran instead of a spinner. Each job owns a `session_id` and passes `--resume`, so a tab remembers; tabs survive a restart, their event logs don't, and the UI says so. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C — on `agent`, not yet merged): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. Same gate as the terminal — armable from this page. **This is the page the multi-provider chat grows into** (ADR 0009) |
+| Orchestrator | `/orchestrator` | Built — **renamed from "Claude" 2026-08-20**, the milestone rather than a relabel: `server/providers.mjs` now sits between `jobs.mjs` and the worker that runs a turn, so a job is a task dispatched to whichever worker is enabled, not "a Claude conversation." Only one worker is enabled today (`claude-code`); the page name says what it's *for* (ADR 0009's multi-provider chat) rather than what it currently, incidentally, only does. `/chat` redirects here. Conversations are **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, an append-only event log that outlives the request, a `session_id` per job with `--resume` so a tab remembers. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C, merged and live): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. **Jobs can carry local file attachments** (`server/uploads.mjs`) — staged outside `operator.json`, claimed onto a turn, the worker gets the local path. **A failed, blocked, or cancelled turn can be retried** with one tap instead of retyping. Every attempt is recorded (`task`/`attempts`/`handoff` on the job) — dormant on the frontend today, the bookkeeping a future verifier or second worker will read, not something a person needs to see while there is only one worker and the owner reads results directly. Same gate as the terminal — armable from this page. `src/components/dev/ClaudeChat.tsx` keeps its name: it is still specifically the Claude Code worker's chat surface, one implementation of the contract `providers.mjs` describes — renaming it would claim a generality it doesn't have until a second worker exists |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |

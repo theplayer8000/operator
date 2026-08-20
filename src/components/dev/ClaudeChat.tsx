@@ -13,10 +13,12 @@ import {
   Paperclip,
   X,
   RotateCcw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import Markdown from "@/components/ui/Markdown";
 import ConfirmButton from "@/components/ui/ConfirmButton";
-import { useJobs, type JobEvent, type JobSummary } from "@/hooks/useJobs";
+import { useJobs, type JobAttempt, type JobEvent, type JobSummary } from "@/hooks/useJobs";
 
 /**
  * The Claude workspace.
@@ -43,6 +45,43 @@ const STATUS_TONE: Record<string, string> = {
 
 /** Matches the server's own check in `jobs.mjs`'s `retry()` — keep them in step. */
 const RETRYABLE = new Set(["failed", "blocked", "cancelled"]);
+
+/**
+ * A retry history — one line per dispatch of this job's prompt to a worker.
+ *
+ * Deliberately absent below two attempts. One attempt is just how the job
+ * ran; it becomes a *history* worth reading only once there is more than one
+ * outcome to compare, which is also the exact moment `retry` starts being
+ * interesting rather than decorative. Sits right above the Retry button it
+ * explains — you press it having just read why the last one didn't work.
+ */
+function AttemptHistory({ attempts }: { attempts: JobAttempt[] }) {
+  const [open, setOpen] = useState(false);
+  if (attempts.length < 2) return null;
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-[11px] font-mono text-ink-700 hover:text-ink-300 transition-colors"
+      >
+        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+        {attempts.length} attempts
+      </button>
+      {open && (
+        <ul className="mt-1.5 space-y-1">
+          {attempts.map((a) => (
+            <li key={a.number} className="text-[11px] font-mono text-ink-700 break-words">
+              <span className="text-ink-500">#{a.number}</span> {a.model}{" "}
+              <span className={STATUS_TONE[a.status] ?? "text-ink-500"}>{a.status}</span>
+              {a.error ? <span className="text-vital-down"> — {a.error}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function ago(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -592,6 +631,8 @@ export default function ClaudeChat() {
                 </p>
               ))}
           </div>
+
+          {j.selected?.attempts && <AttemptHistory attempts={j.selected.attempts} />}
 
           {j.error && <p className="text-xs text-vital-down mb-2 break-words">{j.error}</p>}
 

@@ -67,12 +67,12 @@ const SECTIONS: Section[] = [
     blurb: "The year on a calendar. What's coming, and what already happened.",
   },
   {
-    to: "/chat",
-    label: "Claude",
+    to: "/orchestrator",
+    label: "Orchestrator",
     icon: MessageSquare,
     status: "built",
     blurb:
-      "Claude Code, working on this project and remembering between messages — pick it up here after leaving the desk.",
+      "Routes a task to a worker — Claude Code today — and remembers between messages. Pick it up here after leaving the desk.",
   },
   {
     to: "/homelab",

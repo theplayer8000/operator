@@ -1,19 +1,45 @@
 # CURRENT — work in progress
 
 **Updated:** 2026-08-20
-**`main`:** clean history is at `976777f`. **Uncommitted on top of it**: a
-complete uploads feature plus dormant provider/orchestrator scaffolding, both
-written by Codex, audited below rather than taken on trust. Nothing has been
-committed, pushed, or restarted since this audit started.
+**`main`:** `0616046` — audited, fixed, committed, pushed, and **restarted
+live**. `stale: false` confirmed. The orchestrator layer described below is
+what's actually running now, not a proposal.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 
-## The live server is running code that predates the working tree
+## What shipped, in order
 
-`/api/build` reports `server.stale: true` — the process was last restarted
-2026-08-20T01:59:42Z, and `server/` has been edited since. **Do not restart it
-as part of this work without telling him first.** The tree it would load is
-unreviewed and, per the audit below, contains at least one real bug. A restart
-now would put that in production silently.
+1. **Uploads and the provider boundary**, written by Codex, ran out of usage
+   credits mid-task, nobody had reviewed it. Audited (not trusted), one real
+   bug found and fixed, committed as `0616046`, pushed, restarted. See *The
+   audit* below for the detail — kept because the reasoning still matters, not
+   because any of it is still pending.
+2. **Retry finished.** The server route existed with nothing calling it;
+   `useJobs.retry()` and a button now close that gap.
+3. **Post-restart verification**, live against the real server: job history
+   survived (`job-6` restored with `provider`/`task`/`handoff`/`attempts`
+   correctly populated), the provider list is live, `POST
+   /api/jobs/resources` returns `201` once the terminal is armed. One false
+   alarm along the way — an empty response on a single poll, not a real bug;
+   the full raw dump right after showed everything correct.
+4. **The page renamed:** "Claude" → **Orchestrator**, `/chat` → `/orchestrator`
+   (old URL redirects, same pattern as the `/events` → `/calendar` rename).
+   Not a relabel — the milestone is that `jobs.mjs` now dispatches through
+   `providers.mjs` instead of calling the Claude runner directly, so a job is
+   a task routed to a worker, not inherently "a Claude conversation." Only one
+   worker is enabled today. `src/components/dev/ClaudeChat.tsx` **keeps its
+   name** on purpose — it's still specifically the Claude Code worker's chat
+   surface, and renaming it would claim a generality it doesn't have until a
+   second worker exists.
+5. **A minimal, honest UI for `attempts`.** A "N attempts" toggle appears
+   above the Retry button, but only once there are two or more — one attempt
+   is just how the job ran, not a history worth reading. `task`/`handoff`
+   deliberately got **no** UI: their content is identical on every job today
+   (`verification.status` always `"not-run"`, same canned note), so there is
+   nothing true to show yet. Typed as `unknown` on the frontend rather than
+   modelled in full, with the reasoning in the type's own comment — revisit
+   once a verifier or a second worker gives them real content.
+
+## The audit — kept for the reasoning, already acted on
 
 ## Uploads — complete, reviewed, safe to commit on its own
 
@@ -104,16 +130,12 @@ the boundary between the two is mapped — which is what this section is.
 
 ## Next
 
-1. **Committed** — one combined commit, described accurately as carrying both
-   uploads and the orchestrator scaffolding, per his direct instruction rather
-   than a manufactured split. See the commit message for the itemised list.
-2. **Restart, once he says so** — not automatic. The live server is still on
-   the pre-audit code until then; see the note above.
-3. Decide whether `task`/`handoff`/`attempts` get a frontend surface now or
-   stay backend-only until a second provider makes them earn their keep. Retry
-   was finished because it was already half-built and reachable through the
-   UI; the rest is still a deliberate choice, not a gap to close on sight.
-4. The narrower items from before this audit are still open and unaffected:
+1. `task`/`handoff` still have no UI, deliberately — see item 5 at the top.
+   Revisit once a verifier exists or a second worker is approved, not before.
+2. A second worker, when one is actually approved by name (not before —
+   `providers.mjs`'s own header comment says as much). `selectWorker` and
+   `runWorkerTurn` are the two functions a second worker plugs into.
+3. The narrower items from before this audit are still open and unaffected:
    concurrency, the usage ceiling, deleting `server/workspace.mjs`, the CLI
    fallback's eventual removal, and "stop asking" matching an exact command
    rather than a family.

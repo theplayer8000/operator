@@ -36,6 +36,31 @@ export interface JobSummary {
   /** Questions this job has stopped to ask. Waiting on a person, not working. */
   asking?: number;
   resources?: JobResource[];
+  /**
+   * Orchestrator bookkeeping from `server/providers.mjs` — always present on
+   * the wire, mostly unused here. `attempts` is the one part with anything to
+   * show today: a retry history. `task`/`handoff` stay untyped-in-detail
+   * (`unknown`) rather than modelled fully, because their content is currently
+   * identical on every job (`verification.status` is always `"not-run"`, the
+   * same canned note) — there is nothing true to say about them yet beyond
+   * "not implemented," and a fully-typed, empty-in-practice shape would be the
+   * exact premature generality `CLAUDE.md` warns against. Revisit once a
+   * verifier or a second worker gives them real content.
+   */
+  attempts?: JobAttempt[];
+  task?: unknown;
+  handoff?: unknown;
+}
+
+/** One dispatch of a job's prompt to a worker — the retry history. */
+export interface JobAttempt {
+  number: number;
+  provider: string;
+  model: string;
+  status: string;
+  startedAt: string;
+  endedAt: string | null;
+  error: string | null;
 }
 
 /** A local file attached to a Claude job; its binary never enters operator.json. */

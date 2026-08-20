@@ -11,7 +11,7 @@ import Events from "@/pages/Events";
 import Updates from "@/pages/Updates";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
-import Chat from "@/pages/Chat";
+import Orchestrator from "@/pages/Orchestrator";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
@@ -28,7 +28,7 @@ export default function App() {
         <Route path="/homelab" element={<Homelab />} />
         <Route path="/log" element={<ActivityLog />} />
         <Route path="/contents" element={<Contents />} />
-        <Route path="/chat" element={<Chat />} />
+        <Route path="/orchestrator" element={<Orchestrator />} />
         <Route path="/dev" element={<Dev />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
         <Route path="/gym" element={<Gym />} />
@@ -46,6 +46,7 @@ export default function App() {
           404 so an old bookmark or a backgrounded tab just lands correctly.
         */}
         <Route path="/events" element={<Navigate to="/calendar" replace />} />
+        <Route path="/chat" element={<Navigate to="/orchestrator" replace />} />
 
         {/*
           Catch-all. Without this, any unmatched path renders an empty page —
