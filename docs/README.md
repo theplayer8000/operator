@@ -68,4 +68,17 @@ changed* — resolves here as:
 Do not let a document become a changelog. Git holds the history; these describe
 the system as it stands now.
 
-- [`ai-workspace-design.md`](ai-workspace-design.md) — proposed job-based structure for the AI workspace: what the current chat cannot do, why, and the provider boundary future models plug into. **Proposed, not built.**
+Three documents describe the AI side, and they are deliberately kept apart so
+the boundary between what was proposed, what runs, and what comes next stays
+legible:
+
+- [`ai-workspace-design.md`](ai-workspace-design.md) — the **old proposal**
+  (2026-07-30): the job model, the event log, the provider boundary, uploads.
+  Largely delivered. Kept as written rather than rewritten in place, so it
+  still reads as the argument that produced the current design.
+- `CLAUDE.md` and the code — the **current architecture**: two workers, the
+  capability layer, auto-routing, in-turn permissions.
+- [`control-plane-design.md`](control-plane-design.md) — the **next phase**
+  (2026-08-21): Operator as the control plane, a gateway seam that defers
+  choosing a gateway, a local model for routing then planning, multi-worker
+  jobs, and job-level permission envelopes. **Proposed, not built.**
