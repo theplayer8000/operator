@@ -99,12 +99,60 @@ tailnet gets you the app, not a shell.
 There is no sandbox — the terminal runs as the owner. That is a deliberate,
 documented trade rather than an oversight, and it is why the gate matters.
 
-## Documentation
+## Where everything is
 
-`CLAUDE.md` is the entry point and holds the rules; [`docs/`](docs/) has the
-long-form reasoning, starting at [`docs/README.md`](docs/README.md). Decisions
-that shaped the architecture — and the arguments against them — are in
-[`docs/decisions/`](docs/decisions/).
+**Start with [`CLAUDE.md`](CLAUDE.md).** It holds the rules and is the entry
+point for anyone — human or model — picking this up. [`AGENTS.md`](AGENTS.md)
+points at it, so a Codex session lands in the same place.
+
+### The code
+
+| Path | What lives there |
+|---|---|
+| [`src/pages/`](src/pages/) | One page per feature, one route each |
+| [`src/hooks/`](src/hooks/) | One hook per feature — owns that feature's storage namespace. Pages never read storage directly |
+| [`src/components/`](src/components/) | One folder per feature; shared primitives in `ui/` |
+| [`src/lib/`](src/lib/) | Types, seed data, storage keys, the remote store, date and id helpers |
+| [`server/`](server/) | The API. Storage, auth, jobs, workers, the capability layer — see below |
+| [`scripts/`](scripts/) | Dev launcher, backups, and the CLIs an AI worker uses |
+
+### The server, by file
+
+| File | Responsibility |
+|---|---|
+| `index.mjs` | Routes. Everything under `/api/` is gated before it reaches here |
+| `store.mjs` | The one in-memory copy of the JSON store, and the only writer |
+| `auth.mjs` | Who is calling — tailnet identity, token, or loopback |
+| `jobs.mjs` | Work as jobs: the queue, the event log, permission questions |
+| `providers.mjs` | The worker boundary. Adding a provider means adding an entry here |
+| `runner.mjs` / `gemini.mjs` | One turn, per worker. `runner.mjs` is the only file importing from npm |
+| `routing.mjs` | Which worker gets a task |
+| `actions.mjs` | The capability layer — how a worker reads and changes data |
+| `terminal.mjs` | Commands for authorised devices. No shell, disarmed on boot |
+| `uploads.mjs` | Files attached to a job, kept out of the JSON store |
+| `dev.mjs`, `homelab.mjs`, `status.mjs`, `build.mjs`, `clients.mjs` | The Dev page's browser, service probes, Claude's status page, build state, connected clients |
+
+### The documentation
+
+Three layers, deliberately kept apart:
+
+| | |
+|---|---|
+| **The rules** | [`CLAUDE.md`](CLAUDE.md) — what you must and must not do, and the open decisions to ask about rather than guess |
+| **The reasoning** | [`docs/`](docs/) — [architecture](docs/architecture.md), [data model](docs/data-model.md), [design system](docs/design-system.md), [threat model](docs/threat-model.md), [known issues](docs/known-issues.md), [roadmap](docs/roadmap.md). Index at [`docs/README.md`](docs/README.md) |
+| **The decisions** | [`docs/decisions/`](docs/decisions/) — thirteen ADRs. Each records what was true, what was chosen, what it forbids, and **what would change it** |
+
+Design documents are versioned rather than rewritten, so the boundary between
+eras stays legible:
+
+- [`ai-workspace-design.md`](docs/ai-workspace-design.md) — the 2026-07-30
+  proposal that produced the job model. Delivered.
+- [`control-plane-design.md`](docs/control-plane-design.md) — the next phase.
+  Proposed, not built.
+
+[`docs/handoffs/`](docs/handoffs/) holds the live working note
+(`CURRENT.md`) plus a dated file per milestone — written as work happens, so a
+session that ends mid-task doesn't lose what it knew.
 
 Written by its owner, with Claude Code as a collaborator. The architecture
 notes and decision records are part of the project rather than an afterthought:
