@@ -31,6 +31,88 @@
 const CLASSIFIER_MODEL = "gemini-flash-latest";
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
+// --- availability ----------------------------------------------------------
+//
+// A worker that just told us it is out of capacity should not be handed the
+// next job. Without this, 2026-08-21 went: Claude hit its session limit, the
+// owner said "use a different model then duh", and the router sent the retry
+// straight back to Claude — twice. The router knew how to weigh *capability*
+// and nothing at all about *availability*.
+//
+// In memory and short-lived on purpose. These limits lift on their own (a
+// session cap resets, an overload passes), so persisting the state would mean
+// carrying a stale "unavailable" across a restart and routing around a worker
+// that recovered hours ago.
+
+/** provider id → { until: epoch ms, reason: string } */
+const unavailable = new Map();
+
+/** How long to route around a worker that reported a limit, by kind. */
+const COOLDOWN_MS = {
+  // A subscription session cap; the message names a reset time we cannot
+  // parse reliably, so this is a "check back later" rather than a promise.
+  session: 30 * 60_000,
+  // A daily quota. Long, because retrying inside the same day cannot succeed.
+  daily: 6 * 60 * 60_000,
+  // Transient: overload, "high demand", a burst limit.
+  busy: 2 * 60_000,
+};
+
+/**
+ * Classify a failure message into a cooldown, or null if it is not an
+ * availability problem at all.
+ *
+ * Deliberately conservative: an ordinary error — a bad tool call, a refusal,
+ * a bug — must not sideline a working provider. Only phrases that mean "not
+ * now" count.
+ */
+export function limitKind(message) {
+  const text = String(message ?? "").toLowerCase();
+  if (!text) return null;
+  if (/session limit|usage limit|resets? \d|plan limit/.test(text)) return "session";
+  if (/per day|daily limit|quota.*(exceeded|spent)|free tier is spent/.test(text)) return "daily";
+  if (/high demand|overload|try again later|rate.?limit|too many requests|503|529/.test(text)) {
+    return "busy";
+  }
+  return null;
+}
+
+/** Record that a worker is out of capacity, if that is what the error means. */
+export function noteFailure(provider, message) {
+  const kind = limitKind(message);
+  if (!kind) return null;
+  const until = Date.now() + COOLDOWN_MS[kind];
+  unavailable.set(provider, { until, reason: kind });
+  console.log(
+    `[operator] routing will avoid ${provider} for ${Math.round(
+      COOLDOWN_MS[kind] / 60_000
+    )}m (${kind})`
+  );
+  return kind;
+}
+
+/** Clear a worker's cooldown — it just succeeded, so it is plainly back. */
+export function noteSuccess(provider) {
+  unavailable.delete(provider);
+}
+
+function usable(ids) {
+  const now = Date.now();
+  const free = ids.filter((id) => {
+    const entry = unavailable.get(id);
+    if (!entry) return true;
+    if (entry.until <= now) {
+      unavailable.delete(id);
+      return true;
+    }
+    return false;
+  });
+  // If everything is cooling down, routing around them all would mean refusing
+  // to work at all. Better to try the preferred worker and let it say no than
+  // to invent an outage.
+  return free.length ? free : ids;
+}
+
 /**
  * Signals that settle it without asking anyone.
  *
@@ -182,22 +264,36 @@ async function classify(prompt, signal) {
  * @param {AbortSignal} [signal]
  * @returns {Promise<{provider: string, why: string}>}
  */
-export async function routeTask(prompt, available, signal) {
+export async function routeTask(prompt, allProviders, signal) {
+  // Anything cooling down after saying it was out of capacity drops out here,
+  // so every decision below is made over workers that can actually take work.
+  const available = usable(allProviders);
+  const sidelined = allProviders.filter((id) => !available.includes(id));
+  const note = sidelined.length ? ` (${sidelined.join(", ")} unavailable)` : "";
+
   const fallback = available.includes("claude-code") ? "claude-code" : available[0];
 
   // Nothing to decide, and no reason to spend a call finding that out.
   if (available.length <= 1) {
-    return { provider: fallback, why: "the only worker enabled" };
+    return {
+      provider: fallback,
+      why: sidelined.length ? `the only worker available${note}` : "the only worker enabled",
+    };
   }
 
   const text = String(prompt ?? "").trim();
-  if (!text) return { provider: fallback, why: "nothing to classify" };
+  if (!text) return { provider: fallback, why: `nothing to classify${note}` };
 
   const quick = fastPath(text);
-  if (quick && available.includes(quick.provider)) return quick;
+  if (quick && available.includes(quick.provider)) return { ...quick, why: quick.why + note };
 
   const decided = await classify(text, signal);
-  if (decided && available.includes(decided.provider)) return decided;
+  if (decided && available.includes(decided.provider)) {
+    return { ...decided, why: decided.why + note };
+  }
 
-  return { provider: fallback, why: "couldn't tell — sent to the more capable worker" };
+  return {
+    provider: fallback,
+    why: `couldn't tell — sent to the more capable worker${note}`,
+  };
 }

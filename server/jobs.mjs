@@ -65,7 +65,7 @@ import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
 import { claimResources, removeJobResources } from "./uploads.mjs";
 import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
-import { routeTask } from "./routing.mjs";
+import { routeTask, noteFailure, noteSuccess } from "./routing.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -1168,8 +1168,30 @@ async function runViaSdk(job, prompt) {
   const failure = result.error ?? job.error ?? null;
   if (failure) {
     job.error = failure;
+    /*
+      Tell the router this worker is out of capacity, when that is what the
+      failure means.
+
+      Without this the router weighs capability and knows nothing about
+      availability — so on 2026-08-21, Claude hit its session limit, the owner
+      said "use a different model then duh", and the next two turns were routed
+      straight back to Claude. `noteFailure` ignores ordinary errors; only
+      "not now" phrasing sidelines a worker, and only for as long as that kind
+      of limit plausibly lasts.
+    */
+    const kind = noteFailure(job.provider, failure);
+    if (kind) {
+      emit(job, "text", {
+        text:
+          kind === "daily"
+            ? `_${job.provider} is out of quota for today — later work will route elsewhere._`
+            : `_${job.provider} is unavailable right now — later work will route elsewhere._`,
+      });
+    }
     setStatus(job, "failed", failure);
   } else {
+    // A worker that just answered is plainly back, whatever it said last time.
+    noteSuccess(job.provider);
     setStatus(job, "complete");
   }
 

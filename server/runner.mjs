@@ -56,6 +56,8 @@ export async function runTurn({
 }) {
   let resolvedSession = sessionId ?? null;
   let costUsd = 0;
+  /** The last assistant text, so the result's error isn't printed twice. */
+  let lastText = "";
   let error = null;
 
   const abort = new AbortController();
@@ -187,6 +189,7 @@ export async function runTurn({
         case "assistant":
           for (const block of message.message?.content ?? []) {
             if (block.type === "text" && block.text?.trim()) {
+              lastText = block.text;
               onEvent("text", { text: block.text });
             } else if (block.type === "tool_use") {
               onEvent("tool_use", { tool: block.name, subject: subjectOf(block.input) });
@@ -213,7 +216,18 @@ export async function runTurn({
               typeof message.result === "string" && message.result
                 ? message.result
                 : "Claude reported an error";
-            onEvent("text", { text: error, error: true });
+            /*
+              Only if it has not already been said.
+
+              A session-limit failure arrives twice: once as an assistant text
+              block ("You've hit your session limit · resets 10pm") and again
+              as the result's error. Emitting both printed the same sentence
+              twice in the log, which reads like two separate failures rather
+              than one. Observed 2026-08-21 on job-1.
+            */
+            if (error.trim() !== lastText.trim()) {
+              onEvent("text", { text: error, error: true });
+            }
           }
           /*
             No `usage` event here on purpose. Cost is returned, and the caller

@@ -151,6 +151,21 @@ async function callGemini({ model, contents, systemInstruction, signal, onRateLi
         } — try again shortly, or use Claude for this one.`
       );
     }
+    /*
+      Overload is transient and worth one retry, like a burst limit.
+
+      503 "This model is currently experiencing high demand" ended a turn
+      outright on 2026-08-21 — a failure the owner could do nothing about
+      except send the same message again, which is exactly what a retry is.
+      No `retryDelay` accompanies it, so a short fixed pause rather than a
+      promised one.
+    */
+    if ((res.status === 503 || res.status === 529) && !retried && !signal?.aborted) {
+      onRateLimit?.(OVERLOAD_WAIT_MS / 1000);
+      await new Promise((r) => setTimeout(r, OVERLOAD_WAIT_MS));
+      return callGemini({ model, contents, systemInstruction, signal, onRateLimit, retried: true });
+    }
+
     // Google's error body carries a real reason; the status alone does not.
     // Never include the response headers or the request — the key is in there.
     const reason = body?.error?.message ?? `${res.status} ${res.statusText}`;
@@ -161,6 +176,9 @@ async function callGemini({ model, contents, systemInstruction, signal, onRateLi
 
 /** Longest we'll sit on a rate limit before giving the turn back. */
 const MAX_RETRY_WAIT_MS = 65_000;
+
+/** Pause before retrying an overloaded model, which names no delay of its own. */
+const OVERLOAD_WAIT_MS = 5_000;
 
 /**
  * Is this the daily allowance, rather than a burst limit?
