@@ -56,7 +56,25 @@ const NAV_ITEMS = [
 ];
 
 const DRAWER_W = 264; // must match the w-[264px] on the <aside> below
-const EDGE_ZONE = 28; // an opening swipe has to start this close to the left edge
+
+/**
+ * Where an opening swipe may start — a band, not "the edge".
+ *
+ * **It deliberately does not touch the screen edge, and that is the fix for a
+ * real bug.** iOS Safari owns roughly the first 20px for its back-navigation
+ * gesture, so an open-zone starting at 0 raced the OS: sometimes the drawer
+ * opened, sometimes the page navigated back, and when iOS won it swallowed the
+ * gesture entirely — no `touchend` ever reached this component, `drag` stayed
+ * non-null, and the scrim (which renders while `drag !== null`) stuck on screen
+ * until the app was reloaded. Both reported symptoms, one cause.
+ *
+ * Starting at `EDGE_SKIP` cedes that band to the browser and takes the next
+ * one. The hamburger button remains the primary way in, so a slightly less
+ * reachable swipe costs little; fighting the OS for a gesture it will
+ * sometimes win costs a stuck UI.
+ */
+const EDGE_SKIP = 24; // leave iOS's back-swipe band alone
+const EDGE_ZONE = 80; // …and accept an opening swipe up to here
 const COMMIT = 0.4; // how far across before letting go counts as "meant it"
 const FLICK = 0.5; // px/ms — a fast flick commits regardless of distance
 
@@ -83,9 +101,23 @@ const FLICK = 0.5; // px/ms — a fast flick commits regardless of distance
  * horizontal scrollers (the Gym day stepper, the routine timeline), and a
  * swipe-anywhere-to-open would fight them.
  */
-function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void) {
+function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void, pathname: string) {
   const [drag, setDrag] = useState<number | null>(null);
   const from = useRef<{ x: number; y: number; t: number; axis: "?" | "x" } | null>(null);
+
+  /*
+    Navigating mid-drag clears it.
+
+    The drawer already closes on a route change, but that only resets
+    `mobileNavOpen` — the scrim also renders while `drag !== null`, so a
+    navigation that happened during a gesture (an accidental back-swipe, or a
+    tap on a nav link as the finger lifted) left the overlay behind on a page
+    that had already changed.
+  */
+  useEffect(() => {
+    from.current = null;
+    setDrag(null);
+  }, [pathname]);
 
   useEffect(() => {
     function onStart(e: TouchEvent) {
@@ -93,7 +125,7 @@ function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void) {
       if (window.innerWidth >= 1024) return;
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
-      if (!open && t.clientX > EDGE_ZONE) return;
+      if (!open && (t.clientX < EDGE_SKIP || t.clientX > EDGE_ZONE)) return;
       from.current = { x: t.clientX, y: t.clientY, t: e.timeStamp, axis: "?" };
     }
 
@@ -133,15 +165,33 @@ function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void) {
       else setOpen(progress > COMMIT);
     }
 
+    /*
+      A gesture can end without `touchend` ever reaching us — iOS taking over
+      for back-navigation is the case that actually happened. `touchcancel`
+      covers some of it and is not guaranteed, so anything that means "the
+      gesture is over, however it ended" clears the drag too. Without this a
+      stolen gesture leaves the scrim on screen until the app is reloaded.
+    */
+    function abandon() {
+      from.current = null;
+      setDrag(null);
+    }
+
     window.addEventListener("touchstart", onStart, { passive: true });
     window.addEventListener("touchmove", onMove, { passive: false });
     window.addEventListener("touchend", onEnd, { passive: true });
     window.addEventListener("touchcancel", onEnd, { passive: true });
+    window.addEventListener("pagehide", abandon);
+    window.addEventListener("blur", abandon);
+    document.addEventListener("visibilitychange", abandon);
     return () => {
       window.removeEventListener("touchstart", onStart);
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
       window.removeEventListener("touchcancel", onEnd);
+      window.removeEventListener("pagehide", abandon);
+      window.removeEventListener("blur", abandon);
+      document.removeEventListener("visibilitychange", abandon);
     };
   }, [open, setOpen]);
 
@@ -157,7 +207,7 @@ function useDrawerSwipe(open: boolean, setOpen: (v: boolean) => void) {
  * nav — what changes is whether the viewport can afford 232px of permanent
  * chrome. On a 390px phone it cannot.
  */
-export default function Sidebar() {
+export default function Sidebar({ alertCount = 0 }: { alertCount?: number }) {
   const { sidebarCollapsed, toggleSidebar, mobileNavOpen, setMobileNavOpen } = useTheme();
   const location = useLocation();
 
@@ -181,10 +231,12 @@ export default function Sidebar() {
     };
   }, [mobileNavOpen, setMobileNavOpen]);
 
-  const drag = useDrawerSwipe(mobileNavOpen, setMobileNavOpen);
+  const drag = useDrawerSwipe(mobileNavOpen, setMobileNavOpen, location.pathname);
 
+  // `relative` so the alert badge can pin itself to the corner when the rail
+  // is collapsed to icons and there is no label to sit beside.
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `group flex items-center gap-3 px-3 min-h-[44px] rounded-badge text-sm transition-colors ${
+    `group relative flex items-center gap-3 px-3 min-h-[44px] rounded-badge text-sm transition-colors ${
       isActive ? "bg-base-800 text-ink-100" : "text-ink-500 hover:text-ink-300 hover:bg-base-800/60"
     }`;
 
@@ -266,6 +318,26 @@ export default function Sidebar() {
                     }`}
                   />
                   <span className={`truncate ${sidebarCollapsed ? "lg:hidden" : ""}`}>{label}</span>
+                  {/*
+                    A question waiting on the Orchestrator, visible from every
+                    page. Driven by the server's own `asking` count rather than
+                    anything this session remembers, so it is still right after
+                    a reload and on a second device.
+
+                    Rendered even when the rail is collapsed to icons — that is
+                    exactly when the label is gone and the dot is the only way
+                    to know.
+                  */}
+                  {to === "/orchestrator" && alertCount > 0 && (
+                    <span
+                      title={`${alertCount} waiting on you`}
+                      className={`ml-auto shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-xp text-base-950 text-[10px] font-mono font-medium flex items-center justify-center ${
+                        sidebarCollapsed ? "lg:absolute lg:top-1 lg:right-1 lg:ml-0" : ""
+                      }`}
+                    >
+                      {alertCount}
+                    </span>
+                  )}
                 </>
               )}
             </NavLink>
