@@ -138,6 +138,200 @@ async function gymUnskipDay({ date }) {
   return { date: key, skipped: false };
 }
 
+// --- Gym session templates ---------------------------------------------------
+//
+// `gym.sessions` is the programme itself — which exercises, on which weekday.
+// Until now the capability layer could tick and skip a day but never change
+// what a day *is*, so "propose a new gym routine and modify it" was a request
+// no worker could carry out. The ticking half was built first because it is
+// what a day needs; this is what a training block needs.
+//
+// The programme's own reasoning — phases, percentages, deloads — is owner
+// content in `reference/gym-programme.md`, not something these actions know
+// about. They change the checklist, not the plan behind it.
+
+const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function weekdayArg(value, name = "weekday") {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 7) {
+    throw new ActionError(`${name} must be 1-7 (1 = Monday … 7 = Sunday)`);
+  }
+  return n;
+}
+
+async function gymSessionsList() {
+  const sessions = (await readState("gym.sessions")) ?? [];
+  return {
+    count: sessions.length,
+    sessions: [...sessions]
+      .sort((a, b) => a.weekday - b.weekday)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        weekday: s.weekday,
+        day: WEEKDAY_NAMES[s.weekday] ?? String(s.weekday),
+        time: s.time,
+        exercises: s.exercises.map((e) => ({ id: e.id, name: e.name, sets: e.sets, cue: e.cue ?? "" })),
+      })),
+    // Named so a worker proposing changes knows which days are free rather
+    // than assuming a seven-day split.
+    restDays: [1, 2, 3, 4, 5, 6, 7]
+      .filter((d) => !sessions.some((s) => s.weekday === d))
+      .map((d) => WEEKDAY_NAMES[d]),
+  };
+}
+
+function findSession(sessions, weekday) {
+  const session = sessions.find((s) => s.weekday === weekday);
+  if (!session) {
+    throw new ActionError(
+      `no session on ${WEEKDAY_NAMES[weekday]} — it is a rest day. Use gym_session_create to add one.`
+    );
+  }
+  return session;
+}
+
+async function gymSessionCreate({ weekday, name, time = "17:30" }) {
+  const day = weekdayArg(weekday);
+  required(name, "name");
+  if (!/^\d{1,2}:\d{2}$/.test(time)) throw new ActionError('time must be "HH:MM"');
+
+  const session = {
+    id: generateId(),
+    name: String(name).trim(),
+    weekday: day,
+    time,
+    exercises: [],
+  };
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    if (sessions.some((s) => s.weekday === day)) {
+      throw new ActionError(
+        `${WEEKDAY_NAMES[day]} already has a session ("${sessions.find((s) => s.weekday === day).name}"). Edit it, or delete it first.`
+      );
+    }
+    return [...sessions, session];
+  });
+  return { id: session.id, weekday: day, day: WEEKDAY_NAMES[day], name: session.name };
+}
+
+async function gymSessionUpdate({ weekday, name, time }) {
+  const day = weekdayArg(weekday);
+  if (name === undefined && time === undefined) {
+    throw new ActionError("nothing to update — pass name or time");
+  }
+  if (time !== undefined && !/^\d{1,2}:\d{2}$/.test(time)) {
+    throw new ActionError('time must be "HH:MM"');
+  }
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    findSession(sessions, day);
+    return sessions.map((s) =>
+      s.weekday !== day
+        ? s
+        : {
+            ...s,
+            ...(name !== undefined ? { name: String(name).trim() } : {}),
+            ...(time !== undefined ? { time } : {}),
+          }
+    );
+  });
+  return { weekday: day, day: WEEKDAY_NAMES[day], updated: [name !== undefined && "name", time !== undefined && "time"].filter(Boolean) };
+}
+
+/**
+ * Delete a whole training day.
+ *
+ * Its ticks are left alone deliberately. `gym.completions` is keyed by date and
+ * exercise id, so past sessions stay readable as history — deleting the
+ * template should not rewrite what was actually done in March.
+ */
+async function gymSessionDelete({ weekday }) {
+  const day = weekdayArg(weekday);
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    findSession(sessions, day);
+    return sessions.filter((s) => s.weekday !== day);
+  });
+  return { weekday: day, day: WEEKDAY_NAMES[day], deleted: true, note: "past ticks kept as history" };
+}
+
+async function gymAddExercise({ weekday, name, sets, cue, position }) {
+  const day = weekdayArg(weekday);
+  required(name, "name");
+  required(sets, "sets");
+
+  const exercise = {
+    id: generateId(),
+    name: String(name).trim(),
+    sets: String(sets).trim(),
+    ...(cue ? { cue: String(cue).trim() } : {}),
+  };
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    const session = findSession(sessions, day);
+    const list = [...session.exercises];
+    // 1-based to match how the session reads on screen; out of range appends
+    // rather than failing, since "put it at the end" is the common intent.
+    const at = Number.isInteger(Number(position)) ? Number(position) - 1 : list.length;
+    list.splice(Math.max(0, Math.min(at, list.length)), 0, exercise);
+    return sessions.map((s) => (s.weekday === day ? { ...s, exercises: list } : s));
+  });
+  return { weekday: day, day: WEEKDAY_NAMES[day], exerciseId: exercise.id, name: exercise.name };
+}
+
+async function gymUpdateExercise({ weekday, exerciseId, name, sets, cue }) {
+  const day = weekdayArg(weekday);
+  required(exerciseId, "exerciseId");
+  if (name === undefined && sets === undefined && cue === undefined) {
+    throw new ActionError("nothing to update — pass name, sets, or cue");
+  }
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    const session = findSession(sessions, day);
+    if (!session.exercises.some((e) => e.id === exerciseId)) {
+      throw new ActionError(
+        `no exercise "${exerciseId}" on ${WEEKDAY_NAMES[day]}. Ids: ${session.exercises.map((e) => e.id).join(", ") || "none"}`
+      );
+    }
+    return sessions.map((s) =>
+      s.weekday !== day
+        ? s
+        : {
+            ...s,
+            exercises: s.exercises.map((e) =>
+              e.id !== exerciseId
+                ? e
+                : {
+                    ...e,
+                    ...(name !== undefined ? { name: String(name).trim() } : {}),
+                    ...(sets !== undefined ? { sets: String(sets).trim() } : {}),
+                    ...(cue !== undefined ? { cue: String(cue).trim() } : {}),
+                  }
+            ),
+          }
+    );
+  });
+  return { weekday: day, exerciseId, updated: true };
+}
+
+async function gymRemoveExercise({ weekday, exerciseId }) {
+  const day = weekdayArg(weekday);
+  required(exerciseId, "exerciseId");
+  await withState("gym.sessions", (current) => {
+    const sessions = current ?? [];
+    const session = findSession(sessions, day);
+    if (!session.exercises.some((e) => e.id === exerciseId)) {
+      throw new ActionError(`no exercise "${exerciseId}" on ${WEEKDAY_NAMES[day]}`);
+    }
+    return sessions.map((s) =>
+      s.weekday !== day ? s : { ...s, exercises: s.exercises.filter((e) => e.id !== exerciseId) }
+    );
+  });
+  return { weekday: day, exerciseId, removed: true };
+}
+
 // --- Mission Board ------------------------------------------------------------
 // Mirrors src/hooks/useMissionBoard.ts.
 
@@ -372,6 +566,80 @@ async function eventCreate({ title, date, time, durationMinutes, kind, notes }) 
   };
   await withState("events.records", (current) => [...(current ?? []), record]);
   return { id: record.id, title: record.title, date: record.date };
+}
+
+/**
+ * A repeating event — one record, expanded at read time.
+ *
+ * The model stores a series as a single record with a rule, never as N copies
+ * (`useEvents` expands it per render). So creating one here is one write, and
+ * a single day can later be skipped without touching the rule.
+ */
+async function eventCreateRecurring({ title, from, weekdays, until, time, durationMinutes, kind, notes }) {
+  required(title, "title");
+  const start = dateArg(from, "from");
+  const end = dateArg(until, "until");
+  if (end < start) throw new ActionError("until must be on or after from");
+  oneOf(kind, EVENT_KINDS, "kind");
+  if (time !== undefined && !/^\d{1,2}:\d{2}$/.test(time)) {
+    throw new ActionError('time must be "HH:MM"');
+  }
+
+  const days = Array.isArray(weekdays) ? weekdays.map(Number) : [];
+  if (!days.length) throw new ActionError("weekdays is required — e.g. [1,3,5] for Mon/Wed/Fri");
+  for (const d of days) {
+    if (!Number.isInteger(d) || d < 1 || d > 7) {
+      throw new ActionError("weekdays must be 1-7 (1 = Monday … 7 = Sunday)");
+    }
+  }
+
+  const record = {
+    id: generateId(),
+    title: String(title).trim(),
+    date: start,
+    notes: notes ? String(notes).trim() : "",
+    kind: kind ?? "other",
+    ...(time ? { time } : {}),
+    ...(time && Number(durationMinutes) > 0
+      ? { durationMinutes: Math.round(Number(durationMinutes)) }
+      : {}),
+    recurrence: { type: "weekly", weekdays: [...new Set(days)].sort(), until: end },
+  };
+  await withState("events.records", (current) => [...(current ?? []), record]);
+  return { id: record.id, title: record.title, from: start, until: end, weekdays: record.recurrence.weekdays };
+}
+
+/**
+ * A block of consecutive days — annual leave, a holiday, a course.
+ *
+ * **No schema change needed for this, and that is the point.** A date range is
+ * a daily recurrence: every weekday, from the first day to the last. Storing it
+ * that way rather than as a new field means the calendar already renders it,
+ * one day of it can already be skipped (a working day inside a holiday), and
+ * deleting it already takes the whole block.
+ */
+async function eventCreateRange({ title, from, to, kind, notes }) {
+  required(title, "title");
+  const start = dateArg(from, "from");
+  const end = dateArg(to, "to");
+  if (end < start) throw new ActionError("to must be on or after from");
+  oneOf(kind, EVENT_KINDS, "kind");
+
+  const record = {
+    id: generateId(),
+    title: String(title).trim(),
+    date: start,
+    notes: notes ? String(notes).trim() : "",
+    kind: kind ?? "personal",
+    recurrence: { type: "weekly", weekdays: [1, 2, 3, 4, 5, 6, 7], until: end },
+  };
+  await withState("events.records", (current) => [...(current ?? []), record]);
+
+  const days =
+    Math.round(
+      (new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86_400_000
+    ) + 1;
+  return { id: record.id, title: record.title, from: start, to: end, days };
 }
 
 async function eventUpdate({ id, ...patch }) {
@@ -750,6 +1018,43 @@ const ACTIONS = {
     params: "date? (YYYY-MM-DD or \"today\")",
     handler: routineDay,
   },
+  gym_sessions_list: {
+    description:
+      "The whole training week — every session, its exercises and ids, plus which days are rest days. Read this before proposing changes to the programme.",
+    params: "(none)",
+    handler: gymSessionsList,
+  },
+  gym_session_create: {
+    description: "Add a training day to a weekday that currently has none.",
+    params: "weekday (1-7, 1 = Monday), name, time? (HH:MM, default 17:30)",
+    handler: gymSessionCreate,
+  },
+  gym_session_update: {
+    description: "Rename a training day or change its start time.",
+    params: "weekday (1-7), name?, time? (HH:MM)",
+    handler: gymSessionUpdate,
+  },
+  gym_session_delete: {
+    description:
+      "Remove a training day, making it a rest day. Past ticks are kept — deleting the template does not rewrite history.",
+    params: "weekday (1-7)",
+    handler: gymSessionDelete,
+  },
+  gym_add_exercise: {
+    description: "Add an exercise to a training day.",
+    params: "weekday (1-7), name, sets (free text, e.g. \"4 × 8-10\"), cue?, position? (1-based, appends by default)",
+    handler: gymAddExercise,
+  },
+  gym_update_exercise: {
+    description: "Change an exercise's name, sets or cue.",
+    params: "weekday (1-7), exerciseId, name?, sets?, cue?",
+    handler: gymUpdateExercise,
+  },
+  gym_remove_exercise: {
+    description: "Remove an exercise from a training day.",
+    params: "weekday (1-7), exerciseId",
+    handler: gymRemoveExercise,
+  },
   gym_toggle_exercise: {
     description: "Tick or untick one exercise on a gym day. Untick by calling it again.",
     params: "date? (YYYY-MM-DD or \"today\"), exerciseId",
@@ -810,6 +1115,20 @@ const ACTIONS = {
     description: "Add an event to the calendar. One-off only — recurring series are not created by this action.",
     params: "title, date (YYYY-MM-DD or \"today\"), time? (HH:MM), durationMinutes?, kind? (work|personal|admin|health|other), notes?",
     handler: eventCreate,
+  },
+  calendar_create_recurring: {
+    description:
+      "Add a repeating event — a shift pattern, a weekly class. Stored as one record with a rule, so a single day can be skipped later without touching the rest.",
+    params:
+      "title, from (YYYY-MM-DD or \"today\"), weekdays (array, 1-7 where 1 = Monday), until (YYYY-MM-DD), time? (HH:MM), durationMinutes?, kind? (work|personal|admin|health|other), notes?",
+    handler: eventCreateRecurring,
+  },
+  calendar_create_range: {
+    description:
+      "Block out consecutive days — annual leave, a holiday, a course. Covers every day from first to last, and a single day inside it can still be skipped.",
+    params:
+      "title, from (YYYY-MM-DD or \"today\"), to (YYYY-MM-DD), kind? (defaults to personal), notes?",
+    handler: eventCreateRange,
   },
   calendar_update_event: {
     description: "Edit an event's title, notes, kind, time, or duration.",
