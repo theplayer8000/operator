@@ -288,6 +288,9 @@ server/
   runner.mjs            — one turn, through the Claude Agent SDK. The ONLY file in
                           server/ that imports an npm package — ADR 0012 bounded
                           the dependency there deliberately. Keep it that way
+  gemini.mjs            — one turn, through Gemini. Same runTurn contract as
+                          runner.mjs; raw fetch, no SDK, so the npm rule holds.
+                          No filesystem or shell — capability actions only
   uploads.mjs           — local files attached to a job. Staged outside
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job
@@ -296,7 +299,9 @@ server/
                           with no network and no quota), a Flash call only for
                           genuinely ambiguous phrasing. Uncertain → Claude Code
   clients.mjs           — in-memory record of which devices are connected
-  status.mjs            — Claude service status. The only outbound call; see the rule above
+  status.mjs            — Claude service status. Was the ONLY outbound call;
+                          gemini.mjs is the second. See the approvals table —
+                          that list is the whole set, and a third needs asking
 scripts/
   dev.mjs               — starts the API and Vite together
   log-update.mjs        — append one entry to the Updates changelog. No deps.

@@ -55,7 +55,7 @@ Three features are built this way and are the reference implementations:
 | Daily Routine | `pages/DailyRoutine.tsx` | `hooks/useRoutineData.ts` | `routine.sections`, `routine.lastReset` |
 | Mission Board | `pages/MissionBoard.tsx`, `pages/MissionDetail.tsx` | `hooks/useMissionBoard.ts` | `missions.records` |
 
-Mission Board's two pages are the one sanctioned exception (`CLAUDE.md:41-45`):
+Mission Board's two pages are the one sanctioned exception (`CLAUDE.md, "Architecture pattern"`):
 a board without a detail view isn't the feature. It is still **one** hook, one
 namespace, one component folder.
 
@@ -121,7 +121,7 @@ Anything that wants to **write** across features is still forbidden. Route the
 write through the owning feature's mutator.
 
 
-`CLAUDE.md:46-51`. The Dashboard's `Mission` and the Mission Board's
+`CLAUDE.md, "Architecture pattern"`. The Dashboard's `Mission` and the Mission Board's
 `MissionRecord` are separate types over separate keys, deliberately unsynced —
 see [`decisions/0003-separate-mission-types.md`](decisions/0003-separate-mission-types.md)
 before proposing to merge them.
@@ -184,6 +184,6 @@ Stated plainly so nobody goes looking:
 ## Extending it
 
 The recipe is in [`adding-a-feature.md`](adding-a-feature.md). The short version:
-resist the urge to generalise. `CLAUDE.md:60-62` is explicit — no generic entity
+resist the urge to generalise. `CLAUDE.md, "Architecture pattern"` is explicit — no generic entity
 system, no ORM-style data layer. Every feature so far is a flat array of typed
 objects in localStorage, and the fourth one should be too.

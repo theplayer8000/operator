@@ -48,7 +48,7 @@ owner).
 > every secure-context API (`crypto.subtle`, `navigator.clipboard`, service
 > workers) is still unavailable.
 
-Documented in `CLAUDE.md:202-231`. `crypto.randomUUID()` exists only in a secure
+Documented in `CLAUDE.md, "Known issues"`. `crypto.randomUUID()` exists only in a secure
 context (`localhost` or HTTPS). The owner accesses the dev server over Tailscale
 at a bare IP, which the browser treats as insecure, so **any action that
 generates an ID throws and takes down the page** — adding a task, toggling one,
@@ -62,7 +62,7 @@ hooks/useRoutineData.ts:59
 hooks/useMissionBoard.ts:29, 48, 66, 100
 ```
 
-**Fix (approved, spec'd at `CLAUDE.md:214-224`):** add `generateId()` with a
+**Fix (approved, spec'd at `CLAUDE.md, "Known issues"`):** add `generateId()` with a
 non-crypto fallback, then replace every call site. Grep for `crypto.randomUUID`
 rather than trusting the list above — it will be stale if features were added.
 
@@ -207,7 +207,7 @@ switcher in Settings) or drop it to gold-only and delete the machinery.
 
 **Hardcoded hex values in components** · Low · Open
 
-Against `CLAUDE.md:102-103`.
+Against `CLAUDE.md, "Design system"`.
 
 - ~~`pages/MissionDetail.tsx:171` — `accent-[#E8B04D]`~~ — fixed in v6
   (`accent-xp`)
@@ -300,7 +300,7 @@ critical path, Journey rollup) would need to handle it.
 `index.html:7-12` loads three typefaces from a CDN. Offline, all three fall back
 to generic sans and the deliberate display/body/mono pairing collapses.
 
-`CLAUDE.md:14-17` explicitly allows this as the one permitted network call, so it
+`CLAUDE.md, "What this is"` explicitly allows this as the one permitted network call, so it
 is a known trade-off rather than a violation. **Decision needed:** self-host the
 fonts to make offline-first literal, or accept degraded typography offline.
 

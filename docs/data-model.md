@@ -98,7 +98,7 @@ for whenever they get editors.
 ## Types
 
 All domain types live in `lib/types.ts`, one section per feature, **appended
-never interleaved** (`CLAUDE.md:52-55`). Keep the `// --- Feature Name ---`
+never interleaved** (`CLAUDE.md, "Architecture pattern"`). Keep the `// --- Feature Name ---`
 section-comment style.
 
 ### Shared
@@ -179,7 +179,7 @@ additive only.
 
 ### Mission Board
 
-`MissionRecord` is the richest type in the app — see `CLAUDE.md:162-166` for the
+`MissionRecord` is the richest type in the app — see `CLAUDE.md, "Mission Board detail"` for the
 full field list. Structural notes:
 
 - `milestones: Milestone[]` is **embedded**, not a separate key. A milestone has

@@ -126,7 +126,7 @@ npx tsc -b        # must exit clean
 npx vite build    # must exit clean
 ```
 
-**Both, before any work is considered done** (`CLAUDE.md:233-242`).
+**Both, before any work is considered done** (`CLAUDE.md, "Verification before handing anything back"`).
 
 This is the entire safety net. There is no test runner, no linter, and no CI, so
 the type checker is the only automated check — and it is weaker than it looks:
@@ -183,7 +183,7 @@ Every completed milestone ends with a handoff written to
 [`docs/handoffs/`](handoffs/) — see the template and naming convention in
 [`handoffs/README.md`](handoffs/README.md).
 
-The required contents are fixed by `CLAUDE.md:288-300`:
+The required contents are fixed by `CLAUDE.md, "Engineering Handoff"`:
 
 - Summary of completed work
 - Files modified
@@ -209,7 +209,7 @@ Commit message scopes that match this codebase: `dashboard`, `routine`,
 
 ## When a request conflicts with the documented architecture
 
-Say so before implementing (`CLAUDE.md:267`). The conflicts most likely to come
+Say so before implementing (`CLAUDE.md, "Never `git add -A`"`). The conflicts most likely to come
 up, and where the reasoning lives:
 
 | Request | Conflict | Read first |
@@ -218,7 +218,7 @@ up, and where the reasoning lives:
 | Add Redux / Zustand / React Query | Hard constraint | [ADR 0005](decisions/0005-no-state-management-library.md) |
 | Merge the two mission types | Deliberate separation | [ADR 0003](decisions/0003-separate-mission-types.md) |
 | Store a value outside `useRemoteStorage` | Bypasses the store, export, and migrations | [`data-model.md`](data-model.md) |
-| Extract a generic entity/data layer | Explicitly ruled out | `CLAUDE.md:60-62`, [ADR 0002](decisions/0002-feature-slice-architecture.md) |
+| Extract a generic entity/data layer | Explicitly ruled out | `CLAUDE.md, "Architecture pattern"`, [ADR 0002](decisions/0002-feature-slice-architecture.md) |
 | Add confetti/shields/XP to Mission Board | Wrong register | [ADR 0004](decisions/0004-tonal-registers.md) |
 | Add file uploads | Reserved, needs design | `CLAUDE.md`, Mission Board Overview tab |
 

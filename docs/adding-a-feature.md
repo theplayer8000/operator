@@ -17,7 +17,7 @@ detail.
    and Knowledge Vault in particular already have free-text fields in
    `MissionRecord` waiting for them.
 4. **Confirm the scope of persistence.** If the feature seems to need a backend,
-   a database, sync, or any network call — stop and raise it (`CLAUDE.md:14-17`).
+   a database, sync, or any network call — stop and raise it (`CLAUDE.md, "What this is"`).
    That is a hard constraint, not a default.
 
 ## The steps
@@ -37,7 +37,7 @@ for `Mission` vs `MissionRecord`
 ([ADR 0003](decisions/0003-separate-mission-types.md)).
 
 Keep it flat: a typed array of objects. No generic entity base type
-(`CLAUDE.md:60-62`).
+(`CLAUDE.md, "Architecture pattern"`).
 
 ### 2. Seed data — `lib/seed.ts`
 
@@ -129,13 +129,13 @@ Both, every time. See [`development.md`](development.md).
 - Write an ADR in [`decisions/`](decisions/) **only** if you made a genuinely
   architectural choice — a new pattern, a cross-feature dependency, a deviation
   from the recipe. Not for routine features.
-- Produce the milestone handoff (`CLAUDE.md:288-300`, format in
+- Produce the milestone handoff (`CLAUDE.md, "Engineering Handoff"`, format in
   `development.md`).
 
 ## Things that will look tempting and are not
 
 **"These two features share a shape — let me extract a generic hook."** No.
-`CLAUDE.md:60-62`. Duplication across slices is the design.
+`CLAUDE.md, "Architecture pattern"`. Duplication across slices is the design.
 
 **"Statistics needs data from every feature, so I'll call every hook."** This is
 now allowed — the store is shared as of v5, so multiple hooks see the same data.
@@ -150,4 +150,4 @@ require knowing what features exist.
 **"This feature needs files/attachments."** localStorage cannot hold binary at
 any real size. The reserved section in Mission Board's Overview tab is a
 placeholder for a design conversation, not an invitation to add uploads
-(`CLAUDE.md:181-185`).
+(`CLAUDE.md, "Destructive actions"`).

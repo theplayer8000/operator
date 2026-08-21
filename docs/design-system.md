@@ -1,6 +1,6 @@
 # Design System
 
-Tokens live in `tailwind.config.ts`. `CLAUDE.md:100-141` states the rules; this
+Tokens live in `tailwind.config.ts`. `CLAUDE.md, "Design system"` states the rules; this
 document is the working reference, including the parts that are easy to get
 wrong.
 
@@ -73,7 +73,7 @@ Mission Board should read like Linear or Notion. If you are extending it and
 reach for a gamified element, that is the signal to stop.
 
 **When adding a new top-level feature**, decide its register before building
-(`CLAUDE.md:138-141`). Infer it from the request's own tone if it isn't stated,
+(`CLAUDE.md, "Tone differs deliberately by section"`). Infer it from the request's own tone if it isn't stated,
 and say which one you picked. Rough guide: daily-glance surfaces lean playful;
 long-horizon record-keeping leans neutral; habit and recovery surfaces lean calm.
 
@@ -87,7 +87,7 @@ long-horizon record-keeping leans neutral; habit and recovery surfaces lean calm
 | `ShieldProgress` | The Dashboard's signature hexagonal badge. **Dashboard register only** |
 | `Confetti` | Burst on completion. Re-trigger by changing its `key`. **Dashboard register only** |
 
-These primitives are described in `CLAUDE.md:87-88` as "Dashboard-flavoured",
+These primitives are described in `CLAUDE.md, "Tone differs deliberately by section"` as "Dashboard-flavoured",
 which is accurate — `Card` and `EmptyState` are register-neutral and reusable,
 `ShieldProgress` and `Confetti` are not. Mission Board uses **none** of them; it
 composes `.card-base` directly, which is consistent with its register.

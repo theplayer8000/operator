@@ -1,6 +1,6 @@
 # Roadmap & Feature Status
 
-The status table in `CLAUDE.md:143-158` is authoritative for *what is built*.
+The status table in `CLAUDE.md, "Feature status"` is authoritative for *what is built*.
 This document carries the detail: what each feature is meant to become, what
 already points at it, and what has to be decided before it can be built.
 
@@ -290,6 +290,47 @@ it's built, planned or a concept. Deliberately **not** derived from the route
 table — routes know paths, not purpose, and purpose is the point of the page.
 **Keep it in step with this document** when a feature's status changes.
 
+### Orchestrator — `/orchestrator`
+
+Was "Claude" at `/chat`, renamed 2026-08-20 when it stopped being about one
+model. `/chat` redirects.
+
+Work with a model is a **job**: an append-only event log that outlives any HTTP
+request, so a long turn shows which file was read and which command ran instead
+of a spinner. Tabs survive a restart; their event logs do not, and the UI says
+so. Polling rather than streaming, because stream readers deliver nothing on
+the owner's iPhone.
+
+Four pieces sit behind it, each a separate file on purpose:
+
+- **`server/jobs.mjs`** — the queue, job state, the event vocabulary, the
+  permission questions registry. Same gate as the terminal: a job has tool
+  access, so it is execution.
+- **`server/providers.mjs`** — the worker boundary. Claude Code (full tool
+  access, via the Agent SDK) and Gemini (capability actions only, registered
+  only when a key exists). Adding a speculative third is the "extending a
+  permitted boundary" that [ADR 0009](decisions/0009-permitted-abstraction-boundaries.md)
+  forbids.
+- **`server/routing.mjs`** — picks the worker per task. Rules first, so it
+  works with no network and no quota; a classifier only for ambiguous
+  phrasing. Anything uncertain goes to the capable worker.
+- **`server/actions.mjs`** — the capability layer. Named, validated reads and
+  writes over Operator's own data, mirroring what each feature hook does, so a
+  worker changes data without editing source.
+
+**A permission is a question, not a dead end**
+([ADR 0012](decisions/0012-claude-agent-sdk.md), option C): a tool outside the
+pre-allow list suspends the turn and asks on the phone, and answering resumes
+that same turn. Publishing and deleting are never asked about — they come back
+as a command for the owner to run.
+
+Jobs run in a **separate git worktree on branch `agent`**, so what the running
+app serves is never half-finished work.
+
+Still open, designed in [`control-plane-design.md`](control-plane-design.md):
+a gateway seam, a local control model, multi-worker jobs, job-level permission
+envelopes.
+
 ### Dev — `/dev`
 
 Repo status (branch, commit, subject), links out to GitHub, and a read-only
@@ -306,16 +347,23 @@ root so traversal cannot escape, and `node_modules`, `.git`, `dist` and `data`
 are never listed or served — `data` because it holds personal content and has
 its own API. Text only, 400 KB cap.
 
-There is no authentication; the tailnet is the boundary
-([ADR 0006](decisions/0006-json-file-storage-server.md)). **This must not be
-exposed beyond it.**
+**Corrected 2026-08-21.** This section used to say "there is no
+authentication; the tailnet is the boundary". That was true when written and
+became false at [ADR 0010](decisions/0010-tailnet-identity-authentication.md):
+every `/api/` route now requires an identified caller — a tailnet device
+resolved from the local `tailscale` daemon, a bearer token, or loopback. The
+check sits in front of the router. It still must not be exposed beyond the
+tailnet, but the reason is the absence of a sandbox, not the absence of a lock.
 
-**Claude status is the one outbound call Operator makes to a host the owner
-doesn't control** (`status.claude.com`), approved case-by-case per the
-"External applications" rule in `CLAUDE.md`. `server/status.mjs` fetches it
-server-side, caches for a minute, and degrades to a stated-stale response or
-"couldn't reach it" rather than ever breaking the page — see that file's
-header comment before adding a second outbound call anywhere else.
+The Dev page also carries a **terminal** for named devices, disarmed on every
+start ([ADR 0011](decisions/0011-remote-terminal-for-authorised-devices.md)),
+and a **Builds** card showing which code each URL is actually serving.
+
+**Outbound calls now number more than one.** `status.claude.com` was the first
+(`server/status.mjs` — cached, degrades to stated-stale rather than breaking
+the page). Gemini was approved by name on 2026-08-20 and is reached from
+`server/gemini.mjs`. Both are in the approvals table in `CLAUDE.md`, which is
+the whole set; read the "External applications" rule before adding a third.
 
 ## Not built
 
@@ -357,19 +405,32 @@ a `ReservedSection` or a free-text field, deliberately not a real reference
 ## Suggested sequencing
 
 Not a decision — a recommendation for the owner, based on cost against risk
-retired:
+retired. **Refreshed 2026-08-21**; everything above item 5 shipped.
 
 1. ~~`generateId()` fix (**OPS-001**)~~ — **done in v5.**
 2. ~~Storage off localStorage (**OPS-003**, **OPS-004**)~~ — **done in v5.**
 3. ~~Mobile / responsive pass~~ — **done in v6.**
-4. **Settings** — smallest remaining feature, and the only route to a backup
-   (**OPS-017**). Mostly plumbing over the existing API.
-5. Then whichever feature the owner actually wants. Journey is the one the
-   whole three-tier philosophy points at.
+4. ~~Settings, and a backup route (**OPS-017**)~~ — **done**, plus hourly
+   snapshots run by the server itself.
+5. ~~The AI workspace~~ — **done**: jobs, the provider boundary, in-turn
+   permissions, the capability layer, auto-routing, uploads.
+
+What is actually next, in the owner's stated order:
+
+6. **The control plane** — [`control-plane-design.md`](control-plane-design.md),
+   designed and not built. Local routing first, then a gateway seam. Both are
+   provider-neutral and neither commits to a gateway product.
+7. **Usage ceilings** — the accounting is decided
+   ([ADR 0013](decisions/0013-usage-accounting.md)); per-job, per-provider and
+   daily limits are not built. Per-job is the runaway guard and the cheapest.
+8. **Knowledge Framework**, then **Search Service**, then **Universal Search** —
+   in that order, because the last two need somewhere to search.
+9. Then whichever feature the owner actually wants. Journey is still the one
+   the whole three-tier philosophy points at, and still unstarted.
 
 ## Pending naming changes
 
-Flagged in `CLAUDE.md:187-200` as wanted **eventually**, not yet. Do not apply
+Flagged in `CLAUDE.md, "Naming — pending, do not do unprompted"` as wanted **eventually**, not yet. Do not apply
 without explicit confirmation:
 
 - "Today's Focus" → "Primary Objective"
