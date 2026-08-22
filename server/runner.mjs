@@ -27,6 +27,9 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
  * @param {string} spec.model
  * @param {string|null} spec.sessionId  resume a conversation, or null to start one
  * @param {string} spec.cwd           where Claude works — the agent worktree
+ * @param {object} [spec.env]         the worker's environment. Pass one with
+ *        Operator's own secrets removed (`jobs.mjs`'s `workerEnv()`) — the SDK
+ *        otherwise inherits this process's, API keys included
  * @param {string[]} spec.deniedTools tools refused outright, never asked about
  * @param {string[]} spec.allowedTools tools run without asking — see jobs.mjs
  * @param {number|null} spec.budgetUsd hard ceiling for this turn, or null
@@ -45,6 +48,7 @@ export async function runTurn({
   model,
   sessionId,
   cwd,
+  env,
   deniedTools = [],
   allowedTools = [],
   budgetUsd = null,
@@ -72,6 +76,9 @@ export async function runTurn({
       model,
       cwd,
       abortController: abort,
+      // Without this the SDK hands the worker this process's environment,
+      // Operator's own API keys included. See workerEnv() in jobs.mjs.
+      ...(env ? { env } : {}),
       /*
         `default` is the mode that consults `canUseTool`. Leaving it unset does
         not: measured, an unallow-listed `hostname --fqdn` ran without the

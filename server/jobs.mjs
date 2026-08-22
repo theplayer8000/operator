@@ -337,6 +337,37 @@ const DENIED_TOOLS = (
   a rule granted there stops being a question rather than becoming an
   auto-answered one. See SETTINGS_FILE.
 */
+/**
+ * The environment a worker runs in, with Operator's own secrets removed.
+ *
+ * **A worker has never needed these and should never have had them.** The
+ * server holds `GEMINI_API_KEY` because `server/gemini.mjs` makes the call;
+ * the worker is on the other side of that boundary. `OPERATOR_TOKEN` is worse
+ * — `threat-model.md` calls it "a password to everything", and a job reaching
+ * the API only ever does so over loopback, which is authenticated by being
+ * loopback.
+ *
+ * Why it matters more than it looks: `Bash(echo:*)` is pre-approved, so a job
+ * can already *read* whatever is in its environment. What stops a key leaving
+ * is that no outbound command is pre-approved — a boundary made of two
+ * separate half-measures, either of which could reasonably be relaxed later
+ * by someone who did not know the other was load-bearing. Removing the secrets
+ * removes the dependency between them.
+ *
+ * Deliberately a denylist of *Operator's own* secrets rather than a scrub of
+ * anything matching /KEY|TOKEN/: the worker legitimately needs PATH, HOME,
+ * APPDATA and whatever Claude Code itself authenticates with, and guessing at
+ * that pattern would eventually strip something that matters and produce a
+ * failure nobody could explain.
+ */
+const WORKER_SECRETS = ["GEMINI_API_KEY", "OPENAI_API_KEY", "OPERATOR_TOKEN"];
+
+export function workerEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of WORKER_SECRETS) delete env[key];
+  return env;
+}
+
 const ALLOWED_TOOLS = (
   process.env.OPERATOR_JOB_ALLOW ??
   [
@@ -1083,6 +1114,7 @@ async function runViaSdk(job, prompt) {
       model: job.model,
       sessionId: job.sessionId,
       cwd: JOB_CWD,
+      env: workerEnv(),
       deniedTools: DENIED_TOOLS,
       allowedTools: ALLOWED_TOOLS,
       budgetUsd: BUDGET_USD || null,
@@ -1338,7 +1370,7 @@ async function runTurn(job) {
       // writes to makes anything that reads stdin wait for the timeout. Step 2
       // changes this deliberately, with `--input-format stream-json`.
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+      env: workerEnv({ FORCE_COLOR: "0", NO_COLOR: "1" }),
     });
     job.proc = proc;
 
