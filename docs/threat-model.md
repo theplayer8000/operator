@@ -1,6 +1,23 @@
 # Threat model
 
-**Status:** current as of 2026-07-31.
+**Status:** current as of 2026-07-31 — and **due a rewrite, not an amendment**.
+
+> **The assumption this document rests on is about to stop holding.** Its
+> argument is "one person, private tailnet, therefore this trade is
+> acceptable", and on 2026-08-22 the owner stated that a second person (Noel)
+> gets access and that Operator moves onto that person's homelab.
+>
+> The section *What real containment would look like* names public exposure as
+> the change to watch for. It named the wrong trigger: **a second human is a
+> different axis, and it arrives first.** Everything listed there as "not
+> justified today" becomes justified — and hosting on hardware the owner does
+> not administer makes app-level authorisation the wrong layer for privacy
+> entirely, since `data/operator.json` is a readable file to whoever runs the
+> machine.
+>
+> See [`control-plane-design.md` §5b](control-plane-design.md) for what has to
+> exist first. Do not treat the rest of this document as describing the system
+> once either change lands.
 **Read with:** [ADR 0010](decisions/0010-tailnet-identity-authentication.md)
 (who is calling) and [ADR 0011](decisions/0011-remote-terminal-for-authorised-devices.md)
 (who may run things).

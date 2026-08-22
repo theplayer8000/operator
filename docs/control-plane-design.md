@@ -223,6 +223,103 @@ is compromised. Revoke, replace, and keep the replacement out of anything a
 worker can read — including Operator's own terminal, which logs every command
 by design.
 
+## 5b. A second person, and someone else's hardware
+
+**Stated 2026-08-22: Noel gets access, and Operator moves onto his homelab.**
+Both are reasonable and neither is free, because each contradicts an assumption
+written down as a reason for not doing other work.
+
+### What each one breaks
+
+**A second person breaks the argument in `threat-model.md`.** That document
+lists what real containment would look like — a low-privilege account, a
+container, splitting the runner — and then says:
+
+> Each is real work. None is justified while this is one person on a private
+> tailnet. All become justified the moment Operator is reachable from the
+> public internet, which is the change to watch for.
+
+It named the wrong trigger. Public exposure was the change it anticipated; **a
+second human is a different axis it does not cover**, and it arrives first.
+
+**Access is already two levels, and that part works.** Being on the tailnet
+gets the app; being additionally named in `OPERATOR_TERMINAL_DEVICES` gets the
+terminal, jobs and capability actions. So `noel-iphone` on the tailnet but not
+in that list is a real, working split that needs no new code — Operator without
+a shell and without AI workers.
+
+**What has no split at all is the data.** There is one `data/operator.json`,
+holding the owner's gym history, missions, calendar, shifts and notes, and
+`/api/state` serves it to anyone the tailnet admits. The authentication
+question was answered; the *whose data* question was never asked, because there
+was never a second person to ask it about.
+
+**Someone else's hardware breaks the founding rule.** `CLAUDE.md` opens with
+*"Data never leaves hardware the owner controls."* Noel's box is not that. This
+is not an argument against moving — a homelab is the right destination and it
+unlocks the local model — but it is a change to the sentence the whole project
+is justified by, and it should be edited deliberately rather than quietly
+falsified.
+
+**And on hardware someone else administers, app permissions stop being the
+control.** `data/operator.json` is a plaintext file; whoever runs the machine
+can read it, and every hourly backup of it, without appearing in any list.
+`OPERATOR_TOKEN` protects the API, not the disk. Any plan that relies on
+device authorisation to keep data private *from the person hosting it* is
+relying on the wrong layer.
+
+### Three shapes, and the third is underrated
+
+1. **Two instances, one box.** Separate `OPERATOR_DATA`, separate containers.
+   He gets Operator; the owner keeps his data. Cleanest, and the containment
+   work it needs is work that was becoming justified anyway.
+2. **One shared instance.** Legitimate if a shared calendar and mission board
+   is genuinely wanted — but then it is a joint system and should be designed
+   as one, with per-person identity, from the start rather than retrofitted.
+3. **Operator stays put; only the model moves.** Ollama runs on the homelab and
+   is reached over the tailnet. **The thing actually wanted from that box is the
+   local model, and a model server works perfectly well over a network.** This
+   gets the control-plane milestone with no relocation, no multi-user identity
+   work, and no change to the founding rule — and it can be done first,
+   regardless of which of the other two is chosen later.
+
+### What has to exist before either lands
+
+1. **Identity that is not a device.** Today "who is calling" resolves to a
+   tailnet device, which is why access is all-or-nothing. Two people need two
+   identities, and that is what the SSO step in the sequence below is actually
+   for — it has been listed as infrastructure when it is really the
+   prerequisite for this.
+2. **Authorisation with more than one level.** At minimum: who may run jobs,
+   who may arm the terminal, who may read which data. `OPERATOR_TERMINAL_DEVICES`
+   is the shape of the idea already — an environment-only list that the app
+   cannot edit — and it needs a per-person equivalent.
+3. **The containment work, now justified.** The three options in
+   `threat-model.md` stop being optional the moment someone else can reach the
+   machine. Running Operator in a container on the homelab does this and the
+   relocation in one move, which is the argument for doing them together.
+4. **A decision about whose data this is.** Shared calendar and missions, or
+   separate instances that happen to share hardware? This is the question that
+   determines whether object-level authorization is needed at all, and it is
+   the owner's to answer — not something to infer from what is easiest to
+   build.
+
+### What it changes elsewhere in this document
+
+- **§6 (homelab sequence)** — SSO moves from "step 6 of the infrastructure" to
+  a prerequisite of granting access. The container step likewise stops being an
+  optimisation.
+- **§7 (the domain)** — the "do you actually need public access" question gets
+  a real answer if Noel is remote and not on the tailnet. That is one of the
+  two good reasons named there.
+- **[ADR 0014](decisions/0014-development-tooling.md)** — its deferral of
+  API-security tooling is explicitly conditional on there being one user. That
+  condition expires here.
+- **`threat-model.md` needs rewriting, not amending.** Its central argument is
+  "one person, private network, therefore this trade is fine". When that stops
+  being true, the document stops being about the right threats — and it is the
+  document a future session reads before touching auth.
+
 ## 6. Homelab sequence
 
 Expected next infrastructure phase, on the Dell OptiPlex:

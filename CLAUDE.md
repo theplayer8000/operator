@@ -27,6 +27,7 @@ file states the rule and the document explains it.
 | [`docs/decisions/`](docs/decisions/) | Before "fixing" something that looks wrong, or changing an established pattern |
 | [`docs/decisions/0012-claude-agent-sdk.md`](docs/decisions/0012-claude-agent-sdk.md) | Before touching the job runner, or adding anything to `server/`'s dependencies |
 | [`docs/decisions/0013-usage-accounting.md`](docs/decisions/0013-usage-accounting.md) | **Before writing anything that counts tokens, cost, or quota** — including any budget or ceiling. Explains why the reported "$40" is not necessarily money |
+| [`docs/decisions/0014-development-tooling.md`](docs/decisions/0014-development-tooling.md) | Before adopting a Claude Code plugin or skill. Records which are used, which are refused and why — and why a plugin can never be an Operator capability |
 | [`docs/handoffs/`](docs/handoffs/) | At the end of every milestone — template and naming convention |
 
 ## What this is
