@@ -472,6 +472,37 @@ export async function startRun(line, identity) {
         `"${name}" is a flag, not a command — the first word has to be the program to run`
       );
     }
+    /*
+      A shell builtin is not a missing program, and must not be reported as
+      one. `del`, `copy`, `dir` and friends live inside cmd.exe; there is no
+      del.exe anywhere on the system, so the generic advice — "set
+      OPERATOR_TERMINAL_BIN_DEL if it lives somewhere unusual" — sends someone
+      looking for a file that has never existed. Observed 2026-08-22 with
+      exactly that: `del <path>` answered with advice that could not work.
+
+      There is deliberately no shell here (ADR 0011, argv only), so the honest
+      answer is the equivalent that does work rather than a suggestion to
+      relax that.
+    */
+    const BUILTIN = {
+      del: 'cmd /c del "<path>"',
+      erase: 'cmd /c del "<path>"',
+      copy: 'cmd /c copy "<from>" "<to>"',
+      move: 'cmd /c move "<from>" "<to>"',
+      ren: 'cmd /c ren "<from>" "<to>"',
+      rename: 'cmd /c ren "<from>" "<to>"',
+      dir: "cmd /c dir",
+      cls: "cmd /c cls",
+      type: 'cmd /c type "<path>"',
+      cd: "(there is no working directory to change — every run starts in the repo root)",
+      set: "cmd /c set",
+    };
+    if (BUILTIN[name]) {
+      throw new Error(
+        `"${name}" is a cmd.exe builtin, not a program — there is no ${name}.exe to point at. ` +
+          `This terminal runs argv only, with no shell (ADR 0011). Use: ${BUILTIN[name]}`
+      );
+    }
     throw new Error(
       `couldn't find an executable for "${name}" on this machine — set OPERATOR_TERMINAL_BIN_${name.toUpperCase()} if it lives somewhere unusual`
     );

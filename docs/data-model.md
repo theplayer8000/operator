@@ -129,6 +129,35 @@ Adding a section means editing the union, `seedRoutineSections`, and
 `RoutineTask` carries `estimatedMinutes` and `repeatDaily`, which drive the
 minute totals and the daily reset respectively.
 
+**`RoutineTask.weekdays` (optional, added 2026-08-22)** — ISO weekdays the step
+runs on, `1` = Monday … `7` = Sunday. **Absent means every day**, which is
+exactly what every step meant before the field existed, so it is additive and
+no stored routine needed migrating.
+
+It exists because routine steps were identical on every date while the calendar
+was not, so "work at Darams" appeared on days off and on holidays forever. The
+Day Schedule's own copy conceded the point — *"your routine steps are the same
+every day; what changes is the calendar"* — and conceding it did not stop it
+being wrong on the day.
+
+Three rules follow from it, and each is load-bearing:
+
+- **"Runs on this date" and "is done on this date" are different questions.**
+  `runsOn()` decides membership of the day; `isDoneOn()` decides completion.
+  A step that does not run is *absent* from the day, not an unticked item on
+  it — otherwise a Sunday reads as 3/14 when eleven of those steps were never
+  part of Sunday. `statsFor` and `scheduleFor` both filter by the first before
+  asking the second, and the schedule must, or it reserves an hour for work
+  that is not happening and every later block reads as overlapping.
+- **Every day has one representation, not two.** All seven days selected, or
+  none, both store as an *absent* key rather than an array — so "runs daily"
+  cannot be written two ways that read differently downstream.
+- **A recorded tick is never re-evaluated against the rule.**
+  `routine.completions` is keyed by date, so narrowing a step's days changes
+  what happens next, not what happened. A step ticked on a Sunday that no
+  longer runs on Sundays stays ticked on that Sunday; the alternative is
+  rewriting history to match a rule invented afterwards.
+
 `RoutineSection.startTime` is a **local wall-clock string** (`"HH:MM"`, 24h),
 added in schema v2. It is not a timestamp: a routine happens at 06:30 every
 day, not at one instant. A block's **end is derived**, never stored — start

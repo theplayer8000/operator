@@ -29,6 +29,7 @@ export default function DailyRoutine() {
     editTask,
     deleteTask,
     toggleRepeat,
+    setTaskWeekdays,
     setStartTime,
     setNotes,
   } = useRoutineData();
@@ -70,6 +71,7 @@ export default function DailyRoutine() {
             onEditTask={editTask}
             onDeleteTask={deleteTask}
             onToggleRepeat={toggleRepeat}
+            onSetWeekdays={setTaskWeekdays}
             onStartTimeChange={setStartTime}
             onNotesChange={setNotes}
           />

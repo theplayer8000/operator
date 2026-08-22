@@ -15,6 +15,10 @@ import ConfirmButton from "@/components/ui/ConfirmButton";
 import type { RoutineSection, RoutineSectionKey, RoutineTask } from "@/lib/types";
 import { ROUTINE_META } from "./routineMeta";
 
+/** ISO weekdays, Monday first — the order the owner's week actually starts. */
+const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
+const DAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"];
+
 export default function RoutineSectionCard({
   section,
   isLast,
@@ -24,6 +28,7 @@ export default function RoutineSectionCard({
   onEditTask,
   onDeleteTask,
   onToggleRepeat,
+  onSetWeekdays,
   onStartTimeChange,
   onNotesChange,
 }: {
@@ -44,6 +49,7 @@ export default function RoutineSectionCard({
   ) => void;
   onDeleteTask: (key: RoutineSectionKey, taskId: string) => void;
   onToggleRepeat: (key: RoutineSectionKey, taskId: string) => void;
+  onSetWeekdays: (key: RoutineSectionKey, taskId: string, weekdays: number[]) => void;
   onStartTimeChange: (key: RoutineSectionKey, startTime: string) => void;
   onNotesChange: (key: RoutineSectionKey, notes: string) => void;
 }) {
@@ -52,6 +58,8 @@ export default function RoutineSectionCard({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editMinutes, setEditMinutes] = useState("");
+  /** Which days the step being edited runs on. All seven means every day. */
+  const [editDays, setEditDays] = useState<number[]>(ALL_DAYS);
   const { icon: Icon, caption } = ROUTINE_META[section.key];
 
   const totalMinutes = section.tasks.reduce((a, t) => a + t.estimatedMinutes, 0);
@@ -63,13 +71,17 @@ export default function RoutineSectionCard({
     setDraft("");
   }
 
-  function startEdit(taskId: string, title: string, minutes: number) {
+  function startEdit(taskId: string, title: string, minutes: number, weekdays?: number[]) {
     setEditingId(taskId);
     setEditTitle(title);
     setEditMinutes(String(minutes));
+    // Absent means every day, so the picker opens with all seven lit rather
+    // than empty — an empty picker would read as "runs on no days".
+    setEditDays(weekdays?.length ? weekdays : ALL_DAYS);
   }
 
   function commitEdit(taskId: string) {
+    onSetWeekdays(section.key, taskId, editDays);
     const minutes = Number(editMinutes);
     onEditTask(section.key, taskId, {
       title: editTitle,
@@ -178,7 +190,7 @@ export default function RoutineSectionCard({
                 */
                 <li
                   key={t.id}
-                  className="flex items-center gap-2 pl-2 py-2 rounded-badge bg-base-700/40 border border-base-600"
+                  className="flex flex-wrap items-center gap-2 pl-2 py-2 rounded-badge bg-base-700/40 border border-base-600"
                 >
                   <input
                     autoFocus
@@ -225,6 +237,43 @@ export default function RoutineSectionCard({
                     }}
                     label={`Delete "${t.title}"`}
                   />
+                  {/*
+                    Which days this step runs on. Below the row rather than in
+                    it: the row already carries a title, a minute box and three
+                    buttons, and seven more targets alongside them leaves no
+                    room for the title on a 390px phone.
+
+                    Only for repeating steps — a one-off happens once, on
+                    whichever day you get to it, so weekdays would be a control
+                    that changes nothing.
+                  */}
+                  {t.repeatDaily && (
+                    <div className="w-full flex items-center gap-1 pt-2 mt-1 border-t border-base-600">
+                      <span className="text-[10px] text-ink-700 mr-1 shrink-0">Days</span>
+                      {ALL_DAYS.map((day, i) => {
+                        const on = editDays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            onClick={() =>
+                              setEditDays((prev) =>
+                                prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+                              )
+                            }
+                            aria-pressed={on}
+                            aria-label={`${DAY_INITIALS[i]} — ${on ? "on" : "off"}`}
+                            className={`w-8 h-8 shrink-0 rounded-badge border text-[11px] font-mono transition-colors ${
+                              on
+                                ? "border-rank/50 bg-rank/15 text-rank"
+                                : "border-base-600 text-ink-700 hover:text-ink-500"
+                            }`}
+                          >
+                            {DAY_INITIALS[i]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </li>
               ) : (
               <li
@@ -266,6 +315,19 @@ export default function RoutineSectionCard({
                   `routine.completions`, while a one-off carries its own `done`
                   and stays done on every date once ticked. Hence the titles.
                 */}
+                {/*
+                  Only shown when the step is restricted, because every step
+                  without this field runs every day and a chip on all fourteen
+                  would be noise rather than information.
+                */}
+                {t.repeatDaily && t.weekdays?.length ? (
+                  <span
+                    className="shrink-0 font-mono text-[10px] text-rank/80"
+                    title={`Only on ${t.weekdays.map((d) => DAY_INITIALS[d - 1]).join(", ")}`}
+                  >
+                    {t.weekdays.map((d) => DAY_INITIALS[d - 1]).join("")}
+                  </span>
+                ) : null}
                 <button
                   onClick={() => onToggleRepeat(section.key, t.id)}
                   aria-pressed={t.repeatDaily}
@@ -277,7 +339,7 @@ export default function RoutineSectionCard({
                   <Repeat size={14} />
                 </button>
                 <button
-                  onClick={() => startEdit(t.id, t.title, t.estimatedMinutes)}
+                  onClick={() => startEdit(t.id, t.title, t.estimatedMinutes, t.weekdays)}
                   aria-label={`Edit "${t.title}"`}
                   title="Edit"
                   className="shrink-0 w-11 h-11 flex items-center justify-center text-ink-700 hover:text-ink-300 transition-colors"

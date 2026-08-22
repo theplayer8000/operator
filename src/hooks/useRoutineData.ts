@@ -1,6 +1,6 @@
 import { useRemoteStorage } from "./useRemoteStorage";
 import { generateId } from "@/lib/id";
-import { parseHHMM, toDateKey } from "@/lib/time";
+import { isoWeekday, parseHHMM, toDateKey } from "@/lib/time";
 import { seedRoutineSections } from "@/lib/seed";
 import type {
   RoutineCompletions,
@@ -48,10 +48,59 @@ export function useRoutineData() {
 
   const todayKey = toDateKey(new Date());
 
+  /**
+   * Whether a step happens on a given date at all.
+   *
+   * Separate from `isDoneOn`, and the distinction matters: this is "is it on
+   * the list today", that is "has it been ticked". A step that does not run on
+   * a date is absent from the day rather than an unticked item on it —
+   * otherwise a Sunday reads as 3/14 done when eleven of those steps were
+   * never part of Sunday.
+   *
+   * Absent `weekdays` means every day, which is what every step meant before
+   * the field existed. A one-off step always "runs": it is waiting to be done
+   * on whichever day you get to it.
+   */
+  function runsOn(dateKey: string, task: RoutineTask): boolean {
+    if (!task.repeatDaily) return true;
+    if (!task.weekdays?.length) return true;
+    const weekday = isoWeekday(dateKey);
+    return weekday !== null && task.weekdays.includes(weekday);
+  }
+
   /** Whether a step counts as done on a given date. */
   function isDoneOn(dateKey: string, task: RoutineTask): boolean {
     if (!task.repeatDaily) return task.done;
     return (completions[dateKey] ?? []).includes(task.id);
+  }
+
+  /**
+   * Set which days a repeating step runs on. An empty array means every day —
+   * stored as an absent key rather than `[]`, so "every day" has one
+   * representation instead of two that read differently.
+   */
+  function setTaskWeekdays(sectionKey: RoutineSectionKey, taskId: string, weekdays: number[]) {
+    const clean = [...new Set(weekdays.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))].sort();
+    setSections((prev) =>
+      prev.map((s) =>
+        s.key !== sectionKey
+          ? s
+          : {
+              ...s,
+              tasks: s.tasks.map((t) => {
+                if (t.id !== taskId) return t;
+                if (clean.length === 0 || clean.length === 7) {
+                  // Every day: drop the key. An explicit undefined in a spread
+                  // overwrites rather than omits — the OPS-002 trap — so the
+                  // rest is rebuilt without it.
+                  const { weekdays: _dropped, ...rest } = t;
+                  return rest;
+                }
+                return { ...t, weekdays: clean };
+              }),
+            }
+      )
+    );
   }
 
   /**
@@ -183,7 +232,9 @@ export function useRoutineData() {
    * "today" because today was the only day that existed.
    */
   function statsFor(dateKey: string) {
-    const all = sections.flatMap((s) => s.tasks);
+    // Only what runs that day. A Sunday showing 3/14 when eleven of those
+    // steps never happen on Sundays is a worse number than no number.
+    const all = sections.flatMap((s) => s.tasks).filter((t) => runsOn(dateKey, t));
     const done = all.filter((t) => isDoneOn(dateKey, t));
     const totalTasks = all.length;
     return {
@@ -212,6 +263,11 @@ export function useRoutineData() {
       // steps back. This is also how you retire a block you don't use: empty
       // it. The seven sections are fixed by the type and can't be deleted, so
       // emptying is the only "remove" available.
+      // A section whose steps all fall on other weekdays is not part of this
+      // day — and its duration must not be either, or the schedule reserves an
+      // hour for work that isn't happening and every later block reads as
+      // overlapping.
+      .map((s) => ({ ...s, tasks: s.tasks.filter((t) => runsOn(dateKey, t)) }))
       .filter((s) => s.tasks.length > 0)
       .map((s) => {
         const start = parseHHMM(s.startTime ?? "") ?? FALLBACK_START;
@@ -245,6 +301,8 @@ export function useRoutineData() {
     completions,
     todayKey,
     isDoneOn,
+    runsOn,
+    setTaskWeekdays,
     scheduleFor,
     statsFor,
     setStartTime,

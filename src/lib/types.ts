@@ -172,6 +172,27 @@ export interface RoutineTask {
   done: boolean;
   estimatedMinutes: number;
   repeatDaily: boolean;
+  /**
+   * Which ISO weekdays this step runs on: 1 = Monday … 7 = Sunday.
+   *
+   * **Absent means every day**, which is what every step meant before this
+   * field existed — so it is additive and no stored routine needs migrating.
+   * Only meaningful when `repeatDaily` is true; a one-off step happens once,
+   * on no particular weekday.
+   *
+   * Why it exists: routine steps were identical on every date while the
+   * calendar was not, so "work at Darams" appeared on days off, on holidays,
+   * forever. The Day Schedule's own copy admitted it — *"your routine steps
+   * are the same every day; what changes is the calendar"* — and admitting it
+   * did not stop it being wrong on the day.
+   *
+   * **A tick already recorded is never re-evaluated against this.**
+   * `routine.completions` is keyed by date, so narrowing a step's days changes
+   * what happens next, not what happened. A step ticked on a Sunday that no
+   * longer runs on Sundays stays ticked on that Sunday — the alternative is
+   * rewriting history to match a rule invented afterwards.
+   */
+  weekdays?: number[];
 }
 
 /**
