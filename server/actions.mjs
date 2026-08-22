@@ -976,6 +976,87 @@ async function routineDay({ date }) {
   };
 }
 
+// --- jobs -------------------------------------------------------------------
+//
+// Reading a job's own transcript, added 2026-08-22 after recovering one took
+// roughly fifteen raw shell calls — the wrong `node` on PATH twice, the wrong
+// checkout once, and three directories searched before the one that had it.
+// Every other job-adjacent read goes through a pre-approved action; this was
+// the one path that still cost a round of permission taps and guesswork.
+//
+// The case it exists for is specific and recurring: a job stops mid-plan —
+// quota spent, a limit hit, a turn cancelled — and what it had already worked
+// out is sitting in an event log nobody can reach without a file hunt.
+
+/** Event types that carry the substance, when the caller wants the gist. */
+const SUBSTANTIVE = new Set(["prompt", "text", "permission_request", "routed"]);
+
+async function jobEvents({ id, since = 0, textOnly = false, limit = 200 }) {
+  required(id, "id");
+
+  // Imported lazily. `jobs.mjs` imports this file for the capability layer, so
+  // a top-level import here would be a cycle — and the one direction that
+  // matters (jobs owns the queue, actions owns the data) stays intact this way.
+  const jobs = await import("./jobs.mjs");
+  const detail = jobs.detail(String(id), Number(since) || 0);
+  if (!detail) {
+    throw new ActionError(
+      `no job "${id}". Note that event logs do not survive a server restart, even though the tab does.`
+    );
+  }
+
+  const cap = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+  let events = detail.events;
+  if (textOnly) events = events.filter((e) => SUBSTANTIVE.has(e.type));
+
+  // Newest kept when truncating: recovering a stalled job means wanting what it
+  // said last, not what it said first.
+  const truncated = events.length > cap;
+  if (truncated) events = events.slice(-cap);
+
+  return {
+    id: detail.id,
+    title: detail.title,
+    status: detail.status,
+    provider: detail.provider,
+    model: detail.model,
+    turns: detail.turns,
+    error: detail.error,
+    truncated,
+    latest: detail.latest,
+    events: events.map((e) => ({
+      seq: e.seq,
+      at: e.at,
+      type: e.type,
+      ...(e.text ? { text: e.text } : {}),
+      ...(e.tool ? { tool: e.tool } : {}),
+      ...(e.subject ? { subject: e.subject } : {}),
+      ...(e.status ? { status: e.status } : {}),
+      ...(e.why ? { why: e.why } : {}),
+    })),
+  };
+}
+
+async function jobsList() {
+  const jobs = await import("./jobs.mjs");
+  const { jobs: list, running } = jobs.list();
+  return {
+    running: running ?? null,
+    count: list.length,
+    jobs: list.map((j) => ({
+      id: j.id,
+      title: j.title,
+      status: j.status,
+      provider: j.provider,
+      model: j.model,
+      turns: j.turns,
+      asking: j.asking ?? 0,
+      error: j.error,
+      createdAt: j.createdAt,
+    })),
+  };
+}
+
 // --- registry ---------------------------------------------------------------
 
 /**
@@ -1017,6 +1098,19 @@ const ACTIONS = {
       "The Daily Routine for a date — every section, its steps, and which are done on that date.",
     params: "date? (YYYY-MM-DD or \"today\")",
     handler: routineDay,
+  },
+  jobs_list: {
+    description:
+      "Every Orchestrator conversation and its state — which is running, which is waiting on an answer, which failed and why.",
+    params: "(none)",
+    handler: jobsList,
+  },
+  job_events: {
+    description:
+      "Read a job's own transcript. Use this to recover what a stalled, failed or quota-exhausted job had already worked out, instead of hunting through files. Event logs do not survive a server restart.",
+    params:
+      "id (e.g. \"job-4\"), since? (sequence number, for just the new events), textOnly? (prompts and replies only, skipping tool noise), limit? (default 200, newest kept)",
+    handler: jobEvents,
   },
   gym_sessions_list: {
     description:
