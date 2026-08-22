@@ -141,7 +141,34 @@ export async function persist() {
   await mkdir(dirname(DATA_FILE), { recursive: true });
   const tmp = `${DATA_FILE}.tmp`;
   await writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
-  await rename(tmp, DATA_FILE);
+  await renameWithRetry(tmp, DATA_FILE);
+}
+
+/**
+ * The rename, retried — because on Windows it fails for reasons that pass.
+ *
+ * Observed 2026-08-22 mid-way through a 38-call batch rebuilding the gym
+ * programme: `EPERM` renaming `operator.json.tmp`. Windows refuses a rename
+ * while anything holds a handle on the target, and several things
+ * legitimately do — Operator's own hourly backup reading the store, the search
+ * indexer, antivirus. All of them let go within milliseconds.
+ *
+ * POSIX rename does not have this failure mode, which is why the original
+ * temp-file-and-rename (correct, and the reason a crash cannot truncate the
+ * store) needed nothing more on the machines it was written for.
+ */
+async function renameWithRetry(from, to, attempts = 5) {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const transient = err?.code === "EPERM" || err?.code === "EBUSY" || err?.code === "EACCES";
+      if (!transient || i === attempts - 1) throw err;
+      // 20ms, 40, 80, 160 — a lock this short outlives none of them.
+      await new Promise((r) => setTimeout(r, 20 * 2 ** i));
+    }
+  }
 }
 
 /** The one slice a reader wants, or undefined if nothing has been written yet. */
@@ -153,22 +180,38 @@ export async function readState(key) {
 /** Unconditional overwrite — what PUT /api/state/<key> has always done. */
 export async function setState(key, value) {
   const store = await load();
-  store.state[key] = value;
-  await persist();
-  return value;
+  return commit(store, key, store.state[key], value);
 }
 
-/** Whole-map merge — what PUT /api/state (import/migrate) has always done. */
+/**
+ * Whole-map merge — what PUT /api/state (import/migrate) has always done.
+ *
+ * Rolls back wholesale rather than per key: this is the import path, and a
+ * half-applied import is the one outcome worse than a failed one.
+ */
 export async function mergeState(patch) {
   const store = await load();
+  const previous = store.state;
   store.state = { ...store.state, ...patch };
-  await persist();
+  try {
+    await persist();
+  } catch (err) {
+    store.state = previous;
+    throw err;
+  }
 }
 
 export async function deleteState(key) {
   const store = await load();
+  const previous = store.state[key];
+  if (previous === undefined) return; // nothing to do, nothing to roll back
   delete store.state[key];
-  await persist();
+  try {
+    await persist();
+  } catch (err) {
+    store.state[key] = previous;
+    throw err;
+  }
 }
 
 /**
@@ -185,8 +228,39 @@ export async function deleteState(key) {
  */
 export async function withState(key, mutate) {
   const store = await load();
-  const next = mutate(store.state[key]);
+  const previous = store.state[key];
+  const next = mutate(previous);
+  return commit(store, key, previous, next);
+}
+
+/**
+ * Put the new value in memory only if it reached the disk.
+ *
+ * **A failed write used to leave the change applied anyway.** `store.state[key]`
+ * was assigned before `persist()`, so an error from the write threw *after* the
+ * mutation was live: the caller saw a failure, retried, and applied it twice.
+ * That is not theoretical — on 2026-08-22 a transient `EPERM` mid-batch did
+ * exactly this and put a duplicate exercise in the gym programme.
+ *
+ * The quieter half was worse. Memory and disk disagreed until the next
+ * successful write, so a restart in that window would have silently discarded
+ * a change the app had already confirmed on screen.
+ *
+ * Rolling back on failure makes the operation all-or-nothing from the caller's
+ * point of view: an error now means nothing happened, so a retry is safe.
+ */
+async function commit(store, key, previous, next) {
   store.state[key] = next;
-  await persist();
+  try {
+    await persist();
+  } catch (err) {
+    // Back to what is actually on disk. `undefined` means the key did not
+    // exist, and must be deleted rather than set — otherwise a failed first
+    // write leaves the slice present-but-undefined, which reads differently
+    // to absent everywhere downstream.
+    if (previous === undefined) delete store.state[key];
+    else store.state[key] = previous;
+    throw err;
+  }
   return next;
 }
