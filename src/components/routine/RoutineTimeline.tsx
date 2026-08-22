@@ -93,6 +93,7 @@ export default function RoutineTimeline({
   const [openKey, setOpenKey] = useState<RoutineSectionKey | null>(null);
 
   const isToday = dateKey === todayKey;
+  const isFuture = dateKey > todayKey; // "YYYY-MM-DD" sorts lexically as it does chronologically
   const selectedDate = fromDateKey(dateKey);
 
   const dayEvents = useMemo(
@@ -401,11 +402,32 @@ export default function RoutineTimeline({
         </p>
       )}
 
+      {/*
+        Past and future need different sentences, and the previous one tried to
+        serve both by splicing `relativeDay()` after "did on" — which produced
+        "what you actually did on in 2 days" and "did on 5 days ago". Wrong
+        grammatically, and wrong in substance for a future date: nothing has
+        been done on a day that has not happened.
+
+        The relative phrase is dropped from the past sentence rather than
+        repaired. The header above already says which day is being looked at,
+        so it was restating a date in the one construction that made it read
+        badly.
+      */}
       {!isToday && (
         <p className="text-[11px] text-ink-700 mt-3 pt-3 border-t border-base-600 leading-relaxed">
-          Ticks are kept per day, so this is what you actually did on{" "}
-          {relativeDay(dateKey).toLowerCase()} — not today's marks under another date. Your routine
-          steps are the same every day; what changes is the calendar.
+          {isFuture ? (
+            <>
+              Nothing is ticked ahead of time — this is the shape of the day, not a record of it.
+              Your routine steps are the same every day; what changes is the calendar.
+            </>
+          ) : (
+            <>
+              Ticks are kept per day, so this is what you actually did that day — not today's marks
+              under another date. Your routine steps are the same every day; what changes is the
+              calendar.
+            </>
+          )}
         </p>
       )}
 
