@@ -113,6 +113,55 @@ free, unmetered, and under the owner's control. That is the whole argument: a
 control plane that stops working when a subscription lapses is not a control
 plane.
 
+### It is the only worker that stays running
+
+Stated 2026-08-23: **the local model is the one process that is always up.**
+Everything else sleeps until there is work — today that is literally true, and
+visibly so: no job running, terminal disarmed, nothing consuming anything.
+
+That is the right shape. Cloud workers are expensive, rate-limited and remote;
+they should be woken for a task and then stop. A local model costs nothing to
+leave running, so it can be the thing that is *there* — holding context,
+noticing, deciding what to delegate. It is the difference between an app that
+answers when opened and one that is running the place.
+
+### It arming the terminal is a real change, not a permission tweak
+
+The intent is that the local model may **arm the terminal itself** to delegate
+work to other workers. That is coherent — a brain that must wait for a human to
+flip a switch before it can delegate is not orchestrating — but it changes
+something [ADR 0011](decisions/0011-remote-terminal-for-authorised-devices.md)
+deliberately built, and it should change it knowingly.
+
+**Today, arming is a human act.** The terminal starts disarmed on every boot,
+and only a device named in `OPERATOR_TERMINAL_DEVICES` can switch it on. That
+default is not about restricting *what* runs — the deny list was never
+containment, and the ADR says so plainly — it is about there being a moment
+where a person decides execution is allowed *now*.
+
+**A model that can arm removes that moment.** Not the authentication, which
+stays: only the local model, running on the owner's own machine, would be able
+to. But "disarmed by default" stops meaning "off until asked for" and starts
+meaning "on whenever the brain judges it useful", which is a different
+property, and the one the disarmed default exists to provide.
+
+Ways to keep the intent without losing it entirely, in rough order of cost:
+
+- **Arm for the job, not for the session.** The model arms, delegates, and the
+  terminal disarms when that job ends. Execution stays scoped to a task rather
+  than to an uptime, and the window is bounded by something other than someone
+  remembering.
+- **Arm for capability actions, not for the shell.** Most delegation is data
+  work, and `server/actions.mjs` already covers that without a terminal at all.
+  Reserve arming for genuine shell work, which is rarer than it looks.
+- **Say so, visibly.** If the model armed it, the Dev page should show that it
+  did, and why. The current UI says *"Armed · tosin-pc"*; it would need to be
+  able to say *"Armed by the orchestrator, for job-12"*.
+
+None of that is a blocker. It is the difference between a considered change to
+ADR 0011 and a quiet erosion of it, and `threat-model.md` — already flagged for
+rewrite — is where the new position has to be written down.
+
 ### Its first job is the router, not planning
 
 Full planning and delegation on a small local model is a genuine research

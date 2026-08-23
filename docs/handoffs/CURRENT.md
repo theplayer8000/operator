@@ -1,67 +1,63 @@
 # CURRENT — work in progress
 
-**Updated:** 2026-08-21
-**`main`:** `e890324` plus **one uncommitted change**: `server/homelab.mjs`.
+**Updated:** 2026-08-23
+**`main`:** `aeab688`, clean and pushed. Nothing uncommitted.
+**Workers:** all asleep — no job running, terminal disarmed.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 
-> The previous contents of this file described work that had shipped and been
-> restarted live. It has been folded into
-> [`2026-08-20-orchestrator-and-capability-reads.md`](2026-08-20-orchestrator-and-capability-reads.md)
-> rather than deleted, per the rule in `CLAUDE.md`.
+> Nothing is in flight. The work of 20–22 August is folded into
+> [`2026-08-22-gemini-routing-and-capability-writes.md`](2026-08-22-gemini-routing-and-capability-writes.md)
+> — read that for what shipped, and for the silent defects worth not
+> rediscovering. The gym-programme rebuild and the `job_events` gap that the
+> previous version of this file described are both in there; the gap is now
+> built.
 
-## What changed
+## The one thing outstanding
 
-**The Homelab probe now asks the service, not whoever holds the port.**
+**A restart is pending.** `server/` changed after the last one, for three
+things: workers no longer inherit Operator's API keys (`aeab688`), the
+`job_events` / `jobs_list` actions (`38e7646`), and the terminal explaining cmd
+builtins rather than suggesting an environment variable that could never work
+(`3a71125`). The frontend half is already built into `dist/`, so a reload
+covers anything visual.
 
-`server/homelab.mjs` did a TCP connect and nothing else. That reported the
-Darams CRM tile as **online while the site had been down for days**: its tile
-points at `tosin-pc.tail07eb22.ts.net:7443`, and port 7443 belongs to
-`tailscaled`, which accepts the connection and proxies to a backend that had
-exited. Every real request returned `502`; the probe saw a clean handshake and
-drew a green dot. A tile that is green while the app is dead is worse than no
-tile, because it gets consulted and believed.
+Restarting properly needs both steps. Ending the task alone leaves the old
+process holding the port, and the relaunch then fails to bind while everything
+looks restarted — `LastTaskResult` of `1` is the tell:
 
-Now: any service whose `protocol` is `http`/`https` gets a real GET on its
-`path`, and the status code decides. Anything else — a database, a bare port —
-still gets the TCP connect, which remains the honest test for something that
-does not speak HTTP.
+```powershell
+schtasks /end /tn OperatorServe
+Get-NetTCPConnection -LocalPort 5174 -State Listen |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+schtasks /run /tn OperatorServe
+```
 
-- **Up** is any status under 500. A `302` to a login page and a `401` both mean
-  the app is there and answering; demanding `200` would report every
-  authenticated service as down.
-- **Down** is 5xx, or a connection / TLS / timeout failure. `502` — the exact
-  case that started this — now reads red.
-- `redirect: "manual"`, so a redirect counts as an answer rather than costing a
-  second round trip. HTTP gets a 4s timeout against TCP's 1.5s.
-- The result shape gains `status` (the HTTP code, or `null`). Additive; the
-  frontend reads `online` and is unaffected.
-- The cache key now includes protocol and path, so switching a tile from a TCP
-  check to an HTTP one cannot keep serving the previous meaning of "online" for
-  another five seconds.
+The terminal comes back **disarmed** on every start, by design (ADR 0011).
 
-## Verified
+## Small, and the owner's to do
 
-- `"C:\Program Files\nodejs\node.exe" --check server/homelab.mjs` — clean.
-  (The `node` on PATH is the shadowed one that verifies nothing; see
-  `CLAUDE.md`.)
-- Live probe against the real tiles: CRM `302` → online, Operator API `200` →
-  online, a dead port → offline.
-- A throwaway server returning `502` → `{"online": false, "status": 502}`.
-  That is the original bug reproduced and caught.
+`.job4.json` is dead weight in the agent worktree. Deleting is denied to every
+Claude session by the standing profile, so:
 
-## Not done
+```
+cmd /c del "D:\Projects\Operator-agent\.job4.json"
+```
 
-- **Restart required and not yet performed** — `server/` is loaded into memory
-  at boot, so the live tile is still doing the old TCP check until it is.
-- Not committed. One file: `server/homelab.mjs`. Stage it by name.
-- The frontend does not surface the new `status` field. It could — `502` under
-  a red dot would say *why* — but that is a change to
-  `src/components/homelab/ServiceTile.tsx` that nobody has asked for.
+That form works from Operator's own terminal as of `3a71125` — `del` is a cmd
+builtin rather than a program, and the old error suggested setting
+`OPERATOR_TERMINAL_BIN_DEL`, which could never have worked.
 
-## Context, if this is picked up cold
+## What is next, and it is a choice
 
-This came out of a session working mainly in `D:/Projects/Operator/Darams-CRM`
-— a separate application that Operator only links to. That CRM had been down
-for days; the tile said otherwise. This is the Operator half of that fix. The
-CRM half — a supervised service that restarts itself, and an hourly backup —
-lives in that repository with its own handoff.
+Not started, and worth deciding rather than drifting into:
+
+- **The control plane** — [`control-plane-design.md`](../control-plane-design.md),
+  designed and approved. Local routing first, then the gateway seam. Needs
+  Ollama, so it needs a homelab box.
+- **The Knowledge Vault** — several queued items are quietly waiting on it: the
+  routine restructure, streaks, and the owner's own organisation. He has said
+  the vault is where that gets sorted, and that he has no patience for sorting
+  it by hand first.
+
+Both are large. Neither should start without the other being consciously
+deferred.
