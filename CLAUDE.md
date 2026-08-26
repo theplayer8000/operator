@@ -303,6 +303,18 @@ server/
   status.mjs            — Claude service status. Was the ONLY outbound call;
                           gemini.mjs is the second. See the approvals table —
                           that list is the whole set, and a third needs asking
+  render.mjs            — HTML or SVG to a PNG, so a worker can LOOK at what it
+                          built instead of asking whether it looks right. Headless
+                          Edge, no npm package. PDFs and images need nothing —
+                          Read already shows them. Local files and loopback only:
+                          rendering an arbitrary URL is an outbound call
+  apps.mjs              — restart an app Operator hosts and wait until it answers.
+                          Named apps with fixed commands, so a caller picks WHICH
+                          app and never what runs. **The registry is OPERATOR_APPS,
+                          environment-only** — a worker has Write everywhere, so a
+                          registry on disk is one the agent can extend, the same
+                          reason OPERATOR_TERMINAL_DEVICES is env-only. Confirms
+                          the app really stopped before starting it
 scripts/
   dev.mjs               — starts the API and Vite together
   log-update.mjs        — append one entry to the Updates changelog. No deps.
@@ -311,6 +323,9 @@ scripts/
                           AI worker changes DATA instead of editing code. A CLI
                           rather than an SDK tool on purpose: every worker calls
                           it identically, which is the point of the layer
+  render.mjs            — render one file and print the PNG's path, for Reading
+  app.mjs               — list / status / restart a hosted app (server/apps.mjs).
+                          list and status are pre-allowed; restart asks first
   backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
                           never calls the API, so `npm run backup` works when
                           everything is down. index.mjs imports runBackup() and runs

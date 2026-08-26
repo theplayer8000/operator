@@ -46,6 +46,29 @@ isolated `--user-data-dir` prevents that. And the process Node spawns is a
 launcher that exits *before* the image is written, so checking on exit reported
 a render that had worked as a failure. Only a stable file on disk is evidence.
 
+## Also in flight — restart a hosted app, and wait for it
+
+**Item 2**, built after the owner chose how it should be gated (2026-08-26):
+named apps in the environment, rather than behind the terminal's armed gate.
+
+- `server/apps.mjs` — **new.** `OPERATOR_APPS` maps a name to its stop, start,
+  health URL and log. A caller says *which app*; there is no input that becomes
+  *what command*. Environment-only on purpose — a worker has `Write` across the
+  tree, so a registry on disk is one the agent could extend, exactly the reason
+  `OPERATOR_TERMINAL_DEVICES` is env-only.
+- `scripts/app.mjs` — **new.** `list`, `status`, `restart`.
+- `server/jobs.mjs` — `list` and `status` pre-allowed; **`restart` deliberately
+  is not.** Taking down something someone may be using is worth one tap on the
+  phone, which ADR 0012 made cheap. Widen to `Bash(node scripts/app.mjs:*)` if
+  it becomes friction.
+
+It confirms the app *actually stopped* before starting it, which is the lesson
+from Operator's own restart: `schtasks /end` returns success while the process
+keeps holding the port, so the relaunch fails to bind and the old build carries
+on serving. Tested against a service that would not stop — it refused to start
+on top of it and exited non-zero, rather than reporting a restart it had not
+performed.
+
 ## A restart is pending — `server/` changed
 
 `jobs.mjs` is loaded at boot, so the new pre-allow entry and prompt do not exist
@@ -79,19 +102,12 @@ screenshot is persuasive in a way a wrong conclusion should not get to borrow.
 
 ## Waiting on the owner
 
-- **Items 2, 4 and 5 of the dev-tooling request.** Item 3 turned out to be
-  **already built** — `3f40249` upgraded the Homelab probe from a TCP connect to
-  a real HTTP request back on 2026-08-21, for the same incident the request
-  describes. Verified live: Darams CRM answers 302 in 185ms. Annotated on the
-  request itself so nobody builds it a second time.
-
-  **Item 2 — restart a child app and wait for it — is the one genuinely
-  missing thing, and it needs a decision rather than a build.** Operator can
-  restart *itself* (`POST /api/restart`); doing it for another app means
-  Operator running that app's start and stop commands, which is execution and
-  belongs under ADR 0011's armed-device gate, not beside it. It would compose
-  neatly with the probe above — restart, then poll the HTTP check until it
-  answers — but the boundary question comes first.
+- **`OPERATOR_APPS` is not set yet**, so `scripts/app.mjs` has nothing to act
+  on. Set it at the desk — **never through Operator's terminal**, which logs
+  every command, and never in a file, which a worker could edit. Format is in
+  the header of `server/apps.mjs`. Darams CRM is the obvious first entry.
+- **Items 4 and 5 of the dev-tooling request** are CRM-side scaffolding
+  (migration generator, test runner) that Operator has no particular claim on.
 - **Stray files in the agent worktree**, which deletes are denied on:
 
   ```

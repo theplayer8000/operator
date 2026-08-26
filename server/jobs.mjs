@@ -408,6 +408,23 @@ const ALLOWED_TOOLS = (
       external host, and reads nothing the worker could not already Read.
     */
     "Bash(node scripts/render.mjs:*)",
+    /*
+      Hosted apps (server/apps.mjs). Reading is pre-allowed; **restarting is
+      deliberately not**, and the omission is the design rather than an
+      oversight.
+
+      The registry already makes this a named capability — a worker can say
+      which app, never what command — so the question is only whether taking a
+      running app down should happen without the owner noticing. One tap on the
+      phone is a far lighter gate than arming the terminal, and it is exactly
+      what ADR 0012 made cheap: the turn suspends and carries on with the
+      answer. Ordinary work stays silent; disrupting something someone may be
+      using asks once.
+
+      Widen it to `Bash(node scripts/app.mjs:*)` if that ever becomes friction.
+    */
+    "Bash(node scripts/app.mjs list:*)",
+    "Bash(node scripts/app.mjs status:*)",
     // Git, minus the one that publishes — which the deny list stops outright.
     "Bash(git status:*)",
     "Bash(git diff:*)",
@@ -539,6 +556,11 @@ const APPEND_PROMPT = [
   "and Read the PNG it prints. Only the viewport is captured, so make the",
   "height tall enough. Check your own visual work this way instead of asking",
   "the owner whether it came out right.",
+  "To restart an app Operator hosts, use `node scripts/app.mjs restart <name>`",
+  "(`list` shows them) rather than running its stop and start commands yourself —",
+  "it confirms the app actually stopped before starting it, waits until it answers,",
+  "and shows the log tail if it does not. Restarting asks the owner first; listing",
+  "and checking status do not.",
 ].join(" ");
 
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
