@@ -108,6 +108,26 @@ screenshot is persuasive in a way a wrong conclusion should not get to borrow.
   the header of `server/apps.mjs`. Darams CRM is the obvious first entry.
 - **Items 4 and 5 of the dev-tooling request** are CRM-side scaffolding
   (migration generator, test runner) that Operator has no particular claim on.
+
+## Saved for tomorrow, not started
+
+[`docs/devices-and-harness-notes.md`](../devices-and-harness-notes.md) — written
+late on 2026-08-26 at the owner's request, because he was too tired to process
+it and did not want it re-derived. Two threads, deliberately separated:
+
+- **Operator is already an agentic harness.** The gaps are specific and ranked —
+  verification, planning, repair loops, context strategy, evals. **Verification
+  first**, because fanning out workers before their output can be checked
+  multiplies unverified work.
+- **"Connect any device to Operator and have it work seamlessly."** His stated
+  direction. A camera is the first instance, wanted both on the box and in the
+  browser. A camera is a new *input*, not a better loop — it does nothing for
+  the five gaps, and the two should not be confused.
+
+Three matching entries are in the Updates queue so they surface on his phone.
+The open questions are at the foot of that document; the first is whether a
+camera frame is ever allowed to leave the machine, which decides whether the
+camera work waits on the Ollama box.
 - **Stray files in the agent worktree**, which deletes are denied on:
 
   ```
