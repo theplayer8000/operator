@@ -34,6 +34,22 @@ function describe(userAgent) {
   if (/\bcurl\//i.test(userAgent)) return "curl";
   if (/node|undici/i.test(userAgent)) return "Node";
 
+  /*
+    Operator's own probes, caught before anything else reads this string.
+
+    **"Operator" contains "Opera".** The browser test below is case-insensitive,
+    so `operator-homelab-probe` and `operator-app-probe` both matched it and the
+    client monitor reported the server talking to itself as a browser on the
+    network — two entries for machines that do not exist.
+
+    Cosmetic right up until you remember what this card is for: it is where you
+    look to spot a client you do not recognise. A panel that invents browsers is
+    the same class of thing as a green tile over a dead app.
+  */
+  const probe = /^operator-([a-z0-9-]+?)-probe$/i.exec(userAgent);
+  if (probe) return `Operator · ${probe[1]} probe`;
+  if (/^operator-/i.test(userAgent)) return "Operator · internal";
+
   // iOS fetches icons and the manifest through its own agents, outside any
   // browser. They were being labelled "Desktop · Browser", which is the least
   // useful thing they could have been called.
@@ -62,7 +78,9 @@ function describe(userAgent) {
   let browser = "Browser";
   // Order matters: Edge and Chrome both claim Safari, Chrome claims Safari.
   if (/Edg\//i.test(userAgent)) browser = "Edge";
-  else if (/OPR\/|Opera/i.test(userAgent)) browser = "Opera";
+  // Both forms need the slash. A bare /Opera/i matches any string containing
+  // those five letters — see the probe note above for what that cost.
+  else if (/OPR\/|Opera\//i.test(userAgent)) browser = "Opera";
   else if (/Firefox\//i.test(userAgent)) browser = "Firefox";
   else if (/CriOS\//i.test(userAgent)) browser = "Chrome";
   else if (/Chrome\//i.test(userAgent)) browser = "Chrome";
