@@ -399,6 +399,15 @@ const ALLOWED_TOOLS = (
       PUT /api/state) is the one that stays gated.
     */
     "Bash(node scripts/operator-action.mjs:*)",
+    /*
+      Rendering a page to a PNG so the model can look at what it built
+      (server/render.mjs). Pre-allowed because the alternative is asking a
+      person "does this look right?", which is the round trip the whole thing
+      exists to remove — a permission prompt per look would leave that cost
+      exactly where it was. It writes only into data/renders/, reaches no
+      external host, and reads nothing the worker could not already Read.
+    */
+    "Bash(node scripts/render.mjs:*)",
     // Git, minus the one that publishes — which the deny list stops outright.
     "Bash(git status:*)",
     "Bash(git diff:*)",
@@ -518,6 +527,18 @@ const APPEND_PROMPT = [
   "These are pre-approved, validated, and do exactly what the app's own UI does.",
   "Only edit source when the request is genuinely about changing how Operator",
   "*works*, rather than what it currently holds.",
+  /*
+    Said out loud because a capability nobody mentions does not get used. A
+    session spent three round trips asking the owner whether a generated PDF
+    looked right, while its own Read tool could have shown it the pages.
+  */
+  "LOOK AT WHAT YOU PRODUCE. You can see images and PDFs by Reading them —",
+  "Read takes a `pages` range for a PDF. For HTML and SVG, which have no",
+  "picture until something lays them out, run",
+  "`node scripts/render.mjs <file-or-localhost-url> --width W --height H`",
+  "and Read the PNG it prints. Only the viewport is captured, so make the",
+  "height tall enough. Check your own visual work this way instead of asking",
+  "the owner whether it came out right.",
 ].join(" ");
 
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
