@@ -4,6 +4,12 @@ import { Radio, RefreshCw } from "lucide-react";
 interface ClientRow {
   ip: string;
   label: string;
+  /** What the tailnet calls it. Null until something under /api/ authenticates. */
+  device: string | null;
+  /** "tailscale" | "local" | "token" | null */
+  method: string | null;
+  user: string | null;
+  refusals: number;
   userAgent: string;
   requests: number;
   lastPath: string;
@@ -11,6 +17,21 @@ interface ClientRow {
   lastSeen: string;
   secondsAgo: number;
   active: boolean;
+}
+
+/**
+ * How it got in, not what it is.
+ *
+ * `token` is the one worth catching the eye: a bearer token is not a device,
+ * carries no name, and works from anywhere. The other two are a machine the
+ * tailnet vouched for, or something already on this box.
+ */
+function methodChip(method: string | null): { text: string; className: string } | null {
+  if (!method) return null;
+  if (method === "token") {
+    return { text: "token", className: "text-xp border-xp/40 bg-xp/10" };
+  }
+  return { text: method, className: "text-ink-500 border-base-600 bg-base-700/40" };
 }
 
 function ago(seconds: number): string {
@@ -109,11 +130,42 @@ export default function ConnectedClients() {
                   }`}
                   aria-hidden
                 />
-                <span className="text-sm text-ink-100 truncate">{row.label}</span>
+                {/* The name the tailnet knows it by, when there is one — that is
+                    the thing you scan this list for. Falls back to what the
+                    user-agent says, which is all a static-asset-only client
+                    ever offers. */}
+                <span className="text-sm text-ink-100 truncate">{row.device ?? row.label}</span>
                 <span className="font-mono text-[11px] text-ink-500 ml-auto shrink-0">
                   {ago(row.secondsAgo)}
                 </span>
               </div>
+              {/* Only worth a second line when it says something the title did
+                  not. With no device name the title already IS the label, and
+                  repeating it just prints every row twice. */}
+              {(() => {
+                const chip = methodChip(row.method);
+                const showLabel = Boolean(row.device) && row.device !== row.label;
+                if (!showLabel && !chip && row.refusals === 0) return null;
+                return (
+                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                    {showLabel && (
+                      <span className="text-[11px] text-ink-500 truncate">{row.label}</span>
+                    )}
+                    {chip && (
+                      <span
+                        className={`font-mono text-[10px] px-1.5 py-0.5 rounded-badge border shrink-0 ${chip.className}`}
+                      >
+                        {chip.text}
+                      </span>
+                    )}
+                    {row.refusals > 0 && (
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-badge border border-vital-down/40 bg-vital-down/10 text-vital-down shrink-0">
+                        {row.refusals} refused
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               <p className="font-mono text-[11px] text-ink-500 break-all">
                 {row.ip} · {row.requests} {row.requests === 1 ? "request" : "requests"}
               </p>
@@ -128,6 +180,16 @@ export default function ConnectedClients() {
       <p className="text-[11px] text-ink-700 mt-3 pt-3 border-t border-base-600 leading-relaxed">
         Held in memory only and cleared when the server restarts — it's a live diagnostic, not
         history. Nothing about your devices is written to the store.
+      </p>
+      {/* Said plainly because this card looks like an intrusion detector and is
+          not one. A device on the tailnet that never opens Operator makes no
+          request, so it leaves no row — and reading an empty list as "nobody is
+          there" is the one wrong conclusion available here. */}
+      <p className="text-[11px] text-ink-700 mt-2 leading-relaxed">
+        It shows what <span className="text-ink-500">reached the API</span>, not who is on the
+        tailnet — a device that never opens Operator never appears. For that, check Tailscale
+        itself. <span className="text-ink-500">token</span> means a bearer token rather than a
+        named device, which works from anywhere.
       </p>
     </section>
   );

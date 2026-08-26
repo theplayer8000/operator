@@ -114,6 +114,10 @@ export function recordRequest(req) {
       ip,
       userAgent,
       label: describe(userAgent),
+      device: null,
+      method: null,
+      user: null,
+      refusals: 0,
       firstSeen: now,
       lastSeen: now,
       requests: 1,
@@ -132,6 +136,38 @@ export function recordRequest(req) {
   }
 }
 
+/**
+ * Attach what the auth gate worked out, once it has worked it out.
+ *
+ * `recordRequest` runs before the gate — deliberately, so static assets and
+ * *refused* attempts are both counted — which means the identity is not known
+ * yet at that point. This is the second half, called once `identify()` has
+ * answered.
+ *
+ * **A refusal does not overwrite a good identity.** A device that is normally
+ * yours and gets one request denied is still that device; relabelling the whole
+ * row "refused" would lose the name at the exact moment you want it. So the
+ * last successful identity is kept and refusals are counted alongside — a row
+ * showing a name *and* a refusal count is a different story from one showing
+ * refusals and nothing else, and the two should not be flattened.
+ *
+ * Nothing here is persisted, same as the rest of this file.
+ */
+export function noteIdentity(req, identity) {
+  const ip = resolveClientAddress(req) || "unknown";
+  const userAgent = req.headers["user-agent"] ?? "";
+  const client = clients.get(`${ip}|${userAgent}`);
+  if (!client) return;
+
+  if (identity?.ok) {
+    client.device = identity.device ?? null;
+    client.method = identity.method ?? null;
+    client.user = identity.user ?? null;
+  } else {
+    client.refusals += 1;
+  }
+}
+
 export function listClients() {
   const now = Date.now();
   return {
@@ -141,6 +177,13 @@ export function listClients() {
       .map((c) => ({
         ip: c.ip,
         label: c.label,
+        // What the tailnet calls it, if anything does. Null is meaningful: it
+        // means nothing under /api/ has been authenticated from here, which is
+        // what a static-asset-only client looks like.
+        device: c.device,
+        method: c.method,
+        user: c.user,
+        refusals: c.refusals,
         userAgent: c.userAgent,
         requests: c.requests,
         lastPath: c.lastPath,

@@ -26,7 +26,7 @@ import { gzip as gzipCb } from "node:zlib";
 import { promisify } from "node:util";
 import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
-import { recordRequest, listClients } from "./clients.mjs";
+import { recordRequest, noteIdentity, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
 import { identify, tokenConfigured } from "./auth.mjs";
 import {
@@ -186,6 +186,9 @@ const server = createServer(async (req, res) => {
     if (pathname.startsWith("/api/")) {
       const who = await identify(req);
       identity = who;
+      // The client monitor records the request before this point, because it
+      // must count refused attempts too. This is where it learns the name.
+      noteIdentity(req, who);
 
       if (pathname === "/api/auth/whoami") {
         return json(res, who.ok ? 200 : 401, {

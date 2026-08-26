@@ -69,6 +69,29 @@ on serving. Tested against a service that would not stop — it refused to start
 on top of it and exited non-zero, rather than reporting a restart it had not
 performed.
 
+## Also landed — the client monitor says who, not just where
+
+Prompted by the owner asking why one client showed 8,296 requests. It was his
+own PC with a tab open since Saturday, one request every 24 seconds — but
+answering it needed `tailscale status`, because the card only ever showed an IP.
+
+- `server/clients.mjs` — records the device name and auth method that
+  `auth.mjs` already resolves and used to throw away. Refusals are counted
+  **separately** so one denied request does not relabel a device you trust.
+- `server/index.mjs` — `noteIdentity()` after the auth gate. `recordRequest`
+  stays before it, so refused attempts are still counted.
+- `ConnectedClients.tsx` — device name is the row title, method is a chip, and
+  **`token` is styled to catch the eye** because a bearer token is not a device
+  and works from anywhere.
+
+The footer now says what the card *cannot* tell you: it shows what reached the
+API, not who is on the tailnet. A device that never opens Operator leaves no
+row, so an empty list is not evidence of an empty tailnet. It looks like an
+intrusion detector and is not one.
+
+Same commit fixed the labelling bug the screenshot exposed — **"Operator"
+contains "Opera"**, so every internal probe was drawn as a browser.
+
 ## A restart is pending — `server/` changed
 
 `jobs.mjs` is loaded at boot, so the new pre-allow entry and prompt do not exist
