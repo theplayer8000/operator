@@ -79,11 +79,19 @@ screenshot is persuasive in a way a wrong conclusion should not get to borrow.
 
 ## Waiting on the owner
 
-- **Items 2–5 of the dev-tooling request** are undecided. Item 3 — one honest
-  answer to *"is this app actually up?"* — is the strongest of them: it is pure
-  Node, needs no dependency, and fixes a failure that has already happened twice
-  in both directions (a green tile over a dead app, and a *Running* task with
-  nothing listening).
+- **Items 2, 4 and 5 of the dev-tooling request.** Item 3 turned out to be
+  **already built** — `3f40249` upgraded the Homelab probe from a TCP connect to
+  a real HTTP request back on 2026-08-21, for the same incident the request
+  describes. Verified live: Darams CRM answers 302 in 185ms. Annotated on the
+  request itself so nobody builds it a second time.
+
+  **Item 2 — restart a child app and wait for it — is the one genuinely
+  missing thing, and it needs a decision rather than a build.** Operator can
+  restart *itself* (`POST /api/restart`); doing it for another app means
+  Operator running that app's start and stop commands, which is execution and
+  belongs under ADR 0011's armed-device gate, not beside it. It would compose
+  neatly with the probe above — restart, then poll the HTTP check until it
+  answers — but the boundary question comes first.
 - **Stray files in the agent worktree**, which deletes are denied on:
 
   ```

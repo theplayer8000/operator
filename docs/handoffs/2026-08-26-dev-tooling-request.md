@@ -9,6 +9,29 @@
 > else's live handoff is the thing `CLAUDE.md` warns about with `git add -A`.
 > Fold what is worth keeping into a real plan; delete the rest.
 
+## Status, annotated from the Operator side — 2026-08-26
+
+**Item 1: BUILT** (`c5e9830`), but not as asked. PDFs and images needed nothing
+— the Agent SDK's `Read` takes a `pages` range for PDFs and shows images
+visually, and it is pre-allowed for every job. No `pypdfium2`, no Python. The
+real gap was HTML and SVG, now `server/render.mjs` + `scripts/render.mjs` via
+headless Edge, no dependency added. The model is also now *told* it can look at
+its own output, which is the half that actually failed here.
+
+**Item 3: ALREADY BUILT**, before this was written — `3f40249`, 2026-08-21,
+"probe the service, not whoever holds the port". It was prompted by the same
+green-tile-over-a-dead-CRM incident described below. Any tile with an http or
+https protocol gets a real request and the status code decides; anything under
+500 counts as up, so a 302 to a login page reads as healthy. Verified live on
+2026-08-26: Darams CRM answered 302 in 185ms. The two signals still missing are
+"is the process alive" and "when did it last restart" — which are also, by this
+document's own account, the two that lied.
+
+**Items 2, 4, 5: open.** Item 2 is the strongest of them and is genuinely
+absent; it also carries a decision, since restarting another app is execution
+and sits under ADR 0011 rather than being a free addition. Items 4 and 5 are
+CRM-side scaffolding that Operator has no particular claim on.
+
 ## Why this exists
 
 Darams CRM is the first app built *inside* Operator rather than being Operator.
