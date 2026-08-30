@@ -232,6 +232,42 @@ that; it will present as a permissions failure with no explanation.
   how a clap detector triggers on itself. Detection must pause while
   `speech.speaking` is true.
 
+#### What the clap should actually do — refined 2026-08-31
+
+His three: **pause whatever is playing, put Operator full screen, and be
+already listening before the view switches.** Each needs something different,
+and one of them cannot be done from a web page at all.
+
+**1. Capture starts at the clap, not after the switch.** The important one, and
+the cheapest. The microphone is already open — that is how the clap was heard —
+so the transcription buffer opens on the *second* clap and keeps whatever is
+said during the transition. Otherwise the interaction is clap, wait, then talk,
+which is worse than pressing a key. Nothing extra is needed for this beyond
+being deliberate about where the buffer starts.
+
+**2. Pausing other audio needs the server, not the browser.** A page cannot
+pause Spotify or a video in another app; there is no API for it and there should
+not be. Operator can, because it has a machine-side half — a keystroke of the
+media-pause virtual key from PowerShell.
+
+That means a **new named capability action** rather than something the frontend
+does, and it is worth naming as a small widening: it is the first action that
+touches the OS rather than Operator's own data or a registered app. Benign — a
+media key — but the rule in `CLAUDE.md` is that capabilities are named and
+fixed, so this is `media_pause` and it can do exactly that.
+
+**3. Full screen is the one that does not work as asked.** Browsers only grant
+`requestFullscreen()` from a genuine user gesture, and a clap is not one — the
+call would be rejected, silently, on the machine where it matters most.
+
+The good version is to stop needing it: the wall display is **already its own
+screen** (see `dashboard-graph-design.md`), opened full screen once and left
+there. So "full screen Operator" is answered by the display being a display,
+not by a fullscreen call at all — which is also how it ends up working when the
+screen is a TV on the wall rather than a window on the desk.
+
+Where Operator *is* just a window, F11 once still beats an API that will refuse.
+
 ### 4c. The device split, named
 
 His framing, and it is worth writing down because it settles several arguments
