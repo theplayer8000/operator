@@ -124,6 +124,28 @@ async function whois(ip) {
   }
 
   let value = null;
+  /*
+    Whether the daemon actually answered — which is NOT the same as whether the
+    answer was yes, and conflating them locked the owner out of his own app.
+
+    Measured 2026-08-30: 57 refusals of `tosin-pc`, a device sitting in
+    `tailscale status`, all reading "not a known peer of this tailnet". The
+    cause was here. Every failure — a genuine "unknown peer", a 3s timeout, a
+    busy daemon — was caught alike and cached alike, so ONE slow lookup was
+    remembered as a definite no for the whole miss TTL. The app polls
+    /api/jobs and /api/homelab/status continuously, so the entire window was
+    refused, which is why the refusals arrived in bursts on exactly those two
+    routes.
+
+    "The daemon says this is not a peer" is an answer and worth caching.
+    "I could not reach the daemon" is not an answer at all, and caching it as
+    one turns a transient hiccup into a lockout that outlives it.
+
+    So a failure to *ask* is never cached: the next request tries again. A
+    thundering herd is the acceptable cost — the alternative is refusing a
+    legitimate device for twenty seconds because the daemon was busy once.
+  */
+  let answered = true;
   try {
     const { stdout } = await run(TAILSCALE_BIN, ["whois", "--json", ip], {
       timeout: WHOIS_TIMEOUT_MS,
@@ -135,13 +157,23 @@ async function whois(ip) {
     const device = name.split(".")[0] || null;
     const user = parsed?.UserProfile?.LoginName ?? null;
     if (device) value = { device, user };
-  } catch {
-    // Unknown peer, daemon down, or no tailscale binary. All mean "cannot
-    // vouch for this address" — fall through to the token.
+  } catch (err) {
     value = null;
+    // Killed by the timeout, or the binary is missing/unrunnable. Either way
+    // the daemon never gave a verdict. A numeric `code` means tailscale ran and
+    // exited non-zero, which IS a verdict: that address is not a peer.
+    const timedOut = err?.killed === true || Boolean(err?.signal);
+    const couldNotRun = typeof err?.code === "string"; // ENOENT, EACCES, …
+    if (timedOut || couldNotRun) {
+      answered = false;
+      console.warn(
+        `[operator] could not ask tailscaled about ${ip} (${timedOut ? `timed out after ${WHOIS_TIMEOUT_MS}ms` : err.code}) — ` +
+          `not caching; the next request will retry`,
+      );
+    }
   }
 
-  whoisCache.set(ip, { at: Date.now(), value });
+  if (answered) whoisCache.set(ip, { at: Date.now(), value });
   return value;
 }
 
