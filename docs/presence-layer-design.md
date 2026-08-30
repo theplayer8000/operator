@@ -110,10 +110,21 @@ voice input at all rather than the quick version.** Voice output is fine either
 way — `SpeechSynthesis` is on-device on both Windows and iOS, and no audio is
 being captured to leak.
 
-**Owner's decision needed.** This is a named-host approval question, not an
-implementation detail, and the honest framing is: a wake-word Jarvis that uses
-browser recognition is a permanently open microphone reporting to a third
-party.
+### ✅ DECIDED 2026-08-30 — local only, and the stack is named
+
+See [ADR 0015](decisions/0015-hermes-agent.md). The owner's answer was local
+transcription, and Hermes Agent supplied the concrete stack:
+
+- **`faster-whisper`**, local, nothing leaves the machine.
+- **Silero VAD on**, so silence never reaches the model. Not a refinement —
+  Whisper decodes plausible text out of a quiet room, and the VAD filter is the
+  fix. Expect to need it; do not discover it.
+- **`base`** as the starting size, with `tiny` below it if the CPU cannot keep
+  up.
+
+If `base` is too slow on this hardware the ladder goes **down to `tiny`, not
+out to a cloud API** — that would reintroduce exactly the audio egress this
+section exists to prevent.
 
 ## The secure-context trap, again
 
@@ -216,10 +227,14 @@ written to satisfy, applied to a system that now speaks first.
 
 ## Decisions needed before any of this starts
 
-1. **Voice input: local transcription only, or is browser recognition
-   acceptable?** Recommendation: local only. This is a named-host approval.
-2. **Usage ceilings** — undecided since ADR 0013, and phase 2 makes them load-
-   bearing rather than theoretical.
+1. ~~**Voice input: local transcription only?**~~ **DECIDED 2026-08-30** —
+   local only, `faster-whisper` + Silero VAD. [ADR 0015](decisions/0015-hermes-agent.md).
+2. **Usage ceilings** — settled in principle by ADR 0013 and still unbuilt. A
+   stopgap is now in force: `OPERATOR_USAGE_BUDGET_USD=10`, read from the
+   registry by `scripts/operator-serve.cmd`. **It is weaker than it sounds** —
+   the counter is in memory so it resets every restart, and it sums *valuation*
+   dollars rather than money charged. It brakes a runaway within one run. It is
+   not the ceiling this phase needs.
 3. **Does the presence layer get to arm the terminal?** Recorded as intended in
    the control-plane doc; the mitigations above are the version that keeps
    ADR 0011 intact.
