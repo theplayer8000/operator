@@ -8,6 +8,11 @@
 
 import { runTurn as runClaudeTurn } from "./runner.mjs";
 import { runTurn as runGeminiTurn } from "./gemini.mjs";
+import {
+  runTurn as runOllamaTurn,
+  isAvailable as ollamaAvailable,
+  installedModels as installedOllamaModels,
+} from "./ollama.mjs";
 
 const CLAUDE_CODE = {
   id: "claude-code",
@@ -64,10 +69,88 @@ const GEMINI = {
   runTurn: runGeminiTurn,
 };
 
+/**
+ * The local worker. Registered by `initProviders()` rather than here, because
+ * "is Ollama running" is an async question and this map is built at import.
+ *
+ * Its models are not hardcoded: they are whatever this machine has actually
+ * pulled. A picker offering `qwen2.5:3b` on a box where it was never pulled is
+ * the same failure the GEMINI note above describes - a worker that is listed
+ * and then fails on first use is worse than one that is not offered.
+ */
+const OLLAMA = {
+  id: "ollama",
+  label: "Local",
+  defaultModel: null, // filled from what is installed
+  models: [],
+  capabilities: {
+    tools: "capability-actions",
+    attachments: false,
+    permissions: "pre-approved",
+    sessions: "in-memory",
+    verification: "worker-reported",
+    // The one capability no other worker has, and the reason this exists.
+    local: true,
+  },
+  runTurn: runOllamaTurn,
+};
+
 const WORKERS = new Map([
   [CLAUDE_CODE.id, CLAUDE_CODE],
   ...(process.env.GEMINI_API_KEY ? [[GEMINI.id, GEMINI]] : []),
 ]);
+
+/**
+ * Keep the local worker's registration in step with reality.
+ *
+ * **Re-probed rather than detected once at boot**, and the reason is ordering:
+ * Ollama runs continuously, but Operator is started by Task Scheduler and can
+ * easily come up first. A one-shot probe would then miss a service that was
+ * merely a few seconds behind, and the local worker would stay absent until
+ * somebody restarted Operator for reasons they could not have guessed.
+ *
+ * The same loop keeps the model list honest. Pulling a model is a thing the
+ * owner does at a terminal, not a thing Operator observes, so a boot-time
+ * snapshot goes stale the first time he runs `ollama pull` - and a picker that
+ * omits a model he can see installed is the kind of small wrongness that costs
+ * an evening to explain.
+ *
+ * One loopback request a minute. Deliberately never throws: Ollama being absent
+ * is the normal case on a fresh checkout, not an error, and it must never take
+ * the storage server down with it.
+ */
+const OLLAMA_REPROBE_MS = 60_000;
+let lastOllamaSignature = "";
+
+async function refreshOllama({ log = () => {} } = {}) {
+  try {
+    const models = (await ollamaAvailable()) ? await installedOllamaModels() : [];
+    // Only act when something actually changed, so this is silent in the log
+    // when nothing is happening - which is almost always.
+    const signature = models.join(",");
+    if (signature === lastOllamaSignature) return;
+    lastOllamaSignature = signature;
+
+    if (models.length === 0) {
+      if (WORKERS.delete(OLLAMA.id)) log("[operator] local worker went away");
+      return;
+    }
+    OLLAMA.models = models.map((id) => ({ id, label: id }));
+    OLLAMA.defaultModel = models[0];
+    WORKERS.set(OLLAMA.id, OLLAMA);
+    log(`[operator] local worker available: ${models.join(", ")}`);
+  } catch {
+    // A probe that fails changes nothing. The next one tries again.
+  }
+}
+
+export async function initProviders({ log = () => {} } = {}) {
+  await refreshOllama({ log });
+  const timer = setInterval(() => void refreshOllama({ log }), OLLAMA_REPROBE_MS);
+  // Don't hold the process open for a probe loop.
+  timer.unref?.();
+  return timer;
+}
 
 /** Safe metadata for the client. Never expose a worker implementation. */
 function describe(worker) {

@@ -55,6 +55,7 @@ import {
   deleteState,
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
+import { initProviders } from "./providers.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -677,4 +678,9 @@ server.listen(PORT, HOST, () => {
   console.log(
     `[operator] backups every ${Math.round(BACKUP_EVERY_MS / 60000)} min (unchanged stores skipped)`
   );
+
+  // Find the local worker, and keep looking. Ollama runs continuously but this
+  // process is started by Task Scheduler and can beat it up, so a one-shot
+  // probe would miss a service that was merely seconds behind.
+  void initProviders({ log: (line) => console.log(line) });
 });
