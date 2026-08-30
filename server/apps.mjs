@@ -100,11 +100,32 @@ function parseRegistry() {
     if (health && !/^https?:\/\//i.test(health)) {
       throw new Error(`${where} (${name}): "health" must be an http or https URL`);
     }
+    /*
+      `supervised: true` — something already watches this app and relaunches it.
+
+      Learned from Darams CRM on 2026-08-30, and it is not a special case: its
+      supervisor relaunches five seconds after the worker exits, which is the
+      same arrangement scripts/supervise.mjs gives Operator itself. For an app
+      like that, stopping the worker IS the restart, and running `start`
+      afterwards races the supervisor for the port — the loser exits
+      immediately, and enough rapid failures trips the supervisor's own
+      give-up guard, leaving the app running old code with nothing watching it.
+      Silent, and it presents as "restart failed".
+
+      So when this is set, `start` is skipped and the app is simply expected
+      back. `start` stays required in the registry: it is what recovers the app
+      when the supervisor itself is not running.
+    */
+    const supervised = entry?.supervised === true;
+    if (supervised && !health) {
+      throw new Error(`${where} (${name}): "supervised" needs a "health" URL — there is no other way to know it came back`);
+    }
     return {
       name,
       start: argv("start", true),
       stop: argv("stop", false),
       health,
+      supervised,
       log: entry?.log ? String(entry.log) : null,
     };
   });
@@ -255,6 +276,27 @@ export async function restartApp(name) {
         };
       }
     }
+  }
+
+  if (app.supervised) {
+    // Its own supervisor is bringing it back. Starting it here would race that
+    // and lose the port — see the note on `supervised` above.
+    steps.push({ step: "start", ok: true, detail: "skipped — supervised, waiting for its own supervisor" });
+    const back = await waitFor(app.health, true, START_TIMEOUT_MS);
+    steps.push({
+      step: "wait",
+      ok: back.reached,
+      detail: back.reached ? `answering ${back.status}` : `no answer after ${START_TIMEOUT_MS}ms`,
+    });
+    return {
+      name: app.name,
+      ok: back.reached,
+      steps,
+      log: back.reached ? null : await logTail(app.log),
+      summary: back.reached
+        ? `${app.name} is back up, answering ${back.status}.`
+        : `${app.name} did not come back. Its supervisor may have given up — check the log and start it by hand.`,
+    };
   }
 
   const started = await run(app.start);
