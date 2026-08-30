@@ -420,14 +420,30 @@ function Tab({
   return (
     <button
       onClick={onSelect}
-      className={`shrink-0 flex items-center gap-2 h-9 px-3 rounded-badge border text-xs transition-colors ${
+      /*
+        The ring only pulses on a tab that is running AND not the one you are
+        looking at. On the open tab the "working…" line below already says so,
+        and two things announcing the same state is noise. On a tab you cannot
+        see, it is the only signal that anything is happening there.
+      */
+      className={`shrink-0 flex items-center gap-2 h-9 px-3 rounded-badge border text-xs transition-all duration-200 ${
+        running && !active ? "animate-pulse-ring" : ""
+      } ${
         active
           ? "border-xp/40 bg-xp/10 text-xp"
           : "border-base-600 text-ink-500 hover:text-ink-100 hover:border-base-500"
       }`}
     >
       {running ? (
-        <Loader2 size={12} className="animate-spin shrink-0" />
+        <span className="flex items-center gap-0.5 shrink-0" aria-label="working">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="w-1 h-1 rounded-full bg-current animate-breathe"
+              style={{ animationDelay: `${i * 0.22}s` }}
+            />
+          ))}
+        </span>
       ) : job.restored ? (
         <span title="From before a restart — Claude still remembers, the log doesn't">
           <History size={12} className="shrink-0 text-ink-700" />
@@ -681,14 +697,25 @@ export default function OrchestratorChat() {
                     : "From before a restart — the log isn't kept, but the worker still remembers. Send a message to carry on."}
               </p>
             ) : (
+              /*
+                Wrapped rather than animated inside Event, which switches on
+                type and would need the class in seven places.
+
+                Only genuinely NEW events animate. The list re-renders on every
+                poll, but `key={e.seq}` is stable so React reuses the node and
+                the animation does not re-fire — the whole log would otherwise
+                flicker every couple of seconds, which is the opposite of
+                lively.
+              */
               j.events.map((e) => (
-                <Event
-                  key={e.seq}
-                  event={e}
-                  answers={answers}
-                  answering={answering}
-                  onAnswer={(id, decision, remember) => void answer(id, decision, remember)}
-                />
+                <div key={e.seq} className="animate-slip-in">
+                  <Event
+                    event={e}
+                    answers={answers}
+                    answering={answering}
+                    onAnswer={(id, decision, remember) => void answer(id, decision, remember)}
+                  />
+                </div>
               ))
             )}
             {running &&
@@ -696,12 +723,34 @@ export default function OrchestratorChat() {
               // this line must not say — it reads as "no action needed" beneath
               // the card that needs one.
               ((j.selected?.asking ?? 0) > 0 ? (
-                <p className="flex items-center gap-2 text-xs text-xp">
-                  <ShieldAlert size={13} /> holding — waiting on your answer above
+                /*
+                  Deliberately still, and the stillness is the message: it is
+                  not working, it is stopped and waiting on you. A spinner here
+                  would say the opposite of what is true.
+                */
+                <p className="flex items-center gap-2 text-xs text-xp animate-fade-up">
+                  <ShieldAlert size={13} className="shrink-0" /> holding — waiting on your answer
+                  above
                 </p>
               ) : (
-                <p className="flex items-center gap-2 text-xs text-xp">
-                  <Loader2 size={13} className="animate-spin" /> working…
+                /*
+                  Breathing rather than spinning. A spinner is the vocabulary of
+                  a wait with a known end — a page loading — and a turn has no
+                  known end. Three dots out of phase read as thinking, and stay
+                  legible from across a desk, which is where this is usually
+                  read from.
+                */
+                <p className="flex items-center gap-2 text-xs text-xp animate-fade-up">
+                  <span className="flex items-center gap-1" aria-hidden>
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="w-1.5 h-1.5 rounded-full bg-xp animate-breathe"
+                        style={{ animationDelay: `${i * 0.22}s` }}
+                      />
+                    ))}
+                  </span>
+                  working…
                 </p>
               ))}
           </div>
@@ -992,8 +1041,43 @@ export default function OrchestratorChat() {
             describes behaviour the app no longer has is worse than none: it is
             the thing the owner reads to find out what the tool does.
           */}
-          {(j.providers.find((p) => p.id === j.selected?.provider)?.capabilities?.tools ===
-          "capability-actions" ? (
+          {(() => {
+            /*
+              Resolve the worker before describing it, and describe NOTHING
+              rather than guess.
+
+              The previous version asked "does the selected job's provider have
+              capability-actions?" and, whenever that lookup came back empty,
+              fell through to the Claude Code paragraph. That is an unsafe
+              default: an empty answer means "I do not know which worker this
+              is", and the fallback answered it with a confident description of
+              a specific one. Caught on 2026-08-30 with an `ollama` job open,
+              reading "Runs Claude Code against this project" underneath a
+              conversation with a local model.
+
+              A lookup can come back empty for ordinary reasons — the list
+              poll and the provider list arriving out of step, a worker
+              deregistering (the local one now appears and disappears with
+              Ollama). None of them justify claiming a different worker's
+              permissions model, which is the one thing on this page the owner
+              relies on being true.
+
+              So: fall back to the job's OWN recorded provider id, and when
+              even that is unknown, say nothing at all.
+            */
+            const selectedProvider = j.selected?.provider;
+            const worker = selectedProvider
+              ? j.providers.find((p) => p.id === selectedProvider)
+              : undefined;
+            const tools = worker?.capabilities?.tools;
+            const isCapabilityWorker =
+              tools === "capability-actions" ||
+              // The list has not caught up, but the job knows what ran it.
+              (!worker && selectedProvider !== undefined && selectedProvider !== "claude-code");
+            const isClaudeCode = selectedProvider === "claude-code" || !j.selectedId;
+            return (
+              <>
+          {(isCapabilityWorker ? (
             <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
               A model with access to Operator&apos;s own data — it can change the Mission Board,
               the calendar, the gym log and the daily routine through{" "}
@@ -1003,7 +1087,7 @@ export default function OrchestratorChat() {
               server and{" "}
               <strong className="font-normal text-ink-500">does not survive a restart</strong>.
             </p>
-          ) : (
+          ) : isClaudeCode ? (
             <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
               Runs Claude Code against this project and remembers across messages — the same
               conversation you can pick up at the desk. It has tool access and one standing
@@ -1018,7 +1102,7 @@ export default function OrchestratorChat() {
               log doesn&apos;t, but its own session does, so a restored one picks up where it
               left off.
             </p>
-          ))}
+          ) : null)}
 
           <p className="flex items-center gap-1.5 text-[11px] text-ink-700 mt-1.5">
             <FileText size={11} className="shrink-0" />
@@ -1029,12 +1113,22 @@ export default function OrchestratorChat() {
             Named from the server, not repeated in prose. OPERATOR_JOB_DENY can
             change the profile, and a hardcoded list here would go quietly wrong
             the first time it does.
+
+            Only shown for a worker the profile actually applies to. A model
+            reached over HTTP with no shell and no filesystem cannot run
+            `git push` under any circumstances, so listing it as something that
+            worker is forbidden implies a capability it never had — and quietly
+            teaches that the deny list is what stops it, rather than the absence
+            of any way to run a command at all.
           */}
-          {j.deniedTools.length > 0 && (
+          {isClaudeCode && j.deniedTools.length > 0 && (
             <p className="text-[11px] font-mono text-ink-700 mt-1 break-all">
               never: {j.deniedTools.join("  ·  ")}
             </p>
           )}
+              </>
+            );
+          })()}
         </>
       )}
     </section>

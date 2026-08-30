@@ -106,3 +106,78 @@
 .animate-fade-up {
   animation: fade-up 0.35s ease-out both;
 }
+
+/*
+  Motion that means something.
+
+  Operator is a work tool used from a phone, so the rule here is that an
+  animation earns its place by encoding STATE, never by being ambient. Nothing
+  below loops unless the thing it describes is genuinely still happening, and
+  nothing moves an element the pointer might be aiming at.
+
+  Three states are worth showing and the app currently shows one of them with a
+  spinner, which says "loading" when the truthful word is "working".
+*/
+
+/* A worker is thinking. Breathing rather than spinning: a spinner implies a
+   wait with a known end, and a turn does not have one. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+}
+.animate-breathe {
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+/* The same state at the edge of something — a tab, a dot — where the element
+   itself must not move. */
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(232 176 77 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgb(232 176 77 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(232 176 77 / 0);
+  }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+/* An event arriving. Sideways, because the log grows downward and a downward
+   entrance reads as the list settling rather than something new landing. */
+@keyframes slip-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-slip-in {
+  animation: slip-in 0.25s ease-out both;
+}
+
+/*
+  Someone reading this on a phone, in a room, at night asked for none of it.
+  Honour the OS switch: keep the state legible, drop the movement.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-breathe,
+  .animate-pulse-ring,
+  .animate-slip-in {
+    animation: none;
+  }
+}
