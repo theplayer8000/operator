@@ -118,6 +118,63 @@ rather than a tab. It belongs with
 nothing about it needs deciding today beyond not painting the desk view into a
 corner.
 
+#### What goes ON it — decided by looking at the references
+
+The owner supplied visual references on 2026-08-31: the Iron Man HUD, an
+Obsidian graph view, a labelled neural-network visualisation, and a wall-mounted
+display of a dense glowing web with status panels and LED backlighting.
+
+One observation settles the whole direction. **Those images look the way they do
+because they contain hundreds of nodes.** The neural one labels clusters of
+150–500 each. Density is the aesthetic, not an effect layered on top — and no
+amount of glow makes nine mission circles read like it.
+
+So the wall display must **graph everything Operator knows, not just missions**:
+missions and their dependencies, calendar events, gym sessions, routine steps,
+homelab services and their probes, activity-log entries, and live jobs with the
+worker running them. That is hundreds of nodes drawn from data that already
+exists, clustered by feature and coloured by kind — which is exactly the shape
+of the reference.
+
+It also resolves the desk-versus-wall split cleanly rather than by taste:
+
+| | Desk | Wall |
+|---|---|---|
+| Shows | missions, because you act on them | everything, because you watch it |
+| Node count | tens | hundreds |
+| Read at | arm's length, clickable | across a room, never touched |
+
+The desk view stays a **map you use**. The wall view is an **ambient portrait of
+the whole system**. Building the second first would produce something nobody can
+click; building only the first can never look like the reference.
+
+Two smaller notes worth keeping. One reference is branded "Z.E.R.O." — one of
+the owner's own naming candidates, arrived at independently. And every reference
+pairs the web with **fixed status panels** at the edges: the graph is never the
+whole screen, it is the centrepiece with readouts around it. That framing is
+what makes those look like a system rather than a screensaver.
+
+#### It is its own route, not a panel — decided 2026-08-31
+
+The owner's words: *"i want its own screen"*. So the wall view is a dedicated
+route rendering full-bleed with **no sidebar, no topbar, no card chrome** —
+everything `AppLayout` provides is exactly what a display three metres away
+does not need.
+
+That has a consequence worth stating now, because it is the sort of thing that
+gets discovered late: it cannot live inside `AppLayout`, so it is a sibling
+route rather than another `<Outlet/>` child, and it is the first surface in
+Operator that is deliberately **not** part of the app's navigation. Nothing
+should link to it from the sidebar; it is a URL you point a screen at.
+
+The owner also named the ordering himself — *"obviously we'd have to get voice
+n all setup"*. That is right, and it is the honest reason this is not next: a
+display showing a graph is a screensaver. A display that **hears you and
+answers** is the thing in the reference, and the status panels around the edge
+("LISTENING", the level meters) only mean anything once there is something
+listening. So: voice and the presence layer first, then this becomes the face
+of it rather than a picture of it.
+
 ### 2c. Scroll-snap, never scroll hijacking
 
 Where the second pane does exist, "scroll a page up or down" must be **CSS
