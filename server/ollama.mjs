@@ -187,10 +187,25 @@ async function callOllama({ model, messages, signal }) {
       // Distinguish the owner cancelling from the model simply being slow -
       // they need different responses and look identical at this layer.
       if (signal?.aborted) throw new Error("cancelled");
+      /*
+        Say what this worker is for, not just that it ran out of time.
+
+        The first version of this message suggested a smaller model or a longer
+        timeout, and both are the wrong advice for the case that actually
+        happens: generation here runs around 1.7 tokens a second, so the
+        timeout buys roughly 300 tokens, and a question that wants a long
+        explanation exceeds that on an idle machine. Nothing is broken and no
+        setting fixes it - the answer was simply longer than this worker
+        produces in the time.
+      */
       throw new Error(
-        `the local model did not answer within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. ` +
-          `CPU inference is slow; try a smaller model (ollama pull qwen2.5:1.5b) or raise ` +
-          `OPERATOR_OLLAMA_TIMEOUT_MS.`,
+        `the local model ran out of time (${Math.round(REQUEST_TIMEOUT_MS / 1000)}s). It generates ` +
+          `roughly 300 tokens in that window, so this is usually a question whose answer is ` +
+          `simply longer than that rather than anything being wrong. This worker is for short ` +
+          `answers, routing and checking work — ask Claude for a long explanation, or leave the ` +
+          `picker on Auto and let it choose. Genuinely want it local? A smaller model ` +
+          `(ollama pull qwen2.5:1.5b) roughly doubles the rate, and OPERATOR_OLLAMA_TIMEOUT_MS ` +
+          `raises the ceiling.`,
       );
     }
     if (err?.cause?.code === "ECONNREFUSED") {
