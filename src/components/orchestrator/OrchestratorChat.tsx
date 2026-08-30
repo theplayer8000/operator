@@ -460,6 +460,29 @@ export default function OrchestratorChat() {
   const [retrying, setRetrying] = useState(false);
   /** Worker+model for the *next* new chat. Null means the server's default. */
   const [pendingModel, setPendingModel] = useState<{ provider: string; model: string } | null>(null);
+  /*
+    Whether the model row is scrolled to its end, so the fade can disappear
+    rather than permanently implying there is more to the right. Starts true so
+    a row that fits — one worker, two chips — shows no fade at all.
+  */
+  const modelRowRef = useRef<HTMLDivElement | null>(null);
+  const [modelRowAtEnd, setModelRowAtEnd] = useState(true);
+
+  /*
+    Re-measure when the chips change, not just on scroll. A worker appearing
+    mid-session is the normal case now: the local worker registers when Ollama
+    comes up, which can be after this page is already open.
+  */
+  useEffect(() => {
+    const el = modelRowRef.current;
+    if (!el) return;
+    const measure = () =>
+      setModelRowAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 4);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
   const [answering, setAnswering] = useState<Record<string, boolean>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -814,7 +837,28 @@ export default function OrchestratorChat() {
             Code" label above two chips is noise.
           */}
           <div className="flex items-center justify-between gap-3 mt-2">
-            <div className="flex items-center gap-2.5 overflow-x-auto scrollbar-none">
+            {/*
+              `min-w-0` is load-bearing, not tidying. A flex child will not
+              shrink below its content's intrinsic width without it, so this row
+              grew past the card and clipped its last chips instead of
+              scrolling — `overflow-x-auto` never got the chance to apply. With
+              three workers and seven models the cut-off ones were simply
+              unreachable, which is what the owner reported.
+
+              The fade on the right is the affordance: `scrollbar-none` hides
+              the scrollbar, so without it there is nothing on screen saying
+              more chips exist. It is masked out once the row is scrolled to the
+              end so it does not imply content that isn't there.
+            */}
+            <div className="relative min-w-0 flex-1">
+              <div
+                ref={modelRowRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  setModelRowAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 4);
+                }}
+                className="flex items-center gap-2.5 overflow-x-auto scrollbar-none"
+              >
               {/*
                 Auto is the default and sits first, because choosing from a row
                 of chips is a menu and the orchestrator is meant to decide. The
@@ -883,6 +927,13 @@ export default function OrchestratorChat() {
                   })}
                 </div>
               ))}
+              </div>
+              <div
+                aria-hidden
+                className={`pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-base-800 to-transparent transition-opacity ${
+                  modelRowAtEnd ? "opacity-0" : "opacity-100"
+                }`}
+              />
             </div>
             <p
               className="shrink-0 text-[11px] font-mono text-ink-700"
