@@ -43,11 +43,34 @@ const ENDPOINT = process.env.OPERATOR_OLLAMA_URL ?? "http://127.0.0.1:11434";
 /**
  * How long one request may take.
  *
- * Generous on purpose: CPU inference on a 3B model is slow, and a timeout that
- * fires mid-answer looks identical to a broken worker. The signal from jobs.mjs
- * still cancels immediately when the owner does.
+ * Generous on purpose: local inference is slow, and a timeout that fires
+ * mid-answer looks identical to a broken worker. The signal from jobs.mjs still
+ * cancels immediately when the owner does.
  */
 const REQUEST_TIMEOUT_MS = Number(process.env.OPERATOR_OLLAMA_TIMEOUT_MS ?? 180_000) || 180_000;
+
+/*
+  Keep the model resident between requests.
+
+  **This is the single biggest thing about local inference being usable here.**
+  Measured 2026-08-30 on the owner's RX 6400: a one-word classification took
+  24.4 seconds, of which 21.3 was `load_duration` - reloading 1.8GB from disk
+  into VRAM. The thinking was under a second. Ollama's default keep-alive is
+  five minutes, which is long enough to look fine when you test twice in a row
+  and far too short for a worker asked something once an hour.
+
+  "30m" rather than "-1" (forever): the model holds roughly 2GB of a 4GB card,
+  and a machine that also plays games should get it back eventually. Set
+  OPERATOR_OLLAMA_KEEP_ALIVE to "-1" to pin it, or "0" to unload immediately.
+*/
+const KEEP_ALIVE = process.env.OPERATOR_OLLAMA_KEEP_ALIVE ?? "30m";
+
+/*
+  Context window. Ollama's default is larger than anything this worker does and
+  the KV cache for it comes out of the same 4GB the weights are in - on a card
+  this size that is the difference between fitting and spilling.
+*/
+const NUM_CTX = Number(process.env.OPERATOR_OLLAMA_NUM_CTX ?? 4096) || 4096;
 
 /**
  * Conversations in memory, keyed by the session id handed back.
@@ -143,6 +166,8 @@ async function callOllama({ model, messages, signal }) {
         // event log; it does not consume a stream, so streaming would add
         // parsing for nothing.
         stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_ctx: NUM_CTX },
       }),
     });
 
