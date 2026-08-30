@@ -419,6 +419,77 @@ async function missionSetProgress({ id, progress }) {
   return { id, progress: pct };
 }
 
+/**
+ * Say that one mission must finish before another can start.
+ *
+ * Mirrors `useMissionBoard.toggleDependency`, including its toggle behaviour —
+ * calling it twice with the same pair removes the link, exactly as tapping the
+ * same row twice in `DependencyEditor` does.
+ *
+ * Added 2026-08-31 because there was no way for a worker to set one at all.
+ * `dependsOn` is the oldest structural field on the board and the only one the
+ * capability layer could not reach, which stopped mattering the moment the
+ * mission map made those edges visible — the graph could be looked at and not
+ * built.
+ *
+ * **Refuses a self-dependency and refuses to close a loop.** The UI cannot
+ * easily produce either, a caller working from ids can produce both, and a
+ * mission that waits on itself can never start. The map detects cycles and
+ * warns, which is the right behaviour for data that already exists; refusing
+ * to create one here is the cheaper place to stop it.
+ */
+async function missionSetDependency({ id, dependsOn }) {
+  required(id, "id");
+  required(dependsOn, "dependsOn");
+  if (id === dependsOn) throw new ActionError("a mission cannot depend on itself");
+
+  let result = null;
+  await withState("missions.records", (current) => {
+    const missions = current ?? [];
+    const mission = findMission(missions, id);
+    const prerequisite = findMission(missions, dependsOn);
+    const existing = mission.dependsOn ?? [];
+    const removing = existing.includes(dependsOn);
+
+    if (!removing) {
+      // Walk the prerequisite's own chain: if it leads back here, this edge
+      // would close a loop.
+      const byId = new Map(missions.map((m) => [m.id, m]));
+      const seen = new Set();
+      const stack = [dependsOn];
+      while (stack.length) {
+        const next = stack.pop();
+        if (next === id) {
+          throw new ActionError(
+            `that would make a loop — "${prerequisite.name}" already waits on "${mission.name}", ` +
+              `directly or through another mission, so neither could ever start`
+          );
+        }
+        if (seen.has(next)) continue;
+        seen.add(next);
+        for (const dep of byId.get(next)?.dependsOn ?? []) stack.push(dep);
+      }
+    }
+
+    const nextDeps = removing
+      ? existing.filter((d) => d !== dependsOn)
+      : [...existing, dependsOn];
+    result = { id, dependsOn: nextDeps, linked: !removing };
+
+    return missions.map((m) =>
+      m.id === id
+        ? withActivity(
+            { ...m, dependsOn: nextDeps },
+            removing
+              ? `No longer waiting on "${prerequisite.name}"`
+              : `Now waits on "${prerequisite.name}"`
+          )
+        : m
+    );
+  });
+  return result;
+}
+
 /** Everything else a mission can have edited on it in one go — the parts of
     updateMission() that make sense for a task rather than a UI form. */
 async function missionUpdate({ id, ...patch }) {
@@ -1179,6 +1250,12 @@ const ACTIONS = {
     description: "Set a mission's progress percentage.",
     params: "id, progress (0-100)",
     handler: missionSetProgress,
+  },
+  mission_set_dependency: {
+    description:
+      "Say that one mission must finish before another can start. Calling it again with the same pair removes the link. Refuses a loop.",
+    params: "id (the mission that waits), dependsOn (the mission it waits for)",
+    handler: missionSetDependency,
   },
   mission_update: {
     description: "Edit a mission's text fields (name, description, notes, objectives, etc).",

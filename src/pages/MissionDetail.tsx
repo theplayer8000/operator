@@ -184,7 +184,37 @@ export default function MissionDetail() {
         Ten tabs wrap into a wall on a narrow screen. One scrollable strip
         keeps the row a single line on a phone and unchanged on desktop.
       */}
-      <div className="flex gap-1 mb-5 border-b border-base-600 pb-1 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
+      {/*
+        Same fix as the Orchestrator's model row: ten tabs do not fit, and a
+        horizontal overflow with a hidden scrollbar cannot be driven by a mouse
+        — a vertical wheel does not scroll it and there is no bar to drag. It
+        worked on a phone the whole time, which is how it survived.
+      */}
+      <div
+        onWheel={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollWidth <= el.clientWidth) return;
+          el.scrollLeft += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        }}
+        onPointerDown={(e) => {
+          if ((e.target as HTMLElement).closest("button, a")) return;
+          const el = e.currentTarget;
+          const startX = e.clientX;
+          const startScroll = el.scrollLeft;
+          el.setPointerCapture(e.pointerId);
+          const move = (ev: PointerEvent) => {
+            el.scrollLeft = startScroll - (ev.clientX - startX);
+          };
+          const up = () => {
+            el.releasePointerCapture(e.pointerId);
+            el.removeEventListener("pointermove", move);
+            el.removeEventListener("pointerup", up);
+          };
+          el.addEventListener("pointermove", move);
+          el.addEventListener("pointerup", up);
+        }}
+        className="flex gap-1 mb-5 border-b border-base-600 pb-1 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 cursor-grab active:cursor-grabbing"
+      >
         {TABS.map((t) => (
           <button
             key={t.id}

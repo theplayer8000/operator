@@ -170,6 +170,24 @@
 }
 
 /*
+  The mission map's idle float.
+
+  The layout itself is settled and still — see missionGraphLayout.ts — because
+  a simulation that never stops moves nodes out from under the pointer. This is
+  the only motion, it is a couple of pixels, and each node runs it out of phase.
+  Enough to read as alive; small enough that a click lands where it was aimed.
+*/
+@keyframes mg-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/*
   Someone reading this on a phone, in a room, at night asked for none of it.
   Honour the OS switch: keep the state legible, drop the movement.
 */
@@ -179,5 +197,10 @@
   .animate-pulse-ring,
   .animate-slip-in {
     animation: none;
+  }
+  /* Selector rather than class — the float is applied inline per node so each
+     can carry its own delay. */
+  [style*="mg-float"] {
+    animation: none !important;
   }
 }
