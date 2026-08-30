@@ -71,20 +71,62 @@ actual work is read and edited, and a HUD is a bad place to read a paragraph.
 
 So: a new register for the graph, not a rewrite of the board's.
 
-### 2. Scroll-snap, never scroll hijacking
+### 2. DECIDED — the graph is big-screen only, and does not exist on a phone
 
-"Scroll up a page or down a page" must be **CSS scroll-snap on a real scroll
-container**, not JavaScript intercepting the wheel.
+The owner's decision, 2026-08-30, and it is the one that makes the rest simple:
+**the graph is for the desk, and eventually for a TV or projector in the room.
+It is not built for a phone at all.**
 
-Hijacked scrolling is one of the reliably worst things to do to a phone, and
-`CLAUDE.md` is emphatic that Operator is used from one. Native scroll keeps
-momentum, keeps the phone's rubber-banding, keeps accessibility, and costs no
-JavaScript. It also cannot fight the sidebar swipe — which is a live concern
-here, since **that gesture already had one collision with iOS's back-navigation
-band** and it took two reported symptoms to find.
+Not a degraded version. Not pan-and-zoom on 390px. Below the breakpoint the
+graph pane **is not offered and not mounted**, and the Dashboard is exactly
+what it is today. A graph you cannot read is worse than a list you can, and
+Mission Board already is that list.
 
-If snap turns out to feel wrong, the fallback is a toggle at the top of the
-Dashboard, not a bespoke scroll handler.
+Three things fall out of it, and all three are simplifications:
+
+- **No pan/zoom, no touch gestures, no small-screen layout.** The hardest part
+  of the build disappears.
+- **`CLAUDE.md`'s responsive rules stop being in tension with it.** Those rules
+  exist so every surface works on a phone; the resolution is that this surface
+  is not a phone surface, rather than a phone surface that works badly.
+- **The scroll-snap risk goes away.** Since the second pane only exists on a
+  large screen, the phone Dashboard keeps exactly the scrolling it has now, and
+  cannot collide with the sidebar swipe — a gesture that has already had one
+  fight with iOS's back-navigation band and took two reported symptoms to find.
+
+**Don't mount rather than hide with CSS.** A canvas or SVG graph that is
+`display: none` still costs memory, still runs its animation frames, and still
+drains a phone battery for something nobody can see.
+
+### 2b. The wall display — named now, built later
+
+His stated direction: a TV or projector in the room showing it. That is a
+**different surface to the desk view**, not the same one bigger, and naming it
+now stops the desk view being built in a way that cannot become it:
+
+- **Read from across a room**, so type scales up and detail drops out. The
+  desk view can afford labels the wall view cannot.
+- **Nobody interacts with it.** No hover states, no click targets, no controls
+  — anything essential must be legible without them.
+- **It is on all the time**, so it has to survive being stared at: no burn-in
+  risk from a static bright element, and motion that is ambient rather than
+  attention-grabbing.
+
+That is the presence layer made physical — Operator having a place in the room
+rather than a tab. It belongs with
+[`presence-layer-design.md`](presence-layer-design.md) when it is built, and
+nothing about it needs deciding today beyond not painting the desk view into a
+corner.
+
+### 2c. Scroll-snap, never scroll hijacking
+
+Where the second pane does exist, "scroll a page up or down" must be **CSS
+scroll-snap on a real scroll container**, not JavaScript intercepting the wheel.
+
+Native scroll keeps momentum, keeps accessibility, and costs no JavaScript.
+Hijacked scrolling is the kind of thing that feels clever for a week. If snap
+feels wrong, the fallback is a toggle at the top of the Dashboard, not a
+bespoke wheel handler.
 
 ### 3. Writes still go through the owning hook
 
@@ -140,7 +182,10 @@ worth having given both are large.
   A list view survives that; a layered graph does not. Worth detecting before
   drawing, and worth surfacing as a real warning — a dependency cycle is a
   planning bug the owner would want told about.
-- **Phone.** A node graph on a 390px screen is the hard case, and it is the
-  screen that matters most here. Pan and zoom, or a simplified list fallback
-  below a breakpoint — undecided, and it should be decided before building
-  rather than discovered after.
+- ~~**Phone.**~~ **DECIDED** — see 2 above. Big screens only; the phone
+  Dashboard is unchanged and the graph is not mounted there.
+- **Which breakpoint.** `lg` (1024px) is the obvious candidate and is probably
+  right, but it should be checked against the actual desk monitor and against a
+  half-width window, which is a real way this gets used. A graph that vanishes
+  when a window is dragged narrower is worse than one with a slightly lower
+  threshold.
