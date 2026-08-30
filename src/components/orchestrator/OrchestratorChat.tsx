@@ -6,6 +6,8 @@ import {
   ShieldAlert,
   Loader2,
   Power,
+  Volume2,
+  VolumeX,
   Square,
   Wrench,
   FileText,
@@ -20,6 +22,7 @@ import {
 import Markdown from "@/components/ui/Markdown";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useJobs, type JobAttempt, type JobEvent, type JobSummary } from "@/hooks/useJobs";
+import { useSpeech } from "@/hooks/useSpeech";
 
 /**
  * The orchestrator's conversation surface — was `dev/ClaudeChat.tsx`, renamed
@@ -484,6 +487,50 @@ export default function OrchestratorChat() {
   const modelRowRef = useRef<HTMLDivElement | null>(null);
   const [modelRowAtEnd, setModelRowAtEnd] = useState(true);
 
+  const speech = useSpeech();
+  /*
+    The highest event sequence already spoken.
+
+    Tracked rather than "speak the last text event", because the event list is
+    re-fetched on every poll: without a watermark the same reply would be read
+    again every couple of seconds. It also has to start at whatever is already
+    on screen rather than at zero — opening a finished conversation must not
+    recite the whole thread, which is what happens if the first poll counts as
+    new.
+  */
+  const spokenUpTo = useRef<number | null>(null);
+
+  useEffect(() => {
+    // Switching conversations re-baselines: the new thread's history is not
+    // "new" just because it arrived after the switch.
+    spokenUpTo.current = null;
+  }, [j.selectedId]);
+
+  useEffect(() => {
+    if (!speech.enabled) return;
+    const latest = j.events.length ? j.events[j.events.length - 1].seq : 0;
+
+    if (spokenUpTo.current === null) {
+      spokenUpTo.current = latest;
+      return;
+    }
+    if (latest <= spokenUpTo.current) return;
+
+    /*
+      Speak the worker's prose, and only that. A tool call, a permission
+      question or an error is either not language or is something to be looked
+      at rather than heard — an error read aloud while you are across the room
+      tells you something is wrong and not what.
+    */
+    const fresh = j.events
+      .filter((e) => e.seq > (spokenUpTo.current ?? 0) && e.type === "text" && !e.error)
+      .map((e) => e.text ?? "")
+      .filter(Boolean);
+
+    spokenUpTo.current = latest;
+    if (fresh.length) speech.speak(fresh.join(" "));
+  }, [j.events, j.selectedId, speech]);
+
   /*
     Re-measure when the chips change, not just on scroll. A worker appearing
     mid-session is the normal case now: the local worker registers when Ollama
@@ -624,6 +671,46 @@ export default function OrchestratorChat() {
         </div>
         {!notAuthorised && (
           <div className="flex items-center gap-2 shrink-0">
+            {/*
+              Speaking is off until asked for, and the preference is per-device
+              (see useSpeech) — the desk can talk while the phone in a quiet
+              room stays silent. Hidden entirely where the browser has no
+              synthesis, rather than offered and inert.
+            */}
+            {speech.supported && (
+              <button
+                onClick={() => (speech.speaking ? speech.stop() : speech.setEnabled(!speech.enabled))}
+                title={
+                  speech.speaking
+                    ? "Stop speaking"
+                    : speech.enabled
+                      ? "Speaking replies aloud — click to turn off"
+                      : "Read replies aloud on this device"
+                }
+                aria-label={speech.enabled ? "Turn off spoken replies" : "Read replies aloud"}
+                className={`w-11 h-11 shrink-0 rounded-badge border flex items-center justify-center transition-colors ${
+                  speech.enabled
+                    ? "border-xp/40 bg-xp/10 text-xp"
+                    : "border-base-600 text-ink-700 hover:text-ink-300 hover:border-base-500"
+                }`}
+              >
+                {speech.speaking ? (
+                  <span className="flex items-center gap-0.5" aria-hidden>
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="w-1 h-3 rounded-full bg-current animate-breathe"
+                        style={{ animationDelay: `${i * 0.18}s` }}
+                      />
+                    ))}
+                  </span>
+                ) : speech.enabled ? (
+                  <Volume2 size={15} />
+                ) : (
+                  <VolumeX size={15} />
+                )}
+              </button>
+            )}
             {j.jobs.length > 0 && (
               <ConfirmButton onConfirm={() => void j.clearAll()} label="Clear all conversations" compact />
             )}
