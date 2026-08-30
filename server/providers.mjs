@@ -16,6 +16,10 @@ const CLAUDE_CODE = {
   models: [
     { id: "claude-opus-5", label: "Opus 5" },
     { id: "claude-sonnet-5", label: "Sonnet 5" },
+    // Added 2026-08-30 to be tried, not adopted. Conversational feel is judged
+    // by using a model, not by reading about it, and the presence layer
+    // (docs/presence-layer-design.md) needs a voice worth talking to.
+    { id: "claude-fable-5", label: "Fable 5" },
   ],
   capabilities: {
     tools: true,
