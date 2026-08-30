@@ -193,6 +193,64 @@ nice-to-have here. It is the thing standing between "an assistant you drive"
 and "an assistant that acts". This is where the local model earns its place,
 and it is the correct first job for it.
 
+### 4b. The clap gesture — proposed 2026-08-31
+
+The owner's ask: **two claps switches to the graph view and starts listening.**
+
+Worth separating from the wake word below, because it is a much cheaper thing
+that happens to solve most of the same problem.
+
+**A clap needs no speech recognition.** It is a sharp amplitude transient, so
+detecting two of them inside a window is arithmetic over `AnalyserNode` output
+— no model, no dependency, and **no audio leaving the page**, not even to the
+server. That is a genuinely better privacy position than a wake *word*, which
+has to understand something to know it was said.
+
+It is also a better fit than a wake word for what he actually wants, which is
+not "hear me from anywhere" but "get the screen ready without walking over".
+
+#### What it costs, stated plainly
+
+**The microphone is open the whole time.** Nothing is recorded, transmitted or
+understood, but the browser will show its recording indicator and the tab will
+hold the device. That is a posture change and should be a deliberate, explicit
+toggle — never on by default, never enabled as a side effect of turning on
+voice output.
+
+And `getUserMedia` is **secure-context gated**, so this works only on
+`https://<host>.<tailnet>.ts.net`, never at the bare IP. Third feature to hit
+that; it will present as a permissions failure with no explanation.
+
+#### Two failure modes worth designing against
+
+- **The television problem.** Anything percussive triggers it — a door, a
+  dropped mug, applause on a video. Requiring *two* claps inside roughly
+  200–600ms with a quiet gap either side removes most of it, and the action
+  being harmless (switch view, start listening) means a false positive costs a
+  glance rather than an action.
+- **Feedback.** Operator speaking through the same speakers the mic can hear is
+  how a clap detector triggers on itself. Detection must pause while
+  `speech.speaking` is true.
+
+### 4c. The device split, named
+
+His framing, and it is worth writing down because it settles several arguments
+at once: **the phone is a view and review panel; the PC is the dev side.**
+
+That is already how the decisions have been going without being stated —
+the mission map is big-screen only, the wall display is its own screen — and
+having it explicit means the next surface does not have to re-litigate it.
+
+| | Phone | Desk / big screen |
+|---|---|---|
+| For | checking, answering, acting | building, watching, talking |
+| Gets | everything that must work anywhere | the graph, the clap gesture, the wall view |
+
+The rule that falls out: **a phone surface may never depend on a desk-only
+feature**, but the reverse is fine. Answering a permission prompt, ticking a
+gym session and reading a handoff must all work on a phone. Watching a live
+graph need not.
+
 ### 5. Wake word
 
 Hardest, least valuable, and on an i5-10400 with no usable GPU it would compete
