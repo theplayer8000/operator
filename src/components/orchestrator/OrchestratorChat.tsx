@@ -851,13 +851,52 @@ export default function OrchestratorChat() {
               end so it does not imply content that isn't there.
             */}
             <div className="relative min-w-0 flex-1">
+              {/*
+                A scrollable row a mouse cannot scroll is not scrollable.
+
+                min-w-0 above fixed the mechanics and the row still could not be
+                reached: a vertical wheel does not scroll a horizontal box, and
+                scrollbar-none removes the bar you would otherwise drag. On a
+                phone it worked the whole time, which is exactly why it survived
+                a round of "fixed" — the desk is where it was broken.
+
+                So: the wheel drives it, and it can be dragged. Both convert to
+                scrollLeft rather than moving anything, so the chips stay
+                ordinary buttons and a click still selects.
+              */}
               <div
                 ref={modelRowRef}
                 onScroll={(e) => {
                   const el = e.currentTarget;
                   setModelRowAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 4);
                 }}
-                className="flex items-center gap-2.5 overflow-x-auto scrollbar-none"
+                onWheel={(e) => {
+                  const el = e.currentTarget;
+                  if (el.scrollWidth <= el.clientWidth) return;
+                  // A trackpad already sends deltaX; a wheel only sends deltaY.
+                  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+                  el.scrollLeft += delta;
+                }}
+                onPointerDown={(e) => {
+                  // Ignore the buttons themselves, or dragging would fight
+                  // clicking a model.
+                  if ((e.target as HTMLElement).closest("button")) return;
+                  const el = e.currentTarget;
+                  const startX = e.clientX;
+                  const startScroll = el.scrollLeft;
+                  el.setPointerCapture(e.pointerId);
+                  const move = (ev: PointerEvent) => {
+                    el.scrollLeft = startScroll - (ev.clientX - startX);
+                  };
+                  const up = () => {
+                    el.releasePointerCapture(e.pointerId);
+                    el.removeEventListener("pointermove", move);
+                    el.removeEventListener("pointerup", up);
+                  };
+                  el.addEventListener("pointermove", move);
+                  el.addEventListener("pointerup", up);
+                }}
+                className="flex items-center gap-2.5 overflow-x-auto scrollbar-none cursor-grab active:cursor-grabbing"
               >
               {/*
                 Auto is the default and sits first, because choosing from a row
