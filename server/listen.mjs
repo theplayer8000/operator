@@ -387,29 +387,7 @@ export async function captureAndTranscribe(seconds = 6) {
     }
     const voicedPct = pcm.length ? (voiced / (pcm.length / 2)) * 100 : 0;
 
-    const uv = process.env.OPERATOR_UV ?? `${process.env.LOCALAPPDATA ?? ""}\\hermes\\bin\\uv.exe`;
-    const script = new URL("./win/transcribe.py", import.meta.url).pathname.replace(/^\//, "");
-
-    const out = await new Promise((resolve, reject) => {
-      const py = spawn(
-        uv,
-        ["run", "--python", "3.11", "--with", "faster-whisper", "python", script, wav],
-        { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      let stdout = "";
-      let stderr = "";
-      py.stdout.on("data", (d) => (stdout += d));
-      py.stderr.on("data", (d) => (stderr += d));
-      py.on("error", reject);
-      py.on("exit", () => {
-        const line = stdout.trim().split(/\r?\n/).pop() ?? "";
-        if (line.startsWith("TEXT|") || line === "NOSPEECH" || line.startsWith("ERR|")) {
-          resolve(line);
-        } else {
-          reject(new Error(stderr.trim().slice(-200) || "transcriber said nothing"));
-        }
-      });
-    });
+    const out = await transcribeFile(wav);
 
     if (out === "NOSPEECH") return { text: "", confidence: 0, peak: audioPeak, voicedPct };
     if (out.startsWith("ERR|")) throw new Error(out.slice(4));
@@ -420,6 +398,175 @@ export async function captureAndTranscribe(seconds = 6) {
     // the one thing this whole design is arranged to avoid.
     await rm(wav, { force: true }).catch(() => {});
   }
+}
+
+/* ------------------------------------------------------------------------
+   The transcriber, held open.
+
+   Measured 2026-08-31, three seconds of audio through the old spawn-per-call
+   path:
+
+       uv + python startup      1240 ms
+       import faster_whisper     863 ms
+       load base.en (int8)      1611 ms
+       actually transcribing    1290 ms
+       -------------------------------
+       total                    ~5000 ms
+
+   Three quarters of it was setup, paid again on every sentence. Holding the
+   process open: 3941 ms once, then 48-235 ms per utterance. The same finding
+   as ollama.mjs's keep-alive, where 21.3 of 24.4 seconds was loading weights.
+
+   Serialised deliberately — one file in flight at a time. The protocol is a
+   line in and a line out with nothing correlating them, so two overlapping
+   requests would hand each caller the other's transcript. Captures are already
+   one-at-a-time (`muteBriefly` covers the recording window), so a queue costs
+   nothing real and removes the whole class of bug.
+   ------------------------------------------------------------------------ */
+
+const UV = process.env.OPERATOR_UV ?? `${process.env.LOCALAPPDATA ?? ""}\\hermes\\bin\\uv.exe`;
+const scriptPath = (name) =>
+  new URL(`./win/${name}`, import.meta.url).pathname.replace(/^\//, "");
+
+/** The live helper: `{ proc, lines, waiting }`, or null when not started. */
+let transcriber = null;
+/** Resolves when the model is loaded; rejected (and cleared) if it dies. */
+let transcriberReady = null;
+/** Tail of the current request chain, so requests run one after another. */
+let transcribeQueue = Promise.resolve();
+
+function startTranscriber() {
+  const proc = spawn(
+    UV,
+    [
+      "run",
+      "--python",
+      "3.11",
+      "--with",
+      "faster-whisper",
+      "python",
+      // -u disables Python's block buffering on a pipe. WITHOUT IT this hangs
+      // forever: the answer is computed in milliseconds and then sits in a
+      // buffer that never flushes, which is indistinguishable from a crash.
+      // The script also flushes by hand; both, because this failure mode has
+      // already cost this project a session once.
+      "-u",
+      scriptPath("transcribe_server.py"),
+    ],
+    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+
+  const state = { proc, waiting: [], buffer: "" };
+
+  proc.stdout.on("data", (chunk) => {
+    state.buffer += chunk;
+    let index;
+    while ((index = state.buffer.indexOf("\n")) >= 0) {
+      const line = state.buffer.slice(0, index).replace(/\r$/, "").trim();
+      state.buffer = state.buffer.slice(index + 1);
+      if (!line) continue;
+      const next = state.waiting.shift();
+      if (next) next.resolve(line);
+    }
+  });
+
+  proc.stderr.on("data", (d) => {
+    const text = String(d).trim();
+    // uv is chatty on first run while it resolves the environment; only
+    // surface something that looks like a real failure.
+    if (text && /error|traceback/i.test(text)) {
+      console.warn(`[operator] transcriber: ${text.slice(0, 200)}`);
+    }
+  });
+
+  const die = (why) => {
+    for (const w of state.waiting.splice(0)) w.reject(new Error(why));
+    if (transcriber === state) {
+      transcriber = null;
+      transcriberReady = null;
+    }
+  };
+  proc.on("error", (err) => die(err?.message ?? "transcriber failed to start"));
+  proc.on("exit", (code) => die(`transcriber exited (${code})`));
+
+  transcriber = state;
+  transcriberReady = new Promise((resolve, reject) => {
+    // READY is printed once the model is resident. A timeout here rather than
+    // waiting forever: a first run downloads the model, but an hour of silence
+    // means something is wrong and the caller should hear about it.
+    const timer = setTimeout(() => reject(new Error("transcriber never became ready")), 180_000);
+    state.waiting.push({
+      resolve: (line) => {
+        clearTimeout(timer);
+        if (line === "READY") resolve();
+        else reject(new Error(line.startsWith("ERR|") ? line.slice(4) : `unexpected: ${line}`));
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
+  });
+  transcriberReady.catch(() => {});
+  return state;
+}
+
+/**
+ * One WAV to one result line, through the resident model.
+ *
+ * Falls back to spawning the one-shot `transcribe.py` if the persistent helper
+ * cannot be started. Slower, but a broken helper should degrade voice to slow
+ * rather than to broken — the one-shot path is the one that has been working
+ * for weeks.
+ */
+function transcribeFile(wav) {
+  const run = async () => {
+    try {
+      if (!transcriber) startTranscriber();
+      await transcriberReady;
+      const state = transcriber;
+      if (!state) throw new Error("transcriber went away");
+      return await new Promise((resolve, reject) => {
+        state.waiting.push({ resolve, reject });
+        state.proc.stdin.write(`${wav}\n`, (err) => {
+          if (err) reject(err);
+        });
+      });
+    } catch (err) {
+      console.warn(
+        `[operator] transcriber unavailable (${err?.message ?? err}) — falling back to one-shot`,
+      );
+      return transcribeOnce(wav);
+    }
+  };
+  // Chain onto the queue so only one request is in flight.
+  const result = transcribeQueue.then(run, run);
+  transcribeQueue = result.catch(() => {});
+  return result;
+}
+
+/** The original path: spawn, transcribe, exit. Kept as the fallback. */
+function transcribeOnce(wav) {
+  return new Promise((resolve, reject) => {
+    const py = spawn(
+      UV,
+      ["run", "--python", "3.11", "--with", "faster-whisper", "python", scriptPath("transcribe.py"), wav],
+      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    py.stdout.on("data", (d) => (stdout += d));
+    py.stderr.on("data", (d) => (stderr += d));
+    py.on("error", reject);
+    py.on("exit", () => {
+      const line = stdout.trim().split(/\r?\n/).pop() ?? "";
+      if (line.startsWith("TEXT|") || line === "NOSPEECH" || line.startsWith("ERR|")) {
+        resolve(line);
+      } else {
+        reject(new Error(stderr.trim().slice(-200) || "transcriber said nothing"));
+      }
+    });
+  });
 }
 
 /*

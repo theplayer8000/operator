@@ -17,3 +17,6 @@ data/
 # to a sibling directory.
 Darams-CRM/
 tsconfig.tsbuildinfo
+
+# Python bytecode from the transcriber helper
+__pycache__/
