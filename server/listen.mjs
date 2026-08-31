@@ -163,6 +163,7 @@ export function startListening(onDoubleClap) {
     let ambient = 0.001;
 
     child.stdout.on("data", (buf) => {
+      rememberAudio(buf);
       // Samples are 2 bytes; a chunk boundary can split one, so keep the odd
       // byte for next time rather than reading a sample that is half of two.
       const data = carry.length ? Buffer.concat([carry, buf]) : buf;
@@ -246,6 +247,168 @@ export function startListening(onDoubleClap) {
 
   spawnOnce();
   return true;
+}
+
+/**
+ * Record a few seconds from the same microphone and transcribe it.
+ *
+ * ## Why capture goes through ffmpeg rather than a speech API
+ *
+ * Windows' own recogniser transcribes from the *default* recording device and
+ * cannot target a named one. This machine has three active microphones, so
+ * "default" is a coin toss — which is what an unexplained NOSPEECH turned out
+ * to be. ffmpeg is already capturing a named device two functions up, reliably,
+ * so the audio problem is solved and only the transcription is new.
+ *
+ * ## Recorded to a file, then deleted
+ *
+ * Whisper wants a file rather than a stream. It goes to the OS temp directory,
+ * never `data/`, and is removed as soon as it has been read — the point of the
+ * whole design is that audio does not accumulate anywhere.
+ *
+ * @param seconds how long to record. The clap fires this, so it starts while
+ *   the window is still coming forward — anything said during the transition is
+ *   caught rather than clipped.
+ */
+export async function captureAndTranscribe(seconds = 6) {
+  if (!DEVICE) throw new Error("no microphone configured (OPERATOR_LISTEN)");
+  if (!state.listening) throw new Error("the listener is not running, so there is no audio to take");
+
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { rm, writeFile } = await import("node:fs/promises");
+  const { randomUUID } = await import("node:crypto");
+
+  const wav = join(tmpdir(), `operator-speech-${randomUUID().slice(0, 8)}.wav`);
+
+  /*
+    Pause clap detection while recording.
+
+    The clap that triggered this is still echoing, and the detector would
+    otherwise hear it — and hear the next one — mid-capture. Same self-trigger
+    problem `muteBriefly` exists for, over a longer window.
+  */
+  muteBriefly((seconds + 1) * 1000);
+
+  try {
+    /*
+      Take the audio from the stream ALREADY OPEN, rather than starting a
+      second one.
+
+      Measured 2026-08-31: a second ffmpeg opening the same dshow device
+      records digital silence — -90dB across all three microphones on this
+      machine, which looked exactly like three broken microphones and was one
+      held device. The clap listener owns it, by design, permanently.
+
+      Buffering the live stream is also simply better: the recording starts
+      BEFORE the clap rather than after it, so the beginning of a sentence is
+      not clipped while a window comes forward. The rolling buffer is what
+      makes "clap and start talking" work instead of "clap, wait, talk".
+    */
+    const pcm = await collectAudio(seconds);
+    await writeFile(wav, wavFromPcm(pcm));
+    /*
+      Measure what was captured. An empty transcript has two very different
+      causes - nothing was said, or whisper could not make it out - and only
+      the peak tells them apart.
+    */
+    let audioPeak = 0;
+    let voiced = 0;
+    for (let i = 0; i + 1 < pcm.length; i += 2) {
+      const v = Math.abs(pcm.readInt16LE(i)) / 32768;
+      if (v > audioPeak) audioPeak = v;
+      if (v > 0.015) voiced++;
+    }
+    const voicedPct = pcm.length ? (voiced / (pcm.length / 2)) * 100 : 0;
+
+    const uv = process.env.OPERATOR_UV ?? `${process.env.LOCALAPPDATA ?? ""}\\hermes\\bin\\uv.exe`;
+    const script = new URL("./win/transcribe.py", import.meta.url).pathname.replace(/^\//, "");
+
+    const out = await new Promise((resolve, reject) => {
+      const py = spawn(
+        uv,
+        ["run", "--python", "3.11", "--with", "faster-whisper", "python", script, wav],
+        { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let stdout = "";
+      let stderr = "";
+      py.stdout.on("data", (d) => (stdout += d));
+      py.stderr.on("data", (d) => (stderr += d));
+      py.on("error", reject);
+      py.on("exit", () => {
+        const line = stdout.trim().split(/\r?\n/).pop() ?? "";
+        if (line.startsWith("TEXT|") || line === "NOSPEECH" || line.startsWith("ERR|")) {
+          resolve(line);
+        } else {
+          reject(new Error(stderr.trim().slice(-200) || "transcriber said nothing"));
+        }
+      });
+    });
+
+    if (out === "NOSPEECH") return { text: "", confidence: 0, peak: audioPeak, voicedPct };
+    if (out.startsWith("ERR|")) throw new Error(out.slice(4));
+    const [, confidence, ...rest] = out.split("|");
+    return { text: rest.join("|"), confidence: Number(confidence) || 0, peak: audioPeak, voicedPct };
+  } finally {
+    // Always, including on failure — a half-recorded utterance left in temp is
+    // the one thing this whole design is arranged to avoid.
+    await rm(wav, { force: true }).catch(() => {});
+  }
+}
+
+/*
+  A rolling window of the most recent audio, so a capture can include what was
+  said just BEFORE it was asked for.
+
+  Two seconds, which is enough to catch the start of a sentence begun with the
+  clap and small enough to be a few hundred KB. Trimmed on every chunk rather
+  than periodically, so it cannot grow while nobody is looking.
+*/
+const PRE_ROLL_MS = 2000;
+const PRE_ROLL_BYTES = (RATE * 2 * PRE_ROLL_MS) / 1000;
+let preRoll = [];
+let preRollBytes = 0;
+/** Set while a capture is collecting; the audio handler feeds it. */
+let collector = null;
+
+function rememberAudio(chunk) {
+  if (collector) collector.chunks.push(chunk);
+  preRoll.push(chunk);
+  preRollBytes += chunk.length;
+  while (preRollBytes > PRE_ROLL_BYTES && preRoll.length > 1) {
+    preRollBytes -= preRoll.shift().length;
+  }
+}
+
+/** The pre-roll plus `seconds` of new audio. */
+function collectAudio(seconds) {
+  return new Promise((resolve) => {
+    collector = { chunks: [...preRoll] };
+    setTimeout(() => {
+      const chunks = collector.chunks;
+      collector = null;
+      resolve(Buffer.concat(chunks));
+    }, seconds * 1000);
+  });
+}
+
+/** Wrap raw mono 16-bit PCM in the 44-byte header whisper expects. */
+function wavFromPcm(pcm) {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // PCM chunk size
+  header.writeUInt16LE(1, 20); // format: PCM
+  header.writeUInt16LE(1, 22); // channels
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28); // byte rate
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }
 
 export function stopListening() {

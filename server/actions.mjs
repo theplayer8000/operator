@@ -275,6 +275,38 @@ const OP_DECLARATIONS = [
 */
 const WIN_EXE = resolve(dirname(fileURLToPath(import.meta.url)), "win", "OperatorWin.exe");
 
+/**
+ * Hear one thing, and return what was said.
+ *
+ * Takes audio from the listener that is ALREADY running rather than opening a
+ * second capture — a second ffmpeg on the same dshow device records digital
+ * silence, which on this machine looked convincingly like three broken
+ * microphones. `server/listen.mjs` holds the stream and keeps a rolling
+ * pre-roll, so the transcript also includes what was said just before this was
+ * called.
+ *
+ * The import is lazy so `actions.mjs` does not pull the audio stack in for the
+ * thirty-odd actions that have nothing to do with it.
+ */
+async function listenOnce({ seconds } = {}) {
+  const secs = Math.min(30, Math.max(1, Number(seconds ?? 6) || 6));
+  const { captureAndTranscribe } = await import("./listen.mjs");
+  try {
+    const result = await captureAndTranscribe(secs);
+    return {
+      heard: result.text,
+      confidence: result.confidence,
+      seconds: secs,
+      // Diagnostics: an empty transcript with a flat peak is a microphone
+      // problem; an empty one with real audio is whisper not making it out.
+      peak: Number((result.peak ?? 0).toFixed(4)),
+      voicedPercent: Number((result.voicedPct ?? 0).toFixed(1)),
+    };
+  } catch (err) {
+    throw new ActionError(String(err?.message ?? err));
+  }
+}
+
 async function focusOperator({ pause } = {}) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -1448,6 +1480,12 @@ const ACTIONS = {
       "The current date and time on the machine Operator runs on, in the owner's local timezone. Use this for anything about \"now\", \"today\" or what the time is — do NOT read the calendar to work it out.",
     params: "(none)",
     handler: currentTime,
+  },
+  listen_once: {
+    description:
+      "Record from Operator's microphone and transcribe it locally. Includes the couple of seconds BEFORE the call, so a sentence started before asking is not clipped. Needs OPERATOR_LISTEN set.",
+    params: "seconds? (default 6, max 30)",
+    handler: listenOnce,
   },
   focus_operator: {
     description:
