@@ -15,10 +15,20 @@ import Orchestrator from "@/pages/Orchestrator";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
+import MissionMap from "@/pages/MissionMap";
 
 export default function App() {
   return (
     <Routes>
+      {/*
+        Outside AppLayout on purpose — no sidebar, no topbar.
+
+        This is the wall display, and full bleed is not a style preference: a
+        sidebar is what makes a room-scale map look like a web page. Escape
+        returns to the Dashboard.
+      */}
+      <Route path="/map" element={<MissionMap />} />
+
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/routine" element={<DailyRoutine />} />

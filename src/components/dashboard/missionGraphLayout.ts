@@ -58,7 +58,15 @@ export interface GraphLayout {
 }
 
 export const NODE_R = 30;
-const PAD = 70;
+/*
+  Room for a node AND its label.
+
+  The name is drawn below the circle rather than inside it — a 30px radius
+  cannot hold "Knowledge Vault" at a readable size — so the margin has to clear
+  the widest label, not just the widest node. At 70 the outermost names were
+  cut off by the viewBox edge mid-word.
+*/
+const PAD = 96;
 /** Enough iterations to settle a board of this size; cheap, runs once per change. */
 const ITERATIONS = 320;
 

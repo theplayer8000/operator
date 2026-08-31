@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { GitBranch, AlertTriangle, ArrowUpRight } from "lucide-react";
+import { GitBranch, AlertTriangle, ArrowUpRight, Maximize2 } from "lucide-react";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { layoutMissionGraph, NODE_R } from "./missionGraphLayout";
@@ -160,9 +160,20 @@ export default function MissionGraph() {
             {voice.speaking ? "speaking" : hearing ? "hearing" : "listening"}
           </span>
         )}
+        {/*
+          The way to the wall display. This card is a summary; `/map` is the
+          live one you can grab hold of, and without a link here nobody would
+          ever find it.
+        */}
+        <Link
+          to="/map"
+          className="shrink-0 flex items-center gap-1 text-[11px] text-xp hover:text-ink-100 transition-colors min-h-[36px] px-1"
+        >
+          <Maximize2 size={12} /> Full map
+        </Link>
         <Link
           to="/missions"
-          className="shrink-0 flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-100 transition-colors"
+          className="shrink-0 flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-100 transition-colors min-h-[36px] px-1"
         >
           Board <ArrowUpRight size={12} />
         </Link>
@@ -178,7 +189,14 @@ export default function MissionGraph() {
         </p>
       )}
 
-      <div className="flex justify-center">
+      {/*
+        The map gets its own dark well, inset from the card.
+
+        Without it the SVG's near-black ground met the card's lighter surface at
+        a hard rectangular edge, which looked like a bug rather than a display.
+        The border and radius make it read as a window into something.
+      */}
+      <div className="flex justify-center rounded-card overflow-hidden border border-base-600/70 bg-[#080B11]">
         <svg
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           /*
@@ -186,80 +204,100 @@ export default function MissionGraph() {
             scales the drawing until the map is taller than the rest of the
             Dashboard put together — it is a panel on a page, not the page.
           */
-          className="w-full h-auto max-w-full max-h-[540px]"
+          className="w-full h-auto max-w-full max-h-[560px]"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label={`Dependency map of ${layout.nodes.length} active missions`}
         >
           <defs>
             {/*
-              One blur reused by every glow. A per-node filter would be a
-              filter per mission, and SVG filters are the expensive part of a
-              scene like this.
+              Glow is a BLUR OF THE STROKE, not a filled halo.
+
+              The first version drew a soft filled disc behind every node at
+              0.30 opacity. Nine of those overlap, they are additive, and the
+              result was a milky lavender fog that erased the dark ground the
+              whole design rests on — the map has to be dark for anything on it
+              to look lit. Blurring the line itself glows without ever filling
+              the space between nodes.
             */}
-            <filter id="mg-glow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="5" result="b" />
+            <filter id="mg-glow" x="-120%" y="-120%" width="340%" height="340%">
+              <feGaussianBlur stdDeviation="3.5" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="mg-web" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="1.6" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-            <radialGradient id="mg-halo">
-              <stop offset="0%" stopColor="currentColor" stopOpacity="0.30" />
-              <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
-            </radialGradient>
             {/*
-              The voice wash. Two colours, deliberately not one:
-              gold when it HEARS you, violet when it SPEAKS. Looking at the map
-              tells you which is happening without reading a word.
+              The ground. Near-black, lit slightly from the middle, so the map
+              reads as its own dark space rather than a diagram sitting on a
+              card. Everything else is light drawn on top of this.
             */}
-            <radialGradient id="mg-voice">
-              <stop offset="0%" stopColor="currentColor" stopOpacity="0.20" />
-              <stop offset="55%" stopColor="currentColor" stopOpacity="0.06" />
-              <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+            <radialGradient id="mg-ground" cx="50%" cy="45%">
+              <stop offset="0%" stopColor="#141A26" />
+              <stop offset="100%" stopColor="#080B11" />
             </radialGradient>
           </defs>
 
-          {/*
-            Under everything, so it lights the map rather than covering it.
+          <rect
+            x={0}
+            y={0}
+            width={layout.width}
+            height={layout.height}
+            fill="url(#mg-ground)"
+          />
 
-            Scaled by loudness rather than switched on and off — a binary glow
-            reads as a notification, and this should read as the room being
-            heard. Speaking wins when both are true, because Operator talking
-            over itself is the state worth showing.
+          {/*
+            The voice lights the WEB, not the whole canvas.
+
+            A full-canvas wash was the obvious way to do this and it was wrong:
+            it flooded the dark ground and made everything pale. Brightening the
+            strands instead means the structure itself responds — the thing that
+            looks alive is the network, which is what makes it read as a nervous
+            system rather than a screen flash.
           */}
-          {(hearing || voice.speaking) && (
-            <ellipse
-              cx={layout.width / 2}
-              cy={layout.height / 2}
-              rx={layout.width * 0.62}
-              ry={layout.height * 0.62}
-              fill="url(#mg-voice)"
-              className="transition-opacity duration-150 pointer-events-none"
-              style={{
-                color: voice.speaking ? "#8D7FE0" : "#E8B04D",
-                opacity: voice.speaking ? 0.9 : 0.35 + heard * 0.65,
-              }}
-            />
-          )}
 
           {/* Edges under the nodes, so a line never crosses a label. */}
-          <g fill="none">
+          <g fill="none" filter="url(#mg-web)">
             {layout.edges.map((e) => {
               const from = nodeById.get(e.from);
               const to = nodeById.get(e.to);
               if (!from || !to) return null;
               const lit = related !== null && related.has(e.from) && related.has(e.to);
               const dim = related !== null && !lit;
+              /*
+                Voice brightens every strand at once. The map is one listener,
+                not nine, so the web responding as a single surface is the
+                honest reading — and it stays legible because a brighter line is
+                still a line, where a wash was not.
+              */
+              const voiceLift = voice.speaking ? 0.55 : hearing ? heard * 0.5 : 0;
+              const strand = e.isCycle
+                ? "#E05A5A"
+                : lit
+                  ? "#E8B04D"
+                  : voice.speaking
+                    ? "#8D7FE0"
+                    : voiceLift > 0
+                      ? "#E8B04D"
+                      : "#4A5468";
               return (
                 <path
                   key={`${e.from}->${e.to}`}
                   d={edgePath(from.x, from.y, to.x, to.y)}
-                  strokeWidth={lit ? 2 : 1.25}
+                  strokeWidth={lit ? 1.9 : 1 + voiceLift}
                   strokeDasharray={e.isCycle ? "5 4" : undefined}
-                  stroke={e.isCycle ? "#E05A5A" : lit ? "#E8B04D" : "#3A4152"}
-                  className="transition-all duration-300"
-                  opacity={dim ? 0.15 : 1}
+                  stroke={strand}
+                  strokeLinecap="round"
+                  className="transition-all duration-200"
+                  opacity={dim ? 0.12 : 0.42 + voiceLift * 0.58}
                 />
               );
             })}
@@ -308,58 +346,84 @@ export default function MissionGraph() {
                       Tiny, because this must not move a click target: the
                       halo grows, the node itself does not.
                     */}
+                    {/*
+                      A thin expanding RING, not a filled disc.
+
+                      An outline can overlap its neighbours all day without
+                      adding up to fog, which is exactly what the filled version
+                      did. Out of phase per node so the response travels across
+                      the web instead of every node throbbing together.
+                    */}
                     {(hearing || voice.speaking) && (
                       <circle
-                        r={r + 26 + (voice.speaking ? 10 : heard * 22)}
-                        fill="url(#mg-voice)"
+                        r={r + 10 + (voice.speaking ? 12 : heard * 20)}
+                        fill="none"
+                        stroke={voice.speaking ? "#8D7FE0" : "#E8B04D"}
+                        strokeWidth={1.25}
+                        opacity={(voice.speaking ? 0.5 : 0.18 + heard * 0.5) * 0.9}
+                        filter="url(#mg-glow)"
                         className="transition-all duration-150"
-                        style={{
-                          color: voice.speaking ? "#8D7FE0" : "#E8B04D",
-                          transitionDelay: `${(i % 6) * 60}ms`,
-                        }}
+                        style={{ transitionDelay: `${(i % 6) * 55}ms` }}
                       />
                     )}
-                    <circle r={r + 26} fill="url(#mg-halo)" />
                     {/* Progress ring — reads at a glance from across a desk. */}
-                    <circle
-                      r={r + 7}
-                      fill="none"
-                      stroke="#2A303C"
-                      strokeWidth={3}
-                    />
+                    <circle r={r + 7} fill="none" stroke="#232A38" strokeWidth={2.5} />
                     <circle
                       r={r + 7}
                       fill="none"
                       stroke={m.status === "blocked" ? "#E05A5A" : "#E8B04D"}
-                      strokeWidth={3}
+                      strokeWidth={2.5}
                       strokeLinecap="round"
                       strokeDasharray={`${(pct / 100) * circumference} ${circumference}`}
                       transform="rotate(-90)"
                       className="transition-all duration-500"
+                      filter={pct > 0 ? "url(#mg-web)" : undefined}
                     />
+                    {/*
+                      Dark core with a luminous rim. The fill has to be darker
+                      than the ground or the node reads as a hole punched in the
+                      map rather than an object sitting on it.
+                    */}
+                    <circle r={r} fill="#0B0F16" fillOpacity={0.96} />
                     <circle
                       r={r}
-                      fill="#151A23"
+                      fill="none"
                       stroke={s.core}
-                      strokeWidth={isHovered ? 2.5 : 1.5}
-                      filter={isHovered ? "url(#mg-glow)" : undefined}
+                      strokeWidth={isHovered ? 2.2 : 1.4}
+                      filter="url(#mg-glow)"
                       className="transition-all duration-200"
+                      opacity={isHovered ? 1 : 0.85}
                     />
+                    {/*
+                      Only the number goes inside. A 30px circle cannot hold a
+                      mission name at a readable size — the previous version cut
+                      every one to twelve characters, which turned "Knowledge
+                      Vault" into "Knowledge Va…" and told you nothing.
+                    */}
                     <text
                       textAnchor="middle"
-                      y={-2}
-                      className="fill-ink-100 font-body"
-                      style={{ fontSize: 11, pointerEvents: "none" }}
-                    >
-                      {m.name.length > 13 ? `${m.name.slice(0, 12)}…` : m.name}
-                    </text>
-                    <text
-                      textAnchor="middle"
-                      y={12}
+                      y={4}
                       className="font-mono"
-                      style={{ fontSize: 9, fill: s.core, pointerEvents: "none" }}
+                      style={{
+                        fontSize: 12,
+                        fill: s.core,
+                        pointerEvents: "none",
+                        fontWeight: 500,
+                      }}
                     >
                       {pct}%
+                    </text>
+                    {/*
+                      The name sits BELOW the node, where it has the full width
+                      between neighbours instead of a circle's diameter.
+                    */}
+                    <text
+                      textAnchor="middle"
+                      y={r + 24}
+                      className="fill-ink-200 font-body"
+                      style={{ fontSize: 11.5, pointerEvents: "none" }}
+                    >
+                      {m.name.length > 22 ? `${m.name.slice(0, 21)}…` : m.name}
                     </text>
                   </g>
                 </Link>
