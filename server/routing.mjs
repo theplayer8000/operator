@@ -164,6 +164,23 @@ const JUST_DATA = [
   /\b(on|to|in) (my |the )?(calendar|diary|mission board|routine|gym log)\b/i,
   /\b(mark|set)\b.{0,30}\b(complete|done|in progress|skipped|archived)\b/i,
   /\b(skip|skipped|rest day)\b/i,
+  /*
+    The clock and the date.
+
+    Added after a measured misroute on 2026-08-31: "what time is it" matched
+    nothing here — the patterns above expect the contraction ("whats") or a
+    time word like "today" — so it fell through to the classifier, the
+    classifier was rate-limited, and the documented uncertain-fallback sent it
+    to Claude Code. Which shelled out to `PowerShell Get-Date`, over two
+    attempts, for **$0.58**. The `now` action answers it for nothing.
+
+    Genuinely unambiguous, which is the bar this list sets: no phrasing of
+    "what time is it" is a question about source code.
+  */
+  /\btime is it\b/i,
+  /^\s*(whats?|what's|hows?)\s+(the\s+)?(time|date|day)\b/i,
+  /\bwhat (day|date) is it\b/i,
+  /\b(todays?|today's) (date|day)\b/i,
 ];
 
 function fastPath(prompt) {

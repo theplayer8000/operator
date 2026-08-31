@@ -547,6 +547,23 @@ const APPEND_PROMPT = [
   "Only edit source when the request is genuinely about changing how Operator",
   "*works*, rather than what it currently holds.",
   /*
+    Name the read actions inline rather than trusting `list` to be run.
+
+    Measured 2026-08-31: asked "what time is it", this worker ran
+    `PowerShell Get-Date` over two attempts and charged $0.58. The prompt above
+    already said the catalogue existed — but a model will not spend a tool call
+    discovering a catalogue before answering something it believes it can
+    answer in one shot. So the few that come up constantly are named here,
+    where they cost nothing to know.
+  */
+  "READS matter as much as writes, and these are the ones that come up:",
+  "`now` (the date, time and weekday), `gym_day`, `missions_list`,",
+  "`calendar_range`, `routine_day`.",
+  "Do NOT shell out for something an action already answers — no `Get-Date` for",
+  "the time, no reading data/operator.json, no grepping source to find out what",
+  "the owner has scheduled. Those are slower, cost more, and can be wrong in",
+  "ways the action cannot.",
+  /*
     Said out loud because a capability nobody mentions does not get used. A
     session spent three round trips asking the owner whether a generated PDF
     looked right, while its own Read tool could have shown it the pages.
