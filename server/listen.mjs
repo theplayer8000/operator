@@ -106,6 +106,17 @@ let stopping = false;
 let mutedUntil = 0;
 let restarts = 0;
 
+/*
+  The running estimate of room noise.
+
+  Module scope rather than inside the spawn closure because the endpointer
+  below needs it too: "is he still talking" is the same question as "is this
+  above the floor", and the floor is only meaningful relative to this room.
+  Seeded low so the clap bar starts at its minimum rather than wide open.
+*/
+let ambient = 0.001;
+
+
 /** Latest peak, so the UI can show a meter without the browser holding a mic. */
 export const state = { listening: false, device: DEVICE || null, level: 0, threshold: 0, claps: 0, reason: null };
 
@@ -186,8 +197,6 @@ export function startListening(onDoubleClap) {
     let firstClapAt = 0;
     let cooldownUntil = 0;
     let carry = Buffer.alloc(0);
-    // Seeded low so the bar starts at its minimum rather than wide open.
-    let ambient = 0.001;
 
     child.stdout.on("data", (buf) => {
       /*
@@ -577,6 +586,24 @@ function transcribeOnce(wav) {
   clap and small enough to be a few hundred KB. Trimmed on every chunk rather
   than periodically, so it cannot grow while nobody is looking.
 */
+/*
+  Endpointing — stop recording when he stops talking.
+
+  Measured 2026-08-31: the capture window was a fixed 6 seconds, so a
+  1.5-second question sat there recording silence for another 4.5. After the
+  persistent transcriber took transcription down to ~1.3s, this became the
+  single largest source of latency in the whole voice path — bigger than
+  inference, routing and the model call combined.
+
+  Speech sits far lower than a clap: the clap bar is `ambient * 12`, this is
+  `ambient * 3`, floored so a silent room cannot drift down until noise counts
+  as talking.
+*/
+const SPEECH_MULTIPLE = Number(process.env.OPERATOR_LISTEN_SPEECH_MULTIPLE ?? 3) || 3;
+const SPEECH_FLOOR = 0.004;
+/** Quiet for this long after speech means the sentence is over. */
+const SILENCE_MS = Number(process.env.OPERATOR_LISTEN_SILENCE_MS ?? 900) || 900;
+
 const PRE_ROLL_MS = 2000;
 const PRE_ROLL_BYTES = (RATE * 2 * PRE_ROLL_MS) / 1000;
 let preRoll = [];
@@ -585,7 +612,10 @@ let preRollBytes = 0;
 let collector = null;
 
 function rememberAudio(chunk) {
-  if (collector) collector.chunks.push(chunk);
+  if (collector) {
+    collector.chunks.push(chunk);
+    endpoint(collector, chunk);
+  }
   preRoll.push(chunk);
   preRollBytes += chunk.length;
   while (preRollBytes > PRE_ROLL_BYTES && preRoll.length > 1) {
@@ -593,15 +623,76 @@ function rememberAudio(chunk) {
   }
 }
 
-/** The pre-roll plus `seconds` of new audio. */
-function collectAudio(seconds) {
+/**
+ * Decide whether the sentence has ended.
+ *
+ * Exported so it can be driven with synthetic audio. It is the one piece of
+ * this file that can be checked without a working microphone, and the machine
+ * it runs on frequently does not have one.
+ *
+ * **Can only ever shorten a capture, never truncate one.** If speech is never
+ * clearly detected — which is the honest outcome on a poor microphone, where
+ * the owner's voice measured 0.0009 against a 0.0007 room floor — this does
+ * nothing at all and the full window runs, exactly as before. Bailing early on
+ * "no speech yet" would cut off someone talking quietly, which is a far worse
+ * failure than waiting an extra two seconds.
+ */
+export function endpoint(active, chunk) {
+  if (active.done) return;
+
+  let peak = 0;
+  for (let i = 0; i + 1 < chunk.length; i += 2) {
+    const v = Math.abs(chunk.readInt16LE(i)) / 32768;
+    if (v > peak) peak = v;
+  }
+
+  const bar = Math.max(SPEECH_FLOOR, ambient * SPEECH_MULTIPLE);
+  const now = Date.now();
+
+  if (peak >= bar) {
+    active.heardSpeech = true;
+    active.quietSince = 0;
+    return;
+  }
+  // Silence only counts once he has actually said something. Before that it is
+  // just the gap between the clap and the first word.
+  if (!active.heardSpeech) return;
+  if (!active.quietSince) {
+    active.quietSince = now;
+    return;
+  }
+  if (now - active.quietSince >= SILENCE_MS) active.finish("silence");
+}
+
+/**
+ * The pre-roll plus new audio, up to `maxSeconds`, ending early once he stops
+ * talking.
+ */
+function collectAudio(maxSeconds) {
   return new Promise((resolve) => {
-    collector = { chunks: [...preRoll] };
-    setTimeout(() => {
-      const chunks = collector.chunks;
+    const startedAt = Date.now();
+    const active = {
+      chunks: [...preRoll],
+      heardSpeech: false,
+      quietSince: 0,
+      done: false,
+      finish: null,
+    };
+
+    const settle = (why) => {
+      if (active.done) return;
+      active.done = true;
+      clearTimeout(timer);
       collector = null;
-      resolve(Buffer.concat(chunks));
-    }, seconds * 1000);
+      const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`[operator] capture ended after ${seconds}s (${why})`);
+      resolve(Buffer.concat(active.chunks));
+    };
+    active.finish = settle;
+
+    // The hard cap, and the whole behaviour when endpointing stays silent.
+    const timer = setTimeout(() => settle("full window"), maxSeconds * 1000);
+    collector = active;
   });
 }
 
