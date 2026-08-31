@@ -281,6 +281,7 @@ async function focusOperator({ pause } = {}) {
       " [DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);" +
       " [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);" +
       " [DllImport(\"user32.dll\")] public static extern bool IsZoomed(IntPtr h);" +
+      " [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr h);" +
       " [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);" +
       " public struct RECT { public int Left, Top, Right, Bottom; }';",
     /*
@@ -368,8 +369,20 @@ async function focusOperator({ pause } = {}) {
       as "focus the menu" — which is why a nav link ended up with a focus ring
       around it after every clap.
     */
+    /*
+      Restore ONLY if minimised, never unconditionally.
+
+      SW_RESTORE un-minimises, and on a window that is already fullscreen or
+      maximised it also un-maximises it — so calling it every time meant every
+      summon started by fighting the state it was about to ask for. That is the
+      jank: raise a fullscreen window and watch it drop out of fullscreen, then
+      get F11'd back into it.
+
+      IsIconic is the actual question being asked here. SwitchToThisWindow
+      raises it either way.
+    */
     "$w::SwitchToThisWindow($h, $true);",
-    "$w::ShowWindow($h, 9) | Out-Null;",
+    "if ($w::IsIconic($h)) { $w::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 120 };",
     "$w::SetForegroundWindow($h) | Out-Null;",
     /*
       The target screen's geometry arrives as literals from Node, already
