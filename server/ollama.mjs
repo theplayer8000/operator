@@ -35,7 +35,7 @@
 // eventually verification - and genuinely not fine for writing code. The point
 // is not that it competes with Claude. The point is that it is always there.
 
-import { runAction, listActions, ActionError } from "./actions.mjs";
+import { runAction, listActions, groupsFor, ActionError } from "./actions.mjs";
 
 /** Loopback only. A remote Ollama would be an external host needing approval. */
 const ENDPOINT = process.env.OPERATOR_OLLAMA_URL ?? "http://127.0.0.1:11434";
@@ -96,8 +96,8 @@ function newSessionId() {
  * schema here would be a second source of truth that drifts from the validation
  * actions.mjs actually performs.
  */
-function toolDefinitions() {
-  return listActions().map((action) => ({
+function toolDefinitions(groups) {
+  return listActions({ groups }).map((action) => ({
     type: "function",
     function: {
       name: action.name,
@@ -147,7 +147,7 @@ export async function installedModels() {
   }
 }
 
-async function callOllama({ model, messages, signal }) {
+async function callOllama({ model, messages, signal, tools }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort();
@@ -161,7 +161,7 @@ async function callOllama({ model, messages, signal }) {
       body: JSON.stringify({
         model,
         messages,
-        tools: toolDefinitions(),
+        tools,
         // One JSON object back rather than a token stream. jobs.mjs polls an
         // event log; it does not consume a stream, so streaming would add
         // parsing for nothing.
@@ -245,6 +245,26 @@ export async function runTurn({
 
   let error = null;
 
+  /*
+    Only the actions this request plausibly needs, and built ONCE per turn.
+
+    Measured 2026-08-31: all 39 actions serialise to 17,001 characters of tool
+    definitions — roughly 4.2k tokens against a `num_ctx` of 4096. The tool
+    block alone did not fit in this worker's context window, before the system
+    prompt, the history or the question. That is not overhead, it is the reason
+    the local model was slow and lost the plot.
+
+    It was also rebuilt inside every round of the loop, so a six-round turn paid
+    for it six times.
+
+    `groupsFor` returns null when the wording gives no clue, and null means send
+    everything — an unfiltered turn is merely expensive, where a wrongly
+    filtered one makes Operator look like it cannot do something it plainly
+    can.
+  */
+  const groups = groupsFor(prompt);
+  const tools = toolDefinitions(groups);
+
   try {
     /*
       Tool-call loop, bounded for the same reason gemini.mjs bounds its own: a
@@ -255,7 +275,7 @@ export async function runTurn({
       and the tasks this worker is for need a couple of actions, not a chain.
     */
     for (let round = 0; round < 6; round += 1) {
-      const body = await callOllama({ model, messages, signal });
+      const body = await callOllama({ model, messages, signal, tools });
       const message = body?.message;
       if (!message) throw new Error("Ollama returned no message");
 

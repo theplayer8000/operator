@@ -31,7 +31,7 @@
 // dependency would buy types and retries, neither worth reopening that rule
 // for. Node's built-in fetch is enough.
 
-import { runAction, listActions, ActionError } from "./actions.mjs";
+import { runAction, listActions, groupsFor, ActionError } from "./actions.mjs";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -71,10 +71,10 @@ function newSessionId() {
  * returns a specific error; that error goes back to the model, which corrects
  * itself. Same loop the CLI gives Claude.
  */
-function toolDeclarations() {
+function toolDeclarations(groups) {
   return [
     {
-      functionDeclarations: listActions().map((action) => ({
+      functionDeclarations: listActions({ groups }).map((action) => ({
         name: action.name,
         description: `${action.description} Parameters: ${action.params}`,
         parameters: {
@@ -92,7 +92,7 @@ function toolDeclarations() {
   ];
 }
 
-async function callGemini({ model, contents, systemInstruction, signal, onRateLimit, retried = false }) {
+async function callGemini({ model, contents, systemInstruction, signal, tools, onRateLimit, retried = false }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     throw new Error(
@@ -107,7 +107,7 @@ async function callGemini({ model, contents, systemInstruction, signal, onRateLi
     headers: { "content-type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
       contents,
-      tools: toolDeclarations(),
+      tools,
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
     }),
     signal,
@@ -241,6 +241,25 @@ export async function runTurn({
   const contents = [...history, { role: "user", parts: [{ text: prompt }] }];
   let error = null;
 
+  /*
+    Only the actions this request plausibly needs, and built ONCE per turn.
+
+    Measured 2026-08-31: all 39 actions serialise to 15,819 characters of
+    function declarations, and this was rebuilt and re-sent inside every round
+    of the loop below — up to ten times for a single turn.
+
+    The cost is not only tokens. Asked the time, Gemini reached for
+    `calendar_range` and `jobs_list`, which is what a catalogue of everything
+    does to tool choice: the right action gets harder to find the more wrong
+    ones surround it.
+
+    `groupsFor` returns null when the wording gives no clue, and null means send
+    everything — an unfiltered turn is merely expensive, where a wrongly
+    filtered one makes Operator look like it cannot do something it plainly
+    can.
+  */
+  const tools = toolDeclarations(groupsFor(prompt));
+
   try {
     /*
       Tool calls loop: ask, run whatever it asked for, ask again with the
@@ -258,6 +277,7 @@ export async function runTurn({
         contents,
         systemInstruction: appendSystemPrompt,
         signal,
+        tools,
         // Said out loud, because a silent 48-second pause on a phone reads as
         // a hang — and the event log is the only thing that can say otherwise.
         onRateLimit: (seconds) =>

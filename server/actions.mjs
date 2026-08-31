@@ -1684,13 +1684,147 @@ const ACTIONS = {
   },
 };
 
-/** For the tool layer to advertise, and for a human reading /api/actions. */
-export function listActions() {
-  return Object.entries(ACTIONS).map(([name, { description, params }]) => ({
-    name,
-    description,
-    params,
-  }));
+/**
+ * Which feature each action belongs to.
+ *
+ * Kept as one map rather than a `group` field on all 39 entries, so the whole
+ * grouping is reviewable at a glance — the failure this guards against is an
+ * action silently landing in the wrong bucket, and that is far easier to spot
+ * in a list than spread across a thousand lines.
+ *
+ * Explicit, NOT derived from the name prefix, because the prefixes lie:
+ * `missions_list` belongs with `mission_*`, `jobs_list` with `job_*`, and the
+ * four device actions share no prefix at all. A `split("_")[0]` would cut two
+ * features in half.
+ *
+ * An action missing from this map is treated as ungrouped and is ALWAYS sent.
+ * Forgetting to add one then costs tokens, which is visible; the alternative
+ * default would make it invisible to every worker, which is a bug nobody would
+ * find.
+ */
+const ACTION_GROUPS = {
+  now: "device",
+  listen_once: "device",
+  focus_operator: "device",
+  media_play_pause: "device",
+
+  gym_day: "gym",
+  gym_sessions_list: "gym",
+  gym_session_create: "gym",
+  gym_session_update: "gym",
+  gym_session_delete: "gym",
+  gym_add_exercise: "gym",
+  gym_update_exercise: "gym",
+  gym_remove_exercise: "gym",
+  gym_toggle_exercise: "gym",
+  gym_skip_day: "gym",
+  gym_unskip_day: "gym",
+
+  missions_list: "mission",
+  mission_create: "mission",
+  mission_set_status: "mission",
+  mission_set_progress: "mission",
+  mission_set_dependency: "mission",
+  mission_update: "mission",
+  mission_archive: "mission",
+  mission_add_milestone: "mission",
+  mission_update_milestone: "mission",
+  mission_delete: "mission",
+
+  calendar_range: "calendar",
+  calendar_create_event: "calendar",
+  calendar_create_recurring: "calendar",
+  calendar_create_range: "calendar",
+  calendar_update_event: "calendar",
+  calendar_delete_event: "calendar",
+  calendar_skip_occurrence: "calendar",
+  calendar_unskip_occurrence: "calendar",
+
+  routine_day: "routine",
+  routine_toggle_task: "routine",
+  routine_add_task: "routine",
+  routine_delete_task: "routine",
+
+  jobs_list: "jobs",
+  job_events: "jobs",
+};
+
+/**
+ * Words that mean a request is about a feature.
+ *
+ * Rules, not a model, for the same reason `server/routing.mjs` uses them: this
+ * runs on every turn, it must work with no network and no quota, and a
+ * classifier that is occasionally unavailable would make the tool list
+ * occasionally wrong — which is a much worse failure than sending a few
+ * extra declarations.
+ *
+ * Deliberately generous. A false positive costs a few hundred characters; a
+ * false negative means a worker cannot see the action it needs, which reads to
+ * the owner as Operator refusing to do something it can plainly do.
+ */
+const GROUP_WORDS = {
+  gym: /\b(gym|workout|work ?out|train(ing|ed)?|exercise|lift(ing|ed)?|rep|reps|set|sets|push|pull|leg|chest|back|shoulder|arm|bicep|tricep|squat|deadlift|bench|cardio|rest day|muscle|session)\b/i,
+  mission:
+    /\b(mission|missions|goal|goals|objective|milestone|progress|blocked|depend(s|ency|encies)?|roadmap|project)\b/i,
+  calendar:
+    /\b(calendar|event|events|schedule|scheduled|appointment|meeting|shift|shifts|book(ed|ing)?|diary|recurring|occurrence|next week|this week|tomorrow|today)\b/i,
+  routine: /\b(routine|daily|habit|habits|morning|evening|night|checklist|step|steps|tick|ticked)\b/i,
+  jobs: /\b(job|jobs|turn|turns|conversation|thread|tab|tabs|event log|transcript)\b/i,
+  device: /\b(time|clock|date|what day|listen|hear|mic|microphone|speak|screen|focus|fullscreen|summon|music|play|pause|volume)\b/i,
+};
+
+/**
+ * The feature groups a request plausibly touches.
+ *
+ * Returns `null` when nothing matches, meaning "no opinion" — the caller then
+ * sends everything. That is the same shape as `routing.mjs`'s `fastPath()`
+ * returning null, and for the same reason: silence is an honest answer and the
+ * safe fallback is the expensive one, not the wrong one.
+ */
+export function groupsFor(prompt) {
+  const text = String(prompt ?? "");
+  if (!text.trim()) return null;
+
+  const hits = new Set();
+  for (const [group, re] of Object.entries(GROUP_WORDS)) {
+    if (re.test(text)) hits.add(group);
+  }
+  if (!hits.size) return null;
+
+  /*
+    `device` rides along with everything.
+
+    It holds `now`, and almost any question about a date resolves against
+    today — "did I go to the gym this week" is a gym question that cannot be
+    answered without knowing what day it is. Four small actions, 1,751
+    characters, and leaving them out breaks more than it saves.
+  */
+  hits.add("device");
+  return [...hits];
+}
+
+/**
+ * For the tool layer to advertise, and for a human reading /api/actions.
+ *
+ * `groups` narrows the catalogue to the named features. Omit it — as
+ * `/api/actions` and the CLI's `list` both do — and you get everything, which
+ * is what makes the full set permanently discoverable however the filter
+ * behaves.
+ */
+export function listActions({ groups } = {}) {
+  const wanted = groups ? new Set(groups) : null;
+  return Object.entries(ACTIONS)
+    .filter(([name]) => {
+      if (!wanted) return true;
+      const group = ACTION_GROUPS[name];
+      // Ungrouped actions are always sent — see ACTION_GROUPS above.
+      return !group || wanted.has(group);
+    })
+    .map(([name, { description, params }]) => ({
+      name,
+      description,
+      params,
+    }));
 }
 
 /**
