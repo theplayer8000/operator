@@ -16,6 +16,21 @@ import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
 import MissionMap from "@/pages/MissionMap";
+import OperatorMobile from "@/pages/OperatorMobile";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+
+/**
+ * `/map` is two different things depending on what is holding it.
+ *
+ * Chosen over rendering both and hiding one with CSS: the graph runs a physics
+ * simulation every frame, and `display: none` would keep paying for it on a
+ * phone that never shows it. Mounting one or the other means the cost follows
+ * what is actually on screen.
+ */
+function MapSurface() {
+  const bigScreen = useMediaQuery("(min-width: 1024px)");
+  return bigScreen ? <MissionMap /> : <OperatorMobile />;
+}
 
 export default function App() {
   return (
@@ -26,8 +41,14 @@ export default function App() {
         This is the wall display, and full bleed is not a style preference: a
         sidebar is what makes a room-scale map look like a web page. Escape
         returns to the Dashboard.
+
+        `/map` resolves to a DIFFERENT surface on a phone — the core alone,
+        plus chat. Not a shrunken graph: the owner has twice said the graph is
+        big-screen only, and nine labelled nodes on a 390px screen is unreadable
+        whatever you do to it. Same URL either way, so a link, a notification
+        or a bookmark lands on whichever is right for the device holding it.
       */}
-      <Route path="/map" element={<MissionMap />} />
+      <Route path="/map" element={<MapSurface />} />
 
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
