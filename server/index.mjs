@@ -728,7 +728,18 @@ server.listen(PORT, HOST, () => {
     in the tab strip.
   */
   if (startListening(() => {
-    void runAction("focus_operator", {}).catch((err) => {
+    /*
+      `pause: false` — the clap no longer touches what is playing.
+
+      The owner's call after using it: he would rather pause things himself
+      than have a gesture reach into whatever has the media session. Which is
+      right, and it removes the surprising half of the action — a summon that
+      also silences your music is doing two things when you asked for one.
+
+      `media_play_pause` stays as its own action, because being able to say
+      "pause that" is independently useful. It is just not automatic.
+    */
+    void runAction("focus_operator", { pause: false }).catch((err) => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
     });
     void runAction("listen_once", { seconds: 6 })
