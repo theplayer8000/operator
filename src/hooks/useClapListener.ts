@@ -148,7 +148,7 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
 
     let stream: MediaStream | null = null;
     let context: AudioContext | null = null;
-    let frame = 0;
+    let processor: ScriptProcessorNode | null = null;
     let cancelled = false;
 
     /*
@@ -184,26 +184,44 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
         const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         context = new Ctor();
         const source = context.createMediaStreamSource(stream);
-        const analyser = context.createAnalyser();
-        // Small window: a clap is short, and a large FFT smears it into the
-        // frames either side.
-        analyser.fftSize = 512;
-        source.connect(analyser);
 
-        const buffer = new Uint8Array(analyser.fftSize);
+        /*
+          Detect on the AUDIO thread, not the render loop.
+
+          The first version polled an AnalyserNode from requestAnimationFrame,
+          which Chromium throttles to roughly 1fps in a background window. A
+          clap lasts about 100ms, so once the owner tabbed away to something
+          else on the same screen it was simply never sampled — the microphone
+          was open, the meter was alive when you looked at it, and the gesture
+          did nothing. Which is exactly what "doesn't work when tabbed out"
+          looks like.
+
+          Audio processing is exempt from visibility throttling, so
+          `onaudioprocess` keeps firing at the sample rate regardless of which
+          window is in front. That is the whole point of doing it here.
+
+          ScriptProcessorNode is deprecated in favour of AudioWorklet, and is
+          chosen anyway: the worklet needs a separate module URL for what is
+          fifteen lines of arithmetic, and this is still supported everywhere.
+          Worth revisiting if a browser actually removes it.
+        */
+        processor = context.createScriptProcessor(1024, 1, 1);
+        source.connect(processor);
+        // Connected to the destination because some browsers will not run a
+        // processor that leads nowhere. Nothing is written to the output
+        // buffer, so this makes no sound.
+        processor.connect(context.destination);
+
         setListening(true);
         setReason(null);
 
-        const tick = () => {
-          if (cancelled) return;
-          frame = requestAnimationFrame(tick);
-          if (mutedRef.current) return;
+        processor.onaudioprocess = (event) => {
+          if (cancelled || mutedRef.current) return;
 
-          analyser.getByteTimeDomainData(buffer);
-          // Peak deviation from the 128 midpoint, as a fraction of full scale.
+          const samples = event.inputBuffer.getChannelData(0);
           let peak = 0;
-          for (let i = 0; i < buffer.length; i++) {
-            const v = Math.abs(buffer[i] - 128) / 128;
+          for (let i = 0; i < samples.length; i++) {
+            const v = Math.abs(samples[i]);
             if (v > peak) peak = v;
           }
 
@@ -238,6 +256,7 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
           aboveSince = 0;
           // Sustained loudness is music or a voice, not a clap.
           if (duration > MAX_CLAP_MS) return;
+          setClaps((n) => n + 1);
 
           const sinceLast = now - lastClapAt;
           lastClapAt = now;
@@ -245,13 +264,11 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
           if (firstClapAt && sinceLast >= MIN_GAP_MS && sinceLast <= MAX_GAP_MS) {
             firstClapAt = 0;
             cooldownUntil = now + COOLDOWN_MS;
-            setClaps((n) => n + 1);
             callbackRef.current();
             return;
           }
           firstClapAt = now;
         };
-        frame = requestAnimationFrame(tick);
       } catch (err) {
         const name = (err as { name?: string })?.name;
         setListening(false);
@@ -269,7 +286,7 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      try { if (processor) { processor.onaudioprocess = null; processor.disconnect(); } } catch { /* already gone */ }
       // Release the device rather than leaving the recording indicator on
       // after the page has moved on.
       stream?.getTracks().forEach((t) => t.stop());
