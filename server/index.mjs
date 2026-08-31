@@ -56,6 +56,7 @@ import {
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
+import { startListening, state as listenState } from "./listen.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -704,4 +705,20 @@ server.listen(PORT, HOST, () => {
   // process is started by Task Scheduler and can beat it up, so a one-shot
   // probe would miss a service that was merely seconds behind.
   void initProviders({ log: (line) => console.log(line) });
+
+  /*
+    Listen for a clap, on the machine.
+
+    Runs here rather than in a browser tab because the gesture only matters
+    while you are looking at something else, which is exactly when a browser
+    throttles a page and suspends its audio. Off unless OPERATOR_LISTEN names a
+    microphone — an always-open mic is a decision, not a default.
+  */
+  if (startListening(() => void runAction("focus_operator", {}).catch((err) => {
+    console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
+  }))) {
+    console.log(`[operator] listening for a double clap on "${listenState.device}"`);
+  } else if (listenState.reason && process.env.OPERATOR_LISTEN) {
+    console.warn(`[operator] not listening: ${listenState.reason}`);
+  }
 });

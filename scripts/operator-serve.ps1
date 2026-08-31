@@ -61,6 +61,13 @@ if ($budget) { $env:OPERATOR_USAGE_BUDGET_USD = $budget }
 $apps = Read-UserEnv "OPERATOR_APPS"
 if ($apps) { $env:OPERATOR_APPS = $apps }
 
+# The microphone the clap listener watches (server/listen.mjs). Absent means it
+# does not run at all - an always-open microphone is a decision, not a default,
+# which is also why this lives in the registry rather than anywhere a worker
+# could write to it.
+$listen = Read-UserEnv "OPERATOR_LISTEN"
+if ($listen) { $env:OPERATOR_LISTEN = $listen }
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -Path $log -Value "==== serve started $stamp ===="
 
@@ -80,6 +87,9 @@ if ($apps) {
     $appNames = "none"
 }
 Add-Content -Path $log -Value "==== hosted apps: $appNames ===="
+
+if ($listen) { $listenState = $listen } else { $listenState = "off" }
+Add-Content -Path $log -Value "==== clap listener: $listenState ===="
 
 Set-Location $repo
 
