@@ -21,7 +21,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   X,
-  MessageSquare,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -47,7 +46,6 @@ const NAV_ITEMS = [
     entry like everything else.
   */
   { to: "/", label: "Operator", icon: Orbit },
-  { to: "/orchestrator", label: "Orchestrator", icon: MessageSquare },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/gym", label: "Gym", icon: Dumbbell },

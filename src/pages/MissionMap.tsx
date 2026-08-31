@@ -4,6 +4,7 @@ import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import type { MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET } from "@/components/map/operatorCore";
+import OperatorChat from "@/components/map/OperatorChat";
 
 /**
  * The mission map as a room-scale display.
@@ -673,8 +674,20 @@ export default function MissionMap() {
         </div>
       )}
 
-      <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden sm:block">
-        drag a node · drag the field to pan · scroll to zoom
+      {/*
+        The same chat as the phone, one component, so the two cannot drift.
+
+        Centred and width-capped rather than edge-to-edge: a full-width input
+        under a room-scale map reads as a footer, and this is meant to sit ON
+        the map. `pointer-events-none` on the wrapper keeps the canvas
+        draggable everywhere the chat is not.
+      */}
+      <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
+        <OperatorChat className="w-full max-w-2xl pointer-events-auto" />
+      </div>
+
+      <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden xl:block">
+        drag a node · pan · scroll to zoom
       </p>
     </div>
   );

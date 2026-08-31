@@ -80,7 +80,7 @@ const SECTIONS: Section[] = [
     icon: MessageSquare,
     status: "built",
     blurb:
-      "Routes a task to a worker — Claude Code today — and remembers between messages. Pick it up here after leaving the desk.",
+      "The full job view — model picker, attachments, tabs and retries. Everyday asking now lives on the landing page; this is where you go when you need more than a question and an answer.",
   },
   {
     to: "/homelab",
