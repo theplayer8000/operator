@@ -37,6 +37,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Speech.Recognition;
 
 public class OperatorWin
 {
@@ -144,9 +145,82 @@ public class OperatorWin
         return false;
     }
 
+    /// <summary>
+    /// Listen for one spoken phrase and print it. Speech in, phase 4 of the
+    /// presence layer.
+    ///
+    ///   OperatorWin.exe listen [seconds]
+    ///
+    /// Uses the recogniser that ships with Windows via System.Speech. That is
+    /// worse than Whisper at accuracy and needs NOTHING installed — no binary,
+    /// no 150MB model, no Python — which is why it goes first: it proves the
+    /// whole path (clap, capture, transcribe, act) today, and whisper.cpp can
+    /// swap in behind the same one-line-of-text interface once real use has
+    /// shaped what that interface should be. See ADR 0015's 2026-08-31
+    /// amendment.
+    ///
+    /// **Dictation grammar, not a command list.** A command grammar is far more
+    /// accurate and would mean deciding in advance every sentence Operator can
+    /// be told — which is the opposite of talking to it. The text goes to a
+    /// model that is good at ambiguity; the recogniser does not need to be.
+    ///
+    /// Nothing is recorded or written. The audio is consumed by the recogniser
+    /// and one line of text comes out.
+    /// </summary>
+    static int Listen(int seconds)
+    {
+        using (var engine = new SpeechRecognitionEngine())
+        {
+            try
+            {
+                engine.SetInputToDefaultAudioDevice();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("ERR|no microphone: " + e.Message);
+                return 1;
+            }
+
+            engine.LoadGrammar(new DictationGrammar());
+            // Silence ends the phrase, so a short sentence returns immediately
+            // rather than always waiting out the full window.
+            engine.EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
+            engine.InitialSilenceTimeout = TimeSpan.FromSeconds(seconds);
+
+            RecognitionResult result = null;
+            try
+            {
+                result = engine.Recognize(TimeSpan.FromSeconds(seconds));
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("ERR|" + e.Message);
+                return 1;
+            }
+
+            if (result == null || string.IsNullOrWhiteSpace(result.Text))
+            {
+                Console.WriteLine("NOSPEECH");
+                return 1;
+            }
+            // Confidence is printed rather than used as a gate: a threshold
+            // here would silently drop phrases, and the caller can see the
+            // number and decide.
+            Console.WriteLine("TEXT|" + result.Confidence.ToString("0.00") + "|" + result.Text);
+            return 0;
+        }
+    }
+
     static int Main(string[] args)
     {
         if (args.Length < 1) { Console.WriteLine("ERR|no command"); return 2; }
+
+        if (args[0] == "listen")
+        {
+            int secs = args.Length > 1 ? int.Parse(args[1]) : 8;
+            return Listen(secs);
+        }
+
         if (args[0] != "summon") { Console.WriteLine("ERR|unknown command"); return 2; }
         if (args.Length < 6) { Console.WriteLine("ERR|summon needs title x y w h [pause]"); return 2; }
 

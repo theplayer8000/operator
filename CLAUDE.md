@@ -720,9 +720,33 @@ guessing; guessing is the failure mode this list exists to prevent.
 
    Grant-per-command remains rejected: it had produced 69 single-use rules that
    never expire, which is worse security than a considered standing profile.
-3. **Concurrency** — one job at a time, or several? One matches a single user on
-   a phone; several matters if a long build should run while he asks something
-   else.
+3. **Concurrency — DECIDED 2026-08-31: several, with a configurable ceiling.**
+   Not built. The owner's words: *"would like turns to run concurrently if
+   possible, but of course have a scale for it in place."*
+
+   Both halves matter. **Several**, because the reason for one-at-a-time was
+   never a good one — it matched a single user on a phone, and it means a long
+   build blocks every question asked while it runs, which is the opposite of
+   what a control plane is for. **A ceiling**, because unbounded is how a
+   mistyped loop becomes a bill: `jobs.mjs` already queues, so the change is a
+   limit on how many leave the queue, not a new mechanism.
+
+   Four things this touches, and the third is the one that will bite:
+
+   - **The limit is env-only** (`OPERATOR_MAX_CONCURRENT`, default 1 so nothing
+     changes until it is set). App-editable would let a worker widen its own
+     fan-out — the same reasoning as `OPERATOR_TERMINAL_DEVICES`.
+   - **The usage ceiling stops being optional.** One job at a time bounded
+     spend by wall-clock; N jobs multiply it by N. See item 4 below, still
+     unbuilt.
+   - **`store.mjs` is the shared thing.** `withState()` is race-safe for a
+     read-modify-write, and that is not the same as two jobs making sensible
+     decisions about the same mission. The `.tmp` collision fixed on 2026-08-31
+     was exactly this class of bug appearing with only *incidental* concurrency
+     — deliberate concurrency will find more.
+   - **The Orchestrator shows one thread at a time.** Several running jobs need
+     the tab strip to say which are live, which is also what the mission map's
+     live layer wants — see `docs/dashboard-graph-design.md`.
 4. **Usage ceiling — the accounting is DECIDED ([ADR 0013](docs/decisions/0013-usage-accounting.md),
    2026-08-20), the ceilings are not built.** Read that ADR before writing
    anything that counts tokens, cost or quota. The short version:

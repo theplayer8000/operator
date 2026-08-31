@@ -27,7 +27,7 @@
 // says to run it when the exe is missing.
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -49,6 +49,18 @@ const CSC_CANDIDATES = [
   "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe",
 ].filter(Boolean);
 
+/** The GAC path for System.Speech, whose version directory varies by machine. */
+function findSpeechAssembly() {
+  if (process.env.OPERATOR_SPEECH_DLL) return process.env.OPERATOR_SPEECH_DLL;
+  const gac = "C:\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Speech";
+  if (!existsSync(gac)) return null;
+  for (const dir of readdirSync(gac)) {
+    const candidate = join(gac, dir, "System.Speech.dll");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 async function main() {
   if (!existsSync(SRC)) throw new Error(`missing source: ${SRC}`);
 
@@ -60,9 +72,23 @@ async function main() {
     );
   }
 
-  await run(csc, ["/nologo", "/target:exe", "/platform:x64", "/optimize+", `/out:${OUT}`, SRC], {
-    windowsHide: true,
-  });
+  /*
+    System.Speech is not referenced by default, and `csc` will not find it by
+    name: it lives in the GAC rather than beside the compiler, so the reference
+    has to be a full path. Located rather than hardcoded because the version
+    directory carries a build number that differs between machines.
+  */
+  const speech = findSpeechAssembly();
+  const args = ["/nologo", "/target:exe", "/platform:x64", "/optimize+"];
+  if (speech) args.push(`/reference:${speech}`);
+  else {
+    console.warn(
+      "System.Speech.dll not found — building without it. `listen` will not work; `summon` will.",
+    );
+  }
+  args.push(`/out:${OUT}`, SRC);
+
+  await run(csc, args, { windowsHide: true });
 
   if (!existsSync(OUT)) throw new Error("compiler reported success but produced no exe");
   console.log(`built ${OUT}`);

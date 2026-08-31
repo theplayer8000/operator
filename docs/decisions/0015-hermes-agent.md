@@ -33,6 +33,35 @@ So the question was not academic. It was whether to keep building or adopt.
 **Take components. Refuse the product.** Operator remains the thing the owner
 talks to; Hermes is a parts bin and a reference implementation.
 
+### Amended 2026-08-31 — `faster-whisper` is the wrong shape for Operator
+
+Right about *local*, wrong about the implementation.
+
+**`faster-whisper` is a Python library.** Hermes is a Python program, so it fits
+there. `server/` is Node with one npm dependency by ADR 0012, and every external
+capability it has spawns a **binary** — Edge for rendering, ffmpeg for the
+microphone, a compiled exe for window work. Adopting faster-whisper means
+adopting a Python runtime and its packages as a dependency of Operator, which is
+a far larger decision than "use Whisper".
+
+Two paths keep the intent without it:
+
+- **`whisper.cpp`** — the same model as a standalone binary, fitting the spawn
+  precedent exactly. Costs a binary download plus a ~150MB model, both package
+  fetches in the sense `ollama pull` already is.
+- **Windows' own recogniser** (`System.Speech`) — ships with .NET Framework,
+  needs **no download at all**, fully on-device. Confirmed present here: one
+  en-GB recogniser.
+
+**Decision: start with the Windows recogniser.** It is worse than Whisper at
+accuracy and it is free, immediate, and proves the whole path — clap, capture,
+transcribe, act — with nothing to install. If accuracy disappoints in use,
+whisper.cpp swaps in behind the same interface, and that interface will by then
+have been shaped by real use rather than guessed at.
+
+Same argument this ADR already makes about Hermes itself: take the component,
+prove the shape, and only then commit to the heavier version.
+
 ### Taken — the local speech-to-text stack
 
 `presence-layer-design.md` records that browser speech recognition streams
