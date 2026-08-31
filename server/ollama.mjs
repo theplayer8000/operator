@@ -147,7 +147,7 @@ export async function installedModels() {
   }
 }
 
-async function callOllama({ model, messages, signal, tools }) {
+async function callOllama({ model, messages, signal, tools, numPredict }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort();
@@ -167,7 +167,7 @@ async function callOllama({ model, messages, signal, tools }) {
         // parsing for nothing.
         stream: false,
         keep_alive: KEEP_ALIVE,
-        options: { num_ctx: NUM_CTX },
+        options: { num_ctx: NUM_CTX, ...(numPredict ? { num_predict: numPredict } : {}) },
       }),
     });
 
@@ -225,6 +225,36 @@ async function callOllama({ model, messages, signal, tools }) {
  * already being spent and no meter runs. ADR 0013's `basis` distinction matters
  * - this is genuinely zero, not an unpriced valuation.
  */
+/**
+ * One question, one answer, NO TOOLS.
+ *
+ * `runTurn` hands the model the whole capability layer, which is right for a
+ * worker and wrong for anything being asked to judge. A checker that can write
+ * to the owner's data is a second actor, not a check — so this exists
+ * separately rather than as a flag on the other one, because a flag is
+ * something a later caller forgets to set.
+ *
+ * Stateless: no session, no history, nothing remembered. Every caller so far
+ * wants a fresh opinion rather than a conversation.
+ */
+export async function ask({ prompt, model, system = "", signal, maxTokens = 200 }) {
+  const messages = [];
+  if (system) messages.push({ role: "system", content: system });
+  messages.push({ role: "user", content: prompt });
+
+  const body = await callOllama({
+    model,
+    messages,
+    signal,
+    // Explicitly nothing. Ollama omits the field entirely when undefined.
+    tools: undefined,
+    // Short answers only. This is a classifier, and letting a 1.7 tok/s model
+    // write an essay is how a background check becomes a three-minute wait.
+    numPredict: maxTokens,
+  });
+  return String(body?.message?.content ?? "").trim();
+}
+
 export async function runTurn({
   prompt,
   model,

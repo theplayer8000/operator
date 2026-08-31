@@ -59,6 +59,7 @@
 
 import { spawn } from "node:child_process";
 import { notify } from "./notify.mjs";
+import { reviewWork } from "./semantic.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -869,6 +870,51 @@ async function runVerification(job) {
     console.log(
       `[operator] ${job.id} verification: ${result.status} — ${result.note}`,
     );
+
+    /*
+      The second layer: did it do what was ASKED, not just does it compile.
+
+      Stored as a sibling field and never as a `status` value. The frontend
+      colours on `status`, so letting a 3B model's opinion write there would
+      let a guess render as a red build — and `status` is the thing that cannot
+      be wrong. Two fields, two kinds of certainty, told apart.
+
+      Runs after the gates and only when they found something to check: with
+      `status: "skipped"` nothing changed, so there is no diff to review and a
+      job that merely answered a question is one the owner reads himself.
+
+      Emitted a second time rather than awaited before the first emit — the
+      local model is slow enough (cold start alone was measured at 21s) that
+      holding the deterministic verdict back for it would make the fast, certain
+      answer arrive at the speed of the slow, uncertain one.
+    */
+    if (result.status !== "skipped") {
+      const attempt = job.attempts.at(-1);
+      const request =
+        attempt?.prompt ||
+        /*
+          `attempts[].prompt` is in memory only, so a job restored after a
+          restart has none. Falling back to the last prompt event keeps this
+          working across the restarts that are a normal part of editing
+          Operator; the title is a 60-char summary and would be reviewed
+          against as if it were the brief, which is worse than not running.
+        */
+        [...job.events].reverse().find((e) => e.type === "prompt")?.text ||
+        "";
+      const claimed = [...job.events]
+        .reverse()
+        .find((e) => e.type === "text" && !e.error)?.text ?? "";
+
+      const semantic = await reviewWork({ cwd: JOB_CWD, request, claimed });
+      if (semantic && job.task.verification) {
+        job.task.verification.semantic = semantic;
+        if (job.handoff) job.handoff.verification = job.task.verification;
+        emit(job, "verification", job.task.verification);
+        console.log(
+          `[operator] ${job.id} semantic: ${semantic.verdict} (${semantic.model}, ${semantic.ms}ms) — ${semantic.note}`,
+        );
+      }
+    }
   } catch (err) {
     // Even the verifier failing is a verdict worth recording rather than
     // swallowing: "could not check" is different from "checked and fine".

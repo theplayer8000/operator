@@ -78,6 +78,16 @@ function Verification({
 }) {
   const [open, setOpen] = useState(false);
   const { status, note, checks = [] } = verification;
+  /*
+    The model's opinion, rendered as a SEPARATE line beneath the gates.
+
+    Deliberately not folded into `status`, which is what the badge colours on.
+    The gates cannot be wrong; this is a 3B model's guess, and letting a guess
+    paint the badge red would make the two kinds of certainty indistinguishable
+    at exactly the moment the difference matters.
+  */
+  const semantic = (verification as { semantic?: { verdict?: string; note?: string; model?: string } })
+    .semantic;
 
   if (status === "skipped" || status === "not-run") return null;
 
@@ -123,6 +133,24 @@ function Verification({
           />
         )}
       </button>
+
+      {/*
+        Only when it has something to say. `unsure` is hidden: a permanent
+        "the model could not tell" line is furniture, and the existing badge
+        already hides `skipped` on exactly that argument.
+      */}
+      {semantic && semantic.verdict !== "unsure" && (
+        <p
+          className={`mt-1.5 pt-1.5 border-t border-current/15 text-[11px] ${
+            semantic.verdict === "mismatch" ? "text-xp" : "text-ink-600"
+          }`}
+        >
+          <span className="font-mono">
+            {semantic.verdict === "mismatch" ? "may not match the request" : "matches the request"}
+          </span>
+          {semantic.note ? <span className="text-ink-700"> — {semantic.note}</span> : null}
+        </p>
+      )}
 
       {open && (
         <ul className="mt-2 space-y-1 font-mono text-[10px]">
