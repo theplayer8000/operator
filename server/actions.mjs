@@ -232,12 +232,27 @@ async function focusOperator() {
       the outer quoting is single.
     */
     "$sig = '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);" +
+      " [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);" +
       " [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);" +
       " [DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);" +
       " [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);" +
       " [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);" +
       " public struct RECT { public int Left, Top, Right, Bottom; }';",
-    "$w = Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru;",
+    /*
+      Take the CLASS out of what -PassThru returns, not the array.
+
+      Declaring a struct alongside the methods makes Add-Type emit two types,
+      so -PassThru hands back an Object[] rather than a type — and every
+      `$w::Method(...)` call then fails with "does not contain a method named".
+      Those failures are NON-TERMINATING, so the script ran to its final
+      Write-Output and reported "sent-f11" while having done nothing at all.
+
+      That is why this looked like it worked: the return value described what
+      the script intended, not what happened. Measured 2026-08-31 by asking the
+      window where it was afterwards, which is the only honest test.
+    */
+    "$w = @(Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru) | Where-Object { $_.Name -eq 'Win' };",
+    "if (-not $w) { Write-Output 'NOTYPE'; exit 0 };",
     // Any window whose title mentions Operator, whichever browser is showing it.
     "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
     "if (-not $p) { Write-Output 'NOWINDOW'; exit 0 };",
@@ -258,22 +273,36 @@ async function focusOperator() {
     "$s = $all[$want].Bounds;",
     "$r = New-Object Fg.Win+RECT;",
     "$w::GetWindowRect($h, [ref]$r) | Out-Null;",
-    /*
-      Move it there BEFORE asking for fullscreen. F11 makes a window fill
-      whichever screen it is currently on, so fullscreening first and moving
-      afterwards would either land on the wrong monitor or drop out of
-      fullscreen on the way.
-
-      Only moved when it is not already on that screen — a window already in
-      place should not visibly jump.
-    */
     "$onScreen = ($r.Left -ge $s.X - 8) -and ($r.Left -lt $s.X + $s.Width);",
-    "if (-not $onScreen) { $w::MoveWindow($h, $s.X + 40, $s.Y + 40, [Math]::Min(1280, $s.Width - 80), [Math]::Min(800, $s.Height - 80), $true) | Out-Null; Start-Sleep -Milliseconds 150; $w::GetWindowRect($h, [ref]$r) | Out-Null };",
-    // A few pixels of slack: a fullscreen window is not always exactly the
-    // screen rect, and being one pixel out must not read as "not fullscreen".
+    /*
+      A fullscreen window cannot be moved.
+
+      Measured 2026-08-31: the first version moved first and fullscreened
+      after, which is right in principle and does nothing when the window is
+      ALREADY fullscreen on the wrong monitor — the browser owns its geometry
+      in that state and MoveWindow is simply ignored, silently. The window
+      stayed on screen 1 and the action reported success.
+
+      So the order has to be: leave fullscreen if in it, then move, then
+      re-enter. Each step needs a moment, because the browser re-lays-out
+      asynchronously and measuring too early reads the previous geometry.
+    */
+    // Is it fullscreen on WHATEVER screen it is currently on?
+    "$cur = [System.Windows.Forms.Screen]::FromHandle($h).Bounds;",
+    "$wasFull = (($r.Right - $r.Left) -ge ($cur.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($cur.Height - 4));",
+    "$moved = $false;",
+    "if (-not $onScreen) {",
+    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 400 };",
+    "  $w::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true) | Out-Null;",
+    "  Start-Sleep -Milliseconds 250;",
+    "  $w::SetForegroundWindow($h) | Out-Null;",
+    "  $moved = $true;",
+    "  $w::GetWindowRect($h, [ref]$r) | Out-Null;",
+    "};",
+    // Now measure against the TARGET screen and fullscreen there if needed.
     "$full = (($r.Right - $r.Left) -ge ($s.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($s.Height - 4));",
     "if (-not $full) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0) };",
-    "Write-Output ($p.MainWindowTitle + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen' + ($want + 1));",
+    "Write-Output ($p.MainWindowTitle + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen' + ($want + 1) + '|' + $(if ($moved) { 'moved' } else { 'in-place' }));",
   ].join(" ");
 
   try {
