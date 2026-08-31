@@ -714,9 +714,48 @@ server.listen(PORT, HOST, () => {
     throttles a page and suspends its audio. Off unless OPERATOR_LISTEN names a
     microphone — an always-open mic is a decision, not a default.
   */
-  if (startListening(() => void runAction("focus_operator", {}).catch((err) => {
-    console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
-  }))) {
+  /*
+    Two claps: summon, then listen, then act on what was said.
+
+    The owner's choice of the three shapes offered. Summon and listen run
+    TOGETHER rather than in sequence — capture starts on the second clap while
+    the window is still coming forward, so a sentence begun with the clap is
+    caught rather than clipped. That is the whole reason the callback fires on
+    the second clap rather than after the view changes.
+
+    Nothing is spoken back and no job is started when nothing was heard: a
+    misfired clap should cost a moment of listening, not an empty conversation
+    in the tab strip.
+  */
+  if (startListening(() => {
+    void runAction("focus_operator", {}).catch((err) => {
+      console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
+    });
+    void runAction("listen_once", { seconds: 6 })
+      .then((heardResult) => {
+        const text = String(heardResult?.heard ?? "").trim();
+        if (!text) {
+          console.log(
+            `[operator] clap: nothing heard (peak ${heardResult?.peak ?? "?"})`,
+          );
+          return;
+        }
+        console.log(`[operator] clap heard: ${JSON.stringify(text)}`);
+        /*
+          Straight into a job, so the transcript is answered rather than
+          logged. Routed with "auto" like anything else — a spoken request is
+          not a different KIND of request, and hardcoding a worker here would
+          send "what's my gym session" to Claude Code at Claude Code prices.
+
+          The identity is the machine itself: this did not arrive over HTTP
+          from a device, it came from a microphone attached to the server.
+        */
+        return jobs.create(text, undefined, { device: "this machine", method: "local" });
+      })
+      .catch((err) => {
+        console.warn(`[operator] clap listen failed: ${err?.message ?? err}`);
+      });
+  })) {
     console.log(`[operator] listening for a double clap on "${listenState.device}"`);
   } else if (listenState.reason && process.env.OPERATOR_LISTEN) {
     console.warn(`[operator] not listening: ${listenState.reason}`);
