@@ -31,6 +31,72 @@
 
 import sys
 
+# Whisper's stock hallucinations, lowercased and stripped of punctuation.
+#
+# These are not guesses. Fed silence or noise, Whisper emits the phrases that
+# dominate its training data — the end-cards of YouTube videos — and it emits
+# them with high confidence, because as far as the model is concerned it has
+# recognised something it has seen a million times.
+#
+# Observed on this machine on 2026-08-31, each of which started a real Claude
+# Code job: "Thanks for watching!", "Thank you.", "Mm-hmm", "Okay.",
+# "and into watching this video."
+#
+# This is a BACKSTOP, not the mechanism. The scores below are what actually
+# does the work; a blocklist can only catch what someone has already seen.
+HALLUCINATIONS = {
+    "thanks for watching",
+    "thank you for watching",
+    "thanks for watching!",
+    "thank you",
+    "thanks",
+    "you",
+    "bye",
+    "bye bye",
+    "okay",
+    "ok",
+    "mm-hmm",
+    "mmhmm",
+    "mm",
+    "uh",
+    "um",
+    "yeah",
+    "so",
+    "subscribe",
+    "please subscribe",
+    "like and subscribe",
+    "the end",
+    "silence",
+    "music",
+    "applause",
+}
+
+# A segment below this is noise dressed as speech.
+#
+# avg_logprob is the model's mean per-token log probability: genuine speech sits
+# around -0.1 to -0.5, and invented text falls away sharply below -1.0.
+MIN_AVG_LOGPROB = -1.0
+
+# no_speech_prob is the model's own estimate that a segment contains no speech
+# at all. Above this it is saying so directly, and it should be believed.
+MAX_NO_SPEECH_PROB = 0.6
+
+
+def _looks_hallucinated(text: str) -> bool:
+    """True when a segment is one of Whisper's silence-fillers."""
+    cleaned = text.strip().strip(".,!?-—…\"' ").lower()
+    if not cleaned:
+        return True
+    if cleaned in HALLUCINATIONS:
+        return True
+    # "Bye. Bye. Bye. Bye." — a single filler repeated is the same failure
+    # wearing a longer coat. Observed exactly this on 2026-08-31.
+    words = [w.strip(".,!?-—…\"'") for w in cleaned.split()]
+    words = [w for w in words if w]
+    if len(words) > 2 and len(set(words)) <= 2:
+        return True
+    return False
+
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -62,7 +128,27 @@ def main() -> int:
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 400},
         )
-        text = " ".join(seg.text.strip() for seg in segments).strip()
+        kept = []
+        scores = []
+        for seg in segments:
+            body = seg.text.strip()
+            if not body:
+                continue
+            # The model's own two verdicts on whether this is speech. Checked
+            # BEFORE the wording, because a score rejects hallucinations nobody
+            # has catalogued yet and the blocklist only rejects the known ones.
+            no_speech = getattr(seg, "no_speech_prob", 0.0) or 0.0
+            logprob = getattr(seg, "avg_logprob", 0.0) or 0.0
+            if no_speech > MAX_NO_SPEECH_PROB:
+                continue
+            if logprob < MIN_AVG_LOGPROB:
+                continue
+            if _looks_hallucinated(body):
+                continue
+            kept.append(body)
+            scores.append(logprob)
+
+        text = " ".join(kept).strip()
     except Exception as err:  # noqa: BLE001 — the caller wants the reason, not a trace
         print(f"ERR|{err}")
         return 1
@@ -71,10 +157,25 @@ def main() -> int:
         print("NOSPEECH")
         return 1
 
-    # Language probability stands in for confidence; faster-whisper does not
-    # give a per-utterance score, and printing something honest beats printing
-    # a number that looks more precise than it is.
-    print(f"TEXT|{info.language_probability:.2f}|{text}")
+    """
+    Confidence from avg_logprob, NOT language_probability.
+
+    It used to print `info.language_probability`, which on an English-only
+    model (`base.en`) is a constant ~1.00 — it can only ever detect the one
+    language it supports. So every hallucination arrived stamped "confident"
+    and no caller could filter on it. The number was real; it just measured
+    nothing about whether the words were said.
+
+    Mapping mean log-probability onto 0–1 keeps the printed contract identical
+    while making the value mean something: about 0.9 for clear speech, under
+    0.5 for anything the model was guessing at.
+    """
+    import math
+
+    mean_logprob = sum(scores) / len(scores)
+    confidence = max(0.0, min(1.0, math.exp(mean_logprob)))
+
+    print(f"TEXT|{confidence:.2f}|{text}")
     return 0
 
 

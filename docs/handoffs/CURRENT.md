@@ -46,7 +46,52 @@ seen yet.** The level scaling (`level / threshold`, floor 0.004, visible above
 0.35) is reasoned from the measured figures — his speech peaks ~0.0009 against a
 ~0.0007 room floor, with 30dB gain applied — not observed. Expect to tune it.
 
+## Phantom jobs from hallucinated speech — fixed, needs a restart
+
+Found in `data/serve.log` on 2026-08-31. The clap gesture created **about
+twenty jobs from nothing** (`job-4` through `job-23`), each a real Claude Code
+turn against the $10 ceiling. One reached the point of asking permission to run
+git.
+
+Cause, in two parts:
+
+1. **`transcribe.py` reported meaningless confidence.** It printed
+   `info.language_probability` from `base.en` — an English-only model, so that
+   value is a constant ~1.00. It measured nothing about whether words were
+   said.
+2. **`index.mjs` never checked confidence anyway.** Any non-empty transcript
+   became a job.
+
+So Whisper's stock silence-fillers — "Thanks for watching!", "Mm-hmm",
+"Okay.", "Thank you." — went straight through. Those are the model's
+best-known hallucinations: fed silence it emits YouTube end-cards, confidently.
+
+Fixed:
+
+- `transcribe.py` now drops segments by the model's OWN verdicts
+  (`no_speech_prob` > 0.6, `avg_logprob` < -1.0), then by a blocklist as a
+  backstop, then reports confidence derived from `avg_logprob`. Scores first
+  on purpose — a blocklist only catches what someone has already seen.
+- `index.mjs` gates job creation on confidence ≥ 0.55, voiced fraction ≥ 1.5%,
+  and ≥ 2 words. Biased towards dropping: a missed command costs one more clap,
+  an invented one costs money and a tab.
+
+**Not yet observed working.** Needs a restart and a real clap test.
+
+## Also visible in that log
+
+- The 60s listener backoff works — `backing off to 60s retries`, then it kept
+  trying, where before it stopped dead.
+- `clap: nothing heard (peak 1)` recurs: the capture is **clipping**. 30dB of
+  gain is too much for the headset. Likely resolves itself with the boom mic
+  (set `OPERATOR_LISTEN_GAIN` to 0 then), but worth measuring rather than
+  assuming.
+- `server/actions.mjs:389` crashed the server once with an unterminated string
+  (`].join("`). Recovered, but that came from the in-app agent — worth knowing
+  it can happen.
+
 ## Next
 
-Restart, watch the chip, then the three he asked for on top of this: tool
-relevance filtering, semantic verification, self-hosted ntfy.
+Restart and test a clap. Then the three: tool relevance filtering, semantic
+verification, self-hosted ntfy. `/map` as its own route is still unbuilt and
+he has asked for it twice.

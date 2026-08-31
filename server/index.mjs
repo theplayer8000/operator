@@ -779,7 +779,46 @@ server.listen(PORT, HOST, () => {
           );
           return;
         }
-        console.log(`[operator] clap heard: ${JSON.stringify(text)}`);
+        /*
+          A transcript is not yet a request — check it is really speech first.
+
+          On 2026-08-31 this created about twenty jobs from nothing. Whisper
+          fed near-silence emits "Thanks for watching!", "Mm-hmm", "Okay." and
+          "Thank you." with high confidence, and every one of those started a
+          real Claude Code turn against the usage ceiling. One got as far as
+          asking permission to run git.
+
+          Three gates, cheapest first, and all three are needed:
+
+          - CONFIDENCE, now that `transcribe.py` reports something real. It was
+            printing `language_probability` from an English-only model, a
+            constant ~1.00, so this check would have passed everything.
+          - VOICED FRACTION, measured from the PCM rather than the model. A
+            capture that is 99% silence did not contain a sentence, whatever
+            the transcriber made of it.
+          - LENGTH, because "Ugh!" is not an instruction even when genuinely
+            said, and acting on it costs more than ignoring it.
+
+          Deliberately biased towards dropping: a missed command costs one more
+          clap, an invented one costs money and a tab. Those are not
+          symmetrical, so the threshold should not be either.
+        */
+        const confidence = Number(heardResult?.confidence ?? 0);
+        const voicedPct = Number(heardResult?.voicedPct ?? 0);
+        const words = text.split(/\s+/).filter(Boolean).length;
+
+        if (confidence < 0.55 || voicedPct < 1.5 || words < 2) {
+          console.log(
+            `[operator] clap: ignoring ${JSON.stringify(text)} ` +
+              `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%, ${words} word(s))`,
+          );
+          return;
+        }
+
+        console.log(
+          `[operator] clap heard: ${JSON.stringify(text)} ` +
+            `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%)`,
+        );
         /*
           Straight into a job, so the transcript is answered rather than
           logged. Routed with "auto" like anything else — a spoken request is
