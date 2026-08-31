@@ -49,15 +49,33 @@ An Attack Shark keyboard, **a boom mic**, **a webcam**, and a coiled cable.
 
 The boom mic is the one that matters: current transcripts are rough because the
 Bluetooth headset barely registers speech, and one capture peaked at **1.0**,
-which is clipping. When it arrives:
+which is clipping.
+
+It is a **dynamic XLR/USB mic with a hardware gain knob**, which is a better
+fit than it looks. Hardware gain acts before the converter, so it lifts speech
+without amplifying the noise `OPERATOR_LISTEN_GAIN` cannot avoid — **set the
+knob and put the software gain back to 0.** Dynamic capsules also reject room
+noise far better than condensers, which matters with a mechanical keyboard
+arriving in the same order. Its 50Hz–12kHz range is not a limitation here:
+Whisper runs at a 16kHz sample rate and cannot use anything above 8kHz anyway.
+
+When it arrives:
 
 ```
-setx OPERATOR_LISTEN_GAIN 20
+setx OPERATOR_LISTEN_GAIN 0
 setx OPERATOR_LISTEN "<new device name>"
 ```
 
 `ffmpeg -list_devices true -f dshow -i dummy` prints the exact name. Then a
 **full** restart, per trap 1.
+
+Two things about that mic that will otherwise cost an evening:
+
+- **Set the reverb/echo knob to zero.** Reverb smears the tail of each word and
+  Whisper transcribes the smear as extra syllables.
+- **It has a physical mute button, which Operator cannot see.** Muted, it
+  produces exactly the `peak 0.0007` reading that trap 3 above describes, with
+  nothing in software able to say why. Check the button first.
 
 The webcam feeds the camera work in
 [`devices-and-harness-notes.md`](../devices-and-harness-notes.md), and has a mic
