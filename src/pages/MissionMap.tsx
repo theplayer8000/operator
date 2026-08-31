@@ -49,6 +49,11 @@ const STATUS_COLOR: Record<MissionStatus, [number, number, number]> = {
 const GOLD: [number, number, number] = [232, 176, 77];
 const VIOLET: [number, number, number] = [141, 127, 224];
 
+/** Operator's own node at the centre — the thing every mission hangs off. */
+const CORE_R = 62;
+/** Missions settle outside this, so nothing parks on top of the core. */
+const MIN_ORBIT = 235;
+
 const rgba = (c: [number, number, number], a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
 interface Body {
@@ -87,6 +92,46 @@ export default function MissionMap() {
   */
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+
+  /*
+    Is Operator actually working?
+
+    The heart has to beat for something. Sound alone would make it a VU meter
+    with ambitions — a thing that reacts to the room but not to itself. A turn
+    running is the closest thing this system has to a thought in progress, so
+    that is what quickens it.
+
+    Polled here rather than through `useJobs`, which pulls full event logs
+    every two seconds for a thread the map does not render. This needs one
+    boolean.
+
+    `/api/jobs` returns `authorised: false` when the terminal is disarmed. That
+    is not an error and is not surfaced: the heart simply idles, which is
+    honest — Operator is not running anything it will admit to.
+  */
+  const busyRef = useRef(false);
+  useEffect(() => {
+    let stopped = false;
+    const poll = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const res = await fetch("/api/jobs", { headers: { accept: "application/json" } });
+        const body = await res.json();
+        if (stopped) return;
+        const jobs: { status?: string }[] = Array.isArray(body?.jobs) ? body.jobs : [];
+        busyRef.current =
+          Boolean(body?.running) || jobs.some((j) => j.status === "running" || j.status === "queued");
+      } catch {
+        if (!stopped) busyRef.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const view = useRef({ zoom: 1, panX: 0, panY: 0 });
   const pointer = useRef({
@@ -159,6 +204,8 @@ export default function MissionMap() {
     let raf = 0;
     let width = 0;
     let height = 0;
+    /** Frames since mount — drives the core's rotation and heartbeat. */
+    let tick = 0;
 
     const resize = () => {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -222,6 +269,21 @@ export default function MissionMap() {
         // forever — with no edges nothing else would ever bring it back.
         a.vx -= a.x * 0.0016;
         a.vy -= a.y * 0.0016;
+
+        /*
+          Nothing sits on the core.
+
+          The pull home and this push out settle every mission into a ring
+          around the centre, which is the arrangement the whole idea depends
+          on: the core is what they are all attached to, so it needs its own
+          space rather than a node parked on top of it.
+        */
+        const fromCore = Math.hypot(a.x, a.y) || 1;
+        if (fromCore < MIN_ORBIT) {
+          const push = (MIN_ORBIT - fromCore) * 0.035;
+          a.vx += (a.x / fromCore) * push;
+          a.vy += (a.y / fromCore) * push;
+        }
       }
 
       for (const e of eds) {
@@ -329,6 +391,77 @@ export default function MissionMap() {
         ctx.fillStyle = rgba(lift > 0 ? accent : GOLD, 0.5 + lift * 0.5);
         ctx.fill();
       }
+
+      /* ---- the core ------------------------------------------------------
+         Operator itself, at the centre of everything attached to it.
+
+         Four states it has to distinguish without a word of text, because the
+         point is reading it from across a room:
+
+           idle      slow gold breath — alive, nothing happening
+           hearing   swells and brightens with the voice
+           speaking  violet, a steadier and more deliberate rhythm
+           thinking  a turn is running: the rings accelerate
+
+         Thinking is drawn on TOP of the voice states rather than instead of
+         them, because Operator can perfectly well be listening while it works
+         and hiding one behind the other would make the display lie.
+      */
+      tick += 1;
+      const busy = busyRef.current;
+      // The resting heartbeat: two beats close together, then a pause — a
+      // sine wave reads as breathing, and this should read as a pulse.
+      const beat = (tick % 150) / 150;
+      const thump =
+        Math.exp(-Math.pow((beat - 0.08) * 14, 2)) + 0.55 * Math.exp(-Math.pow((beat - 0.24) * 14, 2));
+      const excitement = Math.max(lift, busy ? 0.45 : 0);
+      const coreColour = v.speaking ? VIOLET : busy && lift === 0 ? ([120, 200, 232] as [number, number, number]) : GOLD;
+      const spin = tick * (0.004 + excitement * 0.02) + (busy ? tick * 0.012 : 0);
+      const pulse = 1 + thump * 0.06 + excitement * 0.16;
+
+      ctx.globalCompositeOperation = "lighter";
+
+      // Outer halo
+      const aura = ctx.createRadialGradient(0, 0, CORE_R * 0.3, 0, 0, CORE_R * 3.1 * pulse);
+      aura.addColorStop(0, rgba(coreColour, 0.16 + excitement * 0.2));
+      aura.addColorStop(0.45, rgba(coreColour, 0.05 + excitement * 0.07));
+      aura.addColorStop(1, rgba(coreColour, 0));
+      ctx.fillStyle = aura;
+      ctx.beginPath();
+      ctx.arc(0, 0, CORE_R * 3.1 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Counter-rotating arc rings. Gaps in the stroke are what make rotation
+      // legible — a full circle spinning looks identical to one standing still.
+      for (let ring = 0; ring < 3; ring++) {
+        const rr = CORE_R * (1.35 + ring * 0.42) * pulse;
+        const dir = ring % 2 === 0 ? 1 : -1;
+        const arcs = 3 + ring;
+        ctx.lineWidth = ring === 0 ? 2.2 : 1.3;
+        ctx.strokeStyle = rgba(coreColour, (0.5 - ring * 0.11) * (0.55 + excitement * 0.45));
+        for (let k = 0; k < arcs; k++) {
+          const from = spin * dir + (k / arcs) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, rr, from, from + (Math.PI * 2) / arcs - 0.55);
+          ctx.stroke();
+        }
+      }
+
+      // Nucleus
+      const nucleus = ctx.createRadialGradient(0, 0, 0, 0, 0, CORE_R * 0.82 * pulse);
+      nucleus.addColorStop(0, rgba([255, 255, 255], 0.5 + excitement * 0.4));
+      nucleus.addColorStop(0.35, rgba(coreColour, 0.62 + excitement * 0.3));
+      nucleus.addColorStop(1, rgba(coreColour, 0));
+      ctx.fillStyle = nucleus;
+      ctx.beginPath();
+      ctx.arc(0, 0, CORE_R * 0.82 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, CORE_R * 0.5 * pulse, 0, Math.PI * 2);
+      ctx.strokeStyle = rgba(coreColour, 0.75);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
 
       // Nodes
       for (const b of bodies) {
@@ -480,14 +613,49 @@ export default function MissionMap() {
     view.current.zoom = Math.max(0.35, Math.min(3, next));
   };
 
+  /*
+    Fit everything on screen, rather than merely returning to 1:1.
+
+    The first version reset zoom and pan to their defaults, which is not what
+    "reset" means on a map you can throw nodes around: if you had flung one into
+    the distance, the view snapped back to centre and the node was still off
+    screen. Measuring the actual bounds and framing them does what the button
+    says.
+  */
+  const fitView = () => {
+    const canvas = canvasRef.current;
+    const bodies = bodiesRef.current;
+    if (!canvas || bodies.length === 0) {
+      view.current = { zoom: 1, panX: 0, panY: 0 };
+      return;
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const b of bodies) {
+      // Include the node's radius and its label, or the outermost one sits
+      // half off the edge of a view that just told you it fitted.
+      minX = Math.min(minX, b.x - b.r - 90);
+      maxX = Math.max(maxX, b.x + b.r + 90);
+      minY = Math.min(minY, b.y - b.r - 40);
+      maxY = Math.max(maxY, b.y + b.r + 46);
+    }
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const zoom = Math.max(0.35, Math.min(1.6, Math.min(w / (maxX - minX), h / (maxY - minY))));
+    view.current = {
+      zoom,
+      panX: -((minX + maxX) / 2) * zoom,
+      panY: -((minY + maxY) / 2) * zoom,
+    };
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") navigate("/");
-      if (e.key === "0") {
-        view.current.zoom = 1;
-        view.current.panX = 0;
-        view.current.panY = 0;
-      }
+      // "r" as well as "0" — the hint was set in 10px mono and read as a "B".
+      if (e.key === "0" || e.key === "r" || e.key === "R") fitView();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -532,9 +700,22 @@ export default function MissionMap() {
               {voice.speaking ? "SPEAKING" : hearing ? "HEARING" : "LISTENING"}
             </span>
           )}
+          {/*
+            A real button, not a keyboard hint.
+
+            "0 to reset" was set in 10px mono at the bottom of the screen and
+            read as "B to reset" — which is a fair description of a control
+            nobody can see.
+          */}
+          <button
+            onClick={fitView}
+            className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
+          >
+            RECENTRE
+          </button>
           <button
             onClick={() => navigate("/")}
-            className="pointer-events-auto font-mono text-[11px] text-ink-600 hover:text-ink-100 transition-colors border border-base-600 rounded-badge px-3 py-1.5 min-h-[36px]"
+            className="pointer-events-auto font-mono text-[11px] text-ink-600 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
           >
             ESC
           </button>
@@ -554,7 +735,7 @@ export default function MissionMap() {
       )}
 
       <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden sm:block">
-        drag a node · drag the field to pan · scroll to zoom · 0 to reset
+        drag a node · drag the field to pan · scroll to zoom
       </p>
     </div>
   );
