@@ -44,9 +44,15 @@ owner).
 > **Fixed 2026-07-28.** `src/lib/id.ts` now exposes `generateId()` with a
 > non-crypto fallback, and all eight call sites use it. Verified over Tailscale.
 > **Use `generateId()` for any new ID — never `crypto.randomUUID()` directly.**
-> The underlying constraint has not gone away: Operator is used at a bare IP, so
-> every secure-context API (`crypto.subtle`, `navigator.clipboard`, service
-> workers) is still unavailable.
+>
+> **Amended 2026-08-31: it depends which address you open.** `tailscale serve`
+> publishes the app at `https://<machine>.<tailnet>.ts.net` with a real
+> certificate, and that URL **is** a secure context — `getUserMedia`,
+> `crypto.subtle`, `navigator.clipboard` and service workers all work there.
+> The phone microphone on `/` relies on exactly this. A bare `100.x` tailnet
+> address is still insecure and still has none of them, so both states exist
+> depending on how the page was reached. Keep using `generateId()`: it costs
+> nothing and it is the only thing that behaves the same either way.
 
 Documented in `CLAUDE.md, "Known issues"`. `crypto.randomUUID()` exists only in a secure
 context (`localhost` or HTTPS). The owner accesses the dev server over Tailscale

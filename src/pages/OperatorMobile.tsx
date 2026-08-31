@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useJobs } from "@/hooks/useJobs";
 import OperatorChat from "@/components/map/OperatorChat";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
+import { useMicLevel } from "@/hooks/useMicLevel";
 import { drawCore } from "@/components/map/operatorCore";
 
 /**
@@ -39,8 +40,23 @@ export default function OperatorMobile() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  /*
+    This phone's own microphone, read locally at frame rate.
+
+    The owner's idea, and it is the right one: the device in his hand has a
+    better microphone than the desktop rig, it is always with him, and reading
+    it here means the core responds to his voice with NO network in the loop.
+    The server poll can only ever be a quarter-second behind.
+
+    It is opt-in behind a tap because browsers require a gesture, and because
+    an app that opens your microphone unasked is one you stop trusting.
+  */
+  const mic = useMicLevel();
+
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  const micRef = useRef(mic);
+  micRef.current = mic;
   const busyRef = useRef(false);
   busyRef.current = jobs.busy || Boolean(jobs.runningId);
 
@@ -69,8 +85,21 @@ export default function OperatorMobile() {
 
     const frame = () => {
       const v = voiceRef.current;
-      const heard = v.listening ? Math.min(1, v.level / Math.max(0.004, v.threshold)) : 0;
-      const lift = v.speaking ? 1 : heard > 0.35 ? heard : 0;
+      const m = micRef.current;
+      /*
+        This phone's microphone wins when it is open.
+
+        Local is both faster and more relevant: the server's level describes
+        the room the PC is in, which is not where he is standing. The server
+        poll stays as the fallback so the core still lives when the phone's
+        microphone is closed.
+      */
+      const heard = m.active
+        ? m.levelRef.current
+        : v.listening
+          ? Math.min(1, v.level / Math.max(0.004, v.threshold))
+          : 0;
+      const lift = v.speaking ? 1 : heard > 0.12 ? heard : 0;
 
       ctx.globalCompositeOperation = "source-over";
       const bg = ctx.createRadialGradient(
@@ -116,7 +145,15 @@ export default function OperatorMobile() {
       {/* Status, top-left. Only ever says something true. */}
       <div className="relative flex items-center justify-between px-5 pt-5">
         <span className="font-mono text-[11px] text-ink-600 flex items-center gap-2">
-          {voice.listening ? (
+          {mic.active ? (
+            <>
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-xp"
+                style={{ boxShadow: "0 0 8px #E8B04D" }}
+              />
+              THIS MIC
+            </>
+          ) : voice.listening ? (
             <>
               <span
                 className="w-1.5 h-1.5 rounded-full transition-all duration-150"
@@ -132,13 +169,41 @@ export default function OperatorMobile() {
             <span className="text-ink-700">OPERATOR</span>
           )}
         </span>
-        <button
-          onClick={() => navigate("/dashboard")}
-          className="font-mono text-[11px] text-ink-600 border border-base-600 rounded-badge px-3 min-h-[44px] min-w-[44px]"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-2">
+          {/*
+            Opening the microphone needs a user gesture, so it is a button and
+            not something that happens on load. Hidden entirely when the page
+            is not a secure context — a dead button teaches you the feature is
+            broken, where its absence plus the message below is the truth.
+          */}
+          {mic.supported && (
+            <button
+              onClick={() => (mic.active ? mic.disable() : void mic.enable())}
+              aria-label={mic.active ? "Stop using this phone's microphone" : "Use this phone's microphone"}
+              className={`font-mono text-[11px] border rounded-badge px-3 min-h-[44px] transition-colors ${
+                mic.active
+                  ? "border-xp/50 text-xp"
+                  : "border-base-600 text-ink-600 hover:text-ink-100"
+              }`}
+            >
+              {mic.active ? "MIC ON" : "MIC"}
+            </button>
+          )}
+          <button
+            onClick={() => navigate("/dashboard")}
+            className="font-mono text-[11px] text-ink-600 border border-base-600 rounded-badge px-3 min-h-[44px] min-w-[44px]"
+          >
+            ✕
+          </button>
+        </div>
       </div>
+
+      {(mic.error || (!mic.supported && !voice.listening)) && (
+        <p className="relative mx-5 mt-3 text-[11px] text-ink-600 leading-relaxed">
+          {mic.error ??
+            "Open Operator at its https://…ts.net address to use this phone's microphone — a bare IP is not a secure page, so the browser will not hand it over."}
+        </p>
+      )}
 
       <div className="flex-1" />
 
