@@ -69,7 +69,34 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
     readStorage<boolean>(ENABLED_KEY, false),
   );
   const [listening, setListening] = useState(false);
-  const [reason, setReason] = useState<string | null>(null);
+  /*
+    Say why it cannot work, without waiting to be switched on.
+
+    The first version only set a reason after `enabled` — so where the browser
+    has no microphone API at all, the caller hid the control and there was
+    nothing on screen at all. At a bare tailnet IP that is exactly the case:
+    `navigator.mediaDevices` is undefined outside a secure context, so the
+    feature silently did not exist rather than explaining itself. Which is the
+    single most likely thing to be wrong, and was the hardest state to debug.
+  */
+  const [reason, setReason] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    /*
+      `Boolean(...)` rather than a bare truthiness test, because TypeScript's
+      DOM types declare `getUserMedia` as always defined and reject the check as
+      redundant. It is not: outside a secure context `navigator.mediaDevices` is
+      undefined entirely, which is precisely the case being detected here.
+    */
+    if (
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      ("AudioContext" in window || "webkitAudioContext" in window)
+    ) {
+      return null;
+    }
+    return window.isSecureContext
+      ? "This browser has no microphone access."
+      : "Needs the https address — a microphone is unavailable at a bare IP or over plain http.";
+  });
 
   // Kept in refs so the audio loop never re-subscribes; it must not restart
   // every time a parent re-renders.

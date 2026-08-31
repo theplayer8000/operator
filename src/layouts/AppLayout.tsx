@@ -92,9 +92,10 @@ export default function AppLayout() {
         Desk only, and hidden entirely where the browser cannot do it at all,
         which at a bare tailnet IP it cannot.
       */}
-      {bigScreen && clap.supported && (
+      {bigScreen && (
         <button
-          onClick={() => clap.setEnabled(!clap.enabled)}
+          onClick={() => clap.supported && clap.setEnabled(!clap.enabled)}
+          disabled={!clap.supported}
           title={
             clap.reason ??
             (clap.enabled
@@ -102,9 +103,9 @@ export default function AppLayout() {
               : "Clap twice to bring Operator to the front. Opens the microphone; no audio is recorded or sent.")
           }
           aria-label={clap.enabled ? "Stop listening for claps" : "Listen for a double clap"}
-          className={`fixed bottom-4 right-4 z-30 flex items-center gap-2 h-10 px-3 rounded-badge border text-[11px] transition-colors ${
+          className={`fixed bottom-4 right-4 z-30 flex items-center gap-2 h-10 px-3 rounded-badge border text-[11px] transition-colors max-w-[280px] ${
             clap.reason
-              ? "border-vital-down/40 bg-vital-down/10 text-vital-down"
+              ? "border-vital-down/40 bg-vital-down/10 text-vital-down cursor-help"
               : clap.listening
                 ? "border-xp/40 bg-xp/10 text-xp"
                 : "border-base-600 bg-base-800 text-ink-700 hover:text-ink-300"
@@ -119,7 +120,15 @@ export default function AppLayout() {
               />
             ))}
           </span>
-          {clap.reason ? "mic unavailable" : clap.listening ? "listening" : "clap to summon"}
+          {/*
+            The reason IS the label when there is one. A generic "unavailable"
+            with the detail hidden in a tooltip is how this went undiagnosed:
+            the three causes — no https, no permission, no microphone — need
+            three different fixes and look identical from outside.
+          */}
+          <span className="truncate">
+            {clap.reason ?? (clap.listening ? "listening" : "clap to summon")}
+          </span>
         </button>
       )}
 
