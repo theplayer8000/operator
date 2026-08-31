@@ -25,6 +25,9 @@
 // comment on withState().
 
 import { randomUUID } from "node:crypto";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
 
 export class ActionError extends Error {}
@@ -262,6 +265,16 @@ const OP_DECLARATIONS = [
   "if (-not ('Op' -as [type])) { Add-Type -TypeDefinition $opSrc -ErrorAction SilentlyContinue }",
 ].join("\n");
 
+/*
+  The compiled helper, built once by scripts/build-win.mjs.
+
+  Spawning PowerShell and compiling these declarations per call cost ~770ms
+  before any Win32 call happened. This is ~100ms including process start, and
+  it needs no lifecycle, no queue and no fallback — which is what made a
+  long-lived PowerShell fragile enough to abandon.
+*/
+const WIN_EXE = resolve(dirname(fileURLToPath(import.meta.url)), "win", "OperatorWin.exe");
+
 async function focusOperator({ pause } = {}) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -303,143 +316,16 @@ async function focusOperator({ pause } = {}) {
     ShowWindow(9) is SW_RESTORE and only un-minimises — it restores the previous
     size, which is why the first version came back windowed.
   */
-  const script = [
-    /*
-      Declared per call, which costs ~450ms of C# compilation every summon.
-
-      A persistent PowerShell holding the compiled type would remove it, and
-      an attempt at one is recorded in the handoff rather than left here
-      half-working: `powershell -Command -` buffers multi-line input until
-      EOF, so it never became a REPL and every call silently fell back to
-      this path anyway. A different mechanism is needed — see the handoff.
-    */
-    OP_DECLARATIONS,
-    "$p = [Op]::ByTitle('Operator');",
-    "for ($i = 0; $i -lt 4 -and $p -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 300; $p = [Op]::ByTitle('Operator') };",
-    "if ($p -eq [IntPtr]::Zero) { Write-Output 'NOWINDOW'; exit 0 };",
-    "$title = [Op]::TitleOf($p);",
-    "$h = $p;",
-    /*
-      Pause whatever is playing, from inside THIS script rather than a second
-      action. Two invocations meant paying PowerShell's ~320ms startup and the
-      Add-Type compile twice for a gesture that is meant to feel instant, which
-      was most of why the owner called it slow.
-
-      Same key as media_play_pause, which stays as its own action because it is
-      independently useful.
-    */
-    `if (${pauseMedia}) { [Op]::keybd_event(0xB3,0,0,0); [Op]::keybd_event(0xB3,0,2,0) };`,
-    /*
-      SwitchToThisWindow rather than the ALT tap. Pressing ALT is the classic
-      way past Windows' foreground restriction, but a browser reads a lone ALT
-      as "focus the menu" — which is why a nav link ended up with a focus ring
-      around it after every clap.
-    */
-    /*
-      Restore ONLY if minimised, never unconditionally.
-
-      SW_RESTORE un-minimises, and on a window that is already fullscreen or
-      maximised it also un-maximises it — so calling it every time meant every
-      summon started by fighting the state it was about to ask for. That is the
-      jank: raise a fullscreen window and watch it drop out of fullscreen, then
-      get F11'd back into it.
-
-      IsIconic is the actual question being asked here. SwitchToThisWindow
-      raises it either way.
-    */
-    "[Op]::SwitchToThisWindow($h, $true);",
-    "if ([Op]::IsIconic($h)) { [Op]::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 120 };",
-    "[Op]::SetForegroundWindow($h) | Out-Null;",
-    /*
-      The target screen's geometry arrives as literals from Node, already
-      cached — so this script never loads System.Windows.Forms, which was 270ms
-      of every summon for an answer that changes when a monitor is unplugged
-      and not otherwise.
-    */
-    `$s = @{ X = ${target.x}; Y = ${target.y}; Width = ${target.width}; Height = ${target.height} };`,
-    "$r = New-Object Fg.Win+RECT;",
-    "[Op]::GetWindowRect($h, [ref]$r) | Out-Null;",
-    "$onScreen = ($r.Left -ge $s.X - 8) -and ($r.Left -lt $s.X + $s.Width);",
-    /*
-      A fullscreen window cannot be moved.
-
-      Measured 2026-08-31: the first version moved first and fullscreened
-      after, which is right in principle and does nothing when the window is
-      ALREADY fullscreen on the wrong monitor — the browser owns its geometry
-      in that state and MoveWindow is simply ignored, silently. The window
-      stayed on screen 1 and the action reported success.
-
-      So the order has to be: leave fullscreen if in it, then move, then
-      re-enter. Each step needs a moment, because the browser re-lays-out
-      asynchronously and measuring too early reads the previous geometry.
-    */
-    // Is it fullscreen on WHATEVER screen it is currently on?
-    /*
-      Which screen is it on NOW — worked out from the cached layout rather than
-      by loading System.Windows.Forms for one lookup. `FromHandle` was left
-      behind when the assembly load was removed for speed, which would have
-      thrown at runtime; kept as a reminder that dropping a dependency means
-      finding every use of it, not just the import.
-    */
-    `$screens = @(${screens
-      .map((s) => `@{ X = ${s.x}; Y = ${s.y}; Width = ${s.width}; Height = ${s.height} }`)
-      .join(", ")});`,
-    "$cur = $screens[0];",
-    "foreach ($sc in $screens) { if ($r.Left -ge $sc.X - 8 -and $r.Left -lt $sc.X + $sc.Width) { $cur = $sc } };",
-    "$wasFull = (($r.Right - $r.Left) -ge ($cur.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($cur.Height - 4));",
-    "$moved = $false;",
-    "$steps = @();",
-    "if (-not $onScreen) {",
-    "  if ($wasFull) { [Op]::keybd_event(0x7A,0,0,0); [Op]::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 260; $steps += 'exit-fullscreen' };",
-    /*
-      Un-maximise BEFORE moving, and this is the step that was missing.
-
-      Leaving fullscreen restores a window to whatever it was before — which for
-      a browser is usually MAXIMISED, and MoveWindow is silently ignored on a
-      maximised window exactly as it is on a fullscreen one. So the sequence
-      exited fullscreen, failed to move, measured itself as not filling the
-      target screen, and pressed F11 again — landing fullscreen on the screen it
-      started on, having toggled twice for nothing. Which is precisely what the
-      owner described.
-    */
-    "  if ([Op]::IsZoomed($h)) { [Op]::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 160; $steps += 'un-maximise' };",
-    "  $ok = [Op]::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true);",
-    "  $steps += ('move=' + $ok);",
-    "  Start-Sleep -Milliseconds 160;",
-    "  [Op]::SetForegroundWindow($h) | Out-Null;",
-    "  $moved = $true;",
-    "  [Op]::GetWindowRect($h, [ref]$r) | Out-Null;",
-    "  $steps += ('landed=' + $r.Left);",
-    "};",
-    // Now measure against the TARGET screen and fullscreen there if needed.
-    "$full = (($r.Right - $r.Left) -ge ($s.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($s.Height - 4));",
-    "if (-not $full) { [Op]::keybd_event(0x7A,0,0,0); [Op]::keybd_event(0x7A,0,2,0) };",
-    /*
-      Report the STEPS, not just the outcome.
-
-      Every diagnosis of this action so far has been reconstructed from what the
-      window looked like afterwards, because the return value only ever said
-      what was intended. It reported "sent-f11" while doing nothing at all for
-      an entire session. A list of what actually ran — and what MoveWindow
-      returned, and where the window landed — is the difference between reading
-      the answer and inferring it.
-    */
-    "$steps += ('final=' + $r.Left + ',' + ($r.Right - $r.Left) + 'x' + ($r.Bottom - $r.Top));",
-    `Write-Output ($title + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen${Math.min(screenIndex, screens.length)}' + '|' + $(if ($moved) { 'moved' } else { 'in-place' }) + '|' + ($steps -join ' '));`,
-  /*
-    Joined with NEWLINES, not spaces.
-
-    The declarations above are a here-string, and PowerShell requires its `'@`
-    terminator to be alone on its own line. Flattening the script onto one line
-    puts text after it, at which point the string never terminates — and
-    PowerShell does not error, it waits.
-  */
-  ].join("\n");
+  if (!existsSync(WIN_EXE)) {
+    throw new ActionError(
+      `the window helper is not built. Run: node scripts/build-win.mjs`
+    );
+  }
 
   try {
     const { stdout } = await run(
-      "powershell",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
+      WIN_EXE,
+      ["summon", "Operator", String(target.x), String(target.y), String(target.width), String(target.height), pause === false ? "0" : "1"],
       { timeout: 8000, windowsHide: true }
     );
     const out = String(stdout).trim();
@@ -448,13 +334,13 @@ async function focusOperator({ pause } = {}) {
         "no window with Operator in its title is open — nothing to bring to the front"
       );
     }
-    const [title, fullscreen, screen, moved, steps] = out.split("|");
+    const [title, fullscreen, moved, steps, rect] = out.split("|");
     const result = {
       focused: (title ?? "").slice(0, 120),
       fullscreen: fullscreen ?? "unknown",
-      screen: screen ?? "unknown",
+      screen: `screen${Math.min(screenIndex, screens.length)}`,
       moved: moved ?? "unknown",
-      steps: steps ?? "",
+      steps: `${steps ?? ""} ${rect ?? ""}`.trim(),
     };
     // Logged as well as returned: the caller is usually a clap, and nobody is
     // reading a fetch response when this misbehaves.
