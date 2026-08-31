@@ -307,7 +307,21 @@ async function listenOnce({ seconds } = {}) {
   }
 }
 
-async function focusOperator({ pause } = {}) {
+async function focusOperator() {
+  /*
+    Summoning NEVER touches what is playing.
+
+    The clap used to pause your music as a side effect, and the owner's verdict
+    was blunt and correct: "remove the media play thing i'll just pause it
+    myself." A gesture that does two things when you asked for one is
+    surprising, and the surprising half was reaching into whatever held the
+    media session.
+
+    The `pause` parameter is gone rather than defaulted to false, because a
+    default is something a future caller can switch back on by accident.
+    `media_play_pause` still exists as its own named action, so "pause that"
+    remains possible — it just has to be asked for.
+  */
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const run = promisify(execFile);
@@ -321,7 +335,6 @@ async function focusOperator({ pause } = {}) {
   */
   const screenIndex = Math.max(1, Number(process.env.OPERATOR_FOCUS_SCREEN ?? 2) || 2);
 
-  const pauseMedia = pause === false ? "$false" : "$true";
   const screens = await screenBounds(run);
   if (!screens.length) throw new ActionError("couldn't read the display layout");
   // Clamped rather than erroring: unplugging the second monitor should fall
@@ -357,7 +370,8 @@ async function focusOperator({ pause } = {}) {
   try {
     const { stdout } = await run(
       WIN_EXE,
-      ["summon", "Operator", String(target.x), String(target.y), String(target.width), String(target.height), pause === false ? "0" : "1"],
+      // Trailing "0": never pause media. See focusOperator's header.
+      ["summon", "Operator", String(target.x), String(target.y), String(target.width), String(target.height), "0"],
       { timeout: 8000, windowsHide: true }
     );
     const out = String(stdout).trim();
@@ -1489,8 +1503,8 @@ const ACTIONS = {
   },
   focus_operator: {
     description:
-      "Summon Operator: pause whatever is playing, bring its window to the front on the configured screen, and make it fullscreen. Windows only.",
-    params: 'pause? (default true — set false to leave audio alone)',
+      "Summon Operator: bring its window to the front on the configured screen and make it fullscreen. Windows only. Deliberately does NOT touch what is playing — use media_play_pause for that.",
+    params: "none",
     handler: focusOperator,
   },
   media_play_pause: {

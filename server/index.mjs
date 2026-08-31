@@ -777,7 +777,7 @@ server.listen(PORT, HOST, () => {
       `media_play_pause` stays as its own action, because being able to say
       "pause that" is independently useful. It is just not automatic.
     */
-    void runAction("focus_operator", { pause: false }).catch((err) => {
+    void runAction("focus_operator").catch((err) => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
     });
     void runAction("listen_once", { seconds: 6 })
