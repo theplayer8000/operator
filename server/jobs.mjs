@@ -58,6 +58,7 @@
 // not "relax it because it's only chat". It is not only chat.
 
 import { spawn } from "node:child_process";
+import { notify } from "./notify.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -789,6 +790,18 @@ function setStatus(job, status, detail = null) {
       };
       void runVerification(job);
     } else {
+      /*
+        Only failed and blocked. A turn he cancelled himself needs no telling,
+        and a completed one he asked for two minutes ago is noise — but work
+        that stopped without him is exactly what he cannot see from a phone.
+      */
+      if (status === "failed" || status === "blocked") {
+        void notify(
+          `Operator job ${status}`,
+          `${job.title || job.id}${detail ? ` — ${detail}` : ""}`.slice(0, 300),
+          { priority: "default", tags: [status === "blocked" ? "no_entry" : "warning"] },
+        );
+      }
       job.task.verification = {
         requested: job.task.verification?.requested === true,
         status: "not-run",
@@ -1044,6 +1057,27 @@ function ask(job, req) {
     // has hung, and the tool-idle timeout would otherwise kill it at 45
     // minutes for the crime of being patient.
     job.touchIdle?.();
+
+    /*
+      The one notification that genuinely matters.
+
+      The turn is SUSPENDED right now and dies after thirty minutes. Until this
+      existed the only way to find out was to open the app and look, and he is
+      usually not looking — which is the whole point of a system that works
+      while he is at work.
+
+      `void` and never awaited: notify() has its own timeout and swallows its
+      own failures, but a three-second POST must not sit in front of the event
+      that renders the question on screen.
+
+      No dedupe needed. A rule already answered with "stop asking" returns from
+      `remembered` above without ever reaching here.
+    */
+    void notify(
+      "Operator needs you",
+      `${req.tool} — ${rule}`.slice(0, 300),
+      { priority: "high", tags: ["question"], click: process.env.OPERATOR_APP_URL || "" },
+    );
 
     emit(job, "permission_request", {
       id,

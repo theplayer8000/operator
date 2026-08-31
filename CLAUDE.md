@@ -65,6 +65,7 @@ Approved so far — this list is the whole set:
 | Claude service status | `status.claude.com` | v11, `server/status.mjs` |
 | Anthropic (Claude Code worker) | Anthropic's API, via the Agent SDK | [ADR 0012](docs/decisions/0012-claude-agent-sdk.md), 2026-08-04. Runs on the Pro subscription, no API key |
 | **Google Gemini** | `generativelanguage.googleapis.com` | **2026-08-20**, `server/gemini.mjs`. What leaves the machine: the prompt and whatever job context is attached. Key in `GEMINI_API_KEY`, env only |
+| **ntfy.sh — as a relay only** | `ntfy.sh` | **2026-08-31**, reached by the owner's own ntfy server, not by Operator. What leaves the machine: a **message ID and a hash of the topic** — never the title, never the body. It exists so Apple can wake the iOS app, which then fetches the content back from this box over the tailnet; without it iOS push is polling, which is late and unreliable. The metadata that does cross is *that* a notification happened and *when*. Configured in `%LOCALAPPDATA%\ntfy\server.yml` as `upstream-base-url` |
 
 **Each AI provider needs its own named approval.** The AI Provider Manager was
 approved on 2026-07-30 (ADR 0009); approving the router did **not** approve its
@@ -292,6 +293,14 @@ server/
   gemini.mjs            — one turn, through Gemini. Same runTurn contract as
                           runner.mjs; raw fetch, no SDK, so the npm rule holds.
                           No filesystem or shell — capability actions only
+  notify.mjs            — one POST to the owner's OWN ntfy server (loopback,
+                          tailnet-exposed by tailscale serve) so his phone
+                          hears that a turn is waiting on him. Env-only
+                          destination — a worker has Write everywhere, so a
+                          URL it could edit is an outbound channel with
+                          Operator doing the sending. Never throws, never
+                          retries, never queues: a missed notification is
+                          missed, and the event log stays the record
   uploads.mjs           — local files attached to a job. Staged outside
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job

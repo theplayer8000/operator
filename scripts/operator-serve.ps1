@@ -68,6 +68,21 @@ if ($apps) { $env:OPERATOR_APPS = $apps }
 $listen = Read-UserEnv "OPERATOR_LISTEN"
 if ($listen) { $env:OPERATOR_LISTEN = $listen }
 
+# Where phone notifications go (server/notify.mjs). The URL is loopback - the
+# owner's own ntfy server, exposed to the tailnet by tailscale serve. Absent
+# means notifications are simply off, which is why nothing here has a default.
+# Environment rather than the store for the reason OPERATOR_APPS is: a worker
+# has Write everywhere, and a destination it could edit would be a general
+# outbound channel with Operator's own code doing the sending.
+$ntfyUrl = Read-UserEnv "OPERATOR_NTFY_URL"
+if ($ntfyUrl) { $env:OPERATOR_NTFY_URL = $ntfyUrl }
+$ntfyTopic = Read-UserEnv "OPERATOR_NTFY_TOPIC"
+if ($ntfyTopic) { $env:OPERATOR_NTFY_TOPIC = $ntfyTopic }
+$ntfyToken = Read-UserEnv "OPERATOR_NTFY_TOKEN"
+if ($ntfyToken) { $env:OPERATOR_NTFY_TOKEN = $ntfyToken }
+$appUrl = Read-UserEnv "OPERATOR_APP_URL"
+if ($appUrl) { $env:OPERATOR_APP_URL = $appUrl }
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -Path $log -Value "==== serve started $stamp ===="
 
@@ -76,6 +91,9 @@ Add-Content -Path $log -Value "==== GEMINI_API_KEY: $geminiState ===="
 
 if ($budget) { $budgetState = "`$$budget" } else { $budgetState = "none" }
 Add-Content -Path $log -Value "==== usage ceiling: $budgetState ===="
+
+if ($ntfyUrl -and $ntfyTopic) { $ntfyState = $ntfyUrl } else { $ntfyState = "off" }
+Add-Content -Path $log -Value "==== notifications: $ntfyState ===="
 
 if ($apps) {
     try {
