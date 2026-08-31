@@ -66,6 +66,7 @@ import { resolveExecutable } from "./terminal.mjs";
 import { claimResources, removeJobResources } from "./uploads.mjs";
 import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
 import { routeTask, noteFailure, noteSuccess } from "./routing.mjs";
+import { verifyWorkspace } from "./verify.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -766,11 +767,34 @@ function setStatus(job, status, detail = null) {
     attempt.status = status;
     attempt.endedAt = new Date().toISOString();
     attempt.error = detail;
-    job.task.verification = {
-      requested: job.task.verification?.requested === true,
-      status: "not-run",
-      note: "No separate verifier is configured; worker tool output remains the evidence.",
-    };
+    /*
+      Verification starts as "running", and is filled in a moment later.
+
+      It cannot be awaited here: setStatus is called from the middle of the turn
+      loop and a build takes minutes, so blocking would hold the job open long
+      after the work finished. So the job completes, the checks run, and the
+      verdict lands on the job afterwards with its own event — which is also
+      the honest shape, because "done" and "checked" genuinely are two
+      different moments.
+
+      Only after a COMPLETE turn. A failed or cancelled one has nothing worth
+      building, and running a four-minute build over a cancelled job is a way
+      to make cancelling feel broken.
+    */
+    if (status === "complete") {
+      job.task.verification = {
+        requested: true,
+        status: "running",
+        note: "checking the workspace…",
+      };
+      void runVerification(job);
+    } else {
+      job.task.verification = {
+        requested: job.task.verification?.requested === true,
+        status: "not-run",
+        note: `turn ended ${status}; nothing to verify`,
+      };
+    }
     job.handoff = {
       from: { provider: attempt.provider, model: attempt.model, attempt: attempt.number },
       to: "owner-or-next-worker",
@@ -781,6 +805,49 @@ function setStatus(job, status, detail = null) {
       ...(detail ? { detail } : {}),
     };
     emit(job, "handoff", { handoff: job.handoff });
+  }
+}
+
+/**
+ * Run the gates over whatever the job left behind, and record the verdict.
+ *
+ * Deliberately never throws and never changes the job's status: a verifier that
+ * can break a job is worse than no verifier. A failed check is INFORMATION —
+ * the work happened, and this says whether it holds up — so it is reported and
+ * the owner decides. Turning a red build into a failed job would also make
+ * "cancel" and "the build broke" look identical in the tab strip.
+ */
+async function runVerification(job) {
+  try {
+    const result = await verifyWorkspace(JOB_CWD);
+    job.task.verification = {
+      requested: true,
+      status: result.status,
+      note: result.note,
+      checks: result.checks.map((c) => ({
+        name: c.name,
+        passed: c.passed,
+        ms: c.ms,
+        // Only the failing output is kept. A passing build's stdout is
+        // hundreds of lines nobody reads, and this rides in every poll.
+        ...(c.passed ? {} : { output: c.output }),
+      })),
+      changed: result.changed.length,
+    };
+    if (job.handoff) job.handoff.verification = job.task.verification;
+    emit(job, "verification", job.task.verification);
+    console.log(
+      `[operator] ${job.id} verification: ${result.status} — ${result.note}`,
+    );
+  } catch (err) {
+    // Even the verifier failing is a verdict worth recording rather than
+    // swallowing: "could not check" is different from "checked and fine".
+    job.task.verification = {
+      requested: true,
+      status: "error",
+      note: `verification could not run: ${String(err?.message ?? err).slice(0, 200)}`,
+    };
+    emit(job, "verification", job.task.verification);
   }
 }
 

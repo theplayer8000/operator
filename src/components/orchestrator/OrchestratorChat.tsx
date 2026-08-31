@@ -4,6 +4,7 @@ import {
   Send,
   Plus,
   ShieldAlert,
+  ChevronRight,
   Loader2,
   Power,
   Volume2,
@@ -60,13 +61,103 @@ const STATUS_TONE: Record<string, string> = {
 const RETRYABLE = new Set(["failed", "blocked", "cancelled"]);
 
 /**
+ * Whether the work holds up, not just whether the turn ended.
+ *
+ * `verification` was `not-run` on every job ever created until the gates
+ * started running, and a verdict nobody can see is the same as no verdict.
+ *
+ * **`skipped` is not shown at all.** It is the common case — most jobs answer a
+ * question and change nothing — and a permanent "skipped" badge would train the
+ * eye to ignore the row that matters. Silence means nothing to check; a badge
+ * means something was.
+ */
+function Verification({
+  verification,
+}: {
+  verification: NonNullable<NonNullable<JobSummary["task"]>["verification"]>;
+}) {
+  const [open, setOpen] = useState(false);
+  const { status, note, checks = [] } = verification;
+
+  if (status === "skipped" || status === "not-run") return null;
+
+  const style =
+    status === "passed"
+      ? "border-vital-up/30 bg-vital-up/5 text-vital-up"
+      : status === "failed"
+        ? "border-vital-down/40 bg-vital-down/10 text-vital-down"
+        : status === "running"
+          ? "border-base-600 bg-base-700/30 text-ink-500"
+          : "border-xp/30 bg-xp/5 text-xp";
+
+  const failures = checks.filter((c) => !c.passed);
+
+  return (
+    <div className={`rounded-badge border px-3 py-2 mb-3 text-[11px] ${style} animate-fade-up`}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={checks.length === 0}
+        className="flex items-center gap-2 w-full text-left disabled:cursor-default"
+      >
+        {status === "running" ? (
+          <span className="flex items-center gap-0.5 shrink-0" aria-hidden>
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className="w-1 h-1 rounded-full bg-current animate-breathe"
+                style={{ animationDelay: `${i * 0.22}s` }}
+              />
+            ))}
+          </span>
+        ) : (
+          <ShieldAlert size={12} className="shrink-0" />
+        )}
+        <span className="font-mono">
+          {status === "running" ? "checking" : status === "passed" ? "checks passed" : status}
+        </span>
+        <span className="text-ink-700 truncate">{note}</span>
+        {checks.length > 0 && (
+          <ChevronRight
+            size={12}
+            className={`ml-auto shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        )}
+      </button>
+
+      {open && (
+        <ul className="mt-2 space-y-1 font-mono text-[10px]">
+          {checks.map((c) => (
+            <li key={c.name}>
+              <span className={c.passed ? "text-ink-700" : "text-vital-down"}>
+                {c.passed ? "ok  " : "FAIL"} {c.name} · {c.ms}ms
+              </span>
+              {/* The failing output is the whole point — "tsc failed" tells
+                  nobody anything, the line naming the file does. */}
+              {c.output && (
+                <pre className="mt-1 p-2 rounded-badge bg-base-950/60 border border-base-600 text-ink-300 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                  {c.output}
+                </pre>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!open && failures.length > 0 && (
+        <p className="mt-1 text-ink-500">Tap to see what failed.</p>
+      )}
+    </div>
+  );
+}
+
+/**
  * A retry history — one line per dispatch of this job's prompt to a worker.
  *
- * Deliberately absent below two attempts. One attempt is just how the job
- * ran; it becomes a *history* worth reading only once there is more than one
- * outcome to compare, which is also the exact moment `retry` starts being
- * interesting rather than decorative. Sits right above the Retry button it
- * explains — you press it having just read why the last one didn't work.
+ * Deliberately absent below two attempts. One attempt is just how the job ran;
+ * it becomes a *history* worth reading only once there is more than one outcome
+ * to compare, which is also the exact moment `retry` starts being interesting
+ * rather than decorative. Sits right above the Retry button it explains — you
+ * press it having just read why the last one didn't work.
  */
 function AttemptHistory({ attempts }: { attempts: JobAttempt[] }) {
   const [open, setOpen] = useState(false);
@@ -863,6 +954,10 @@ export default function OrchestratorChat() {
                 </p>
               ))}
           </div>
+
+          {j.selected?.task?.verification && (
+            <Verification verification={j.selected.task.verification} />
+          )}
 
           {j.selected?.attempts && <AttemptHistory attempts={j.selected.attempts} />}
 

@@ -48,7 +48,19 @@ export interface JobSummary {
    * verifier or a second worker gives them real content.
    */
   attempts?: JobAttempt[];
-  task?: unknown;
+  /*
+    Orchestrator bookkeeping. `verification` is the one part with anything to
+    show: it was `not-run` on every job ever created until the gates started
+    running, and a verdict nobody can see is the same as no verdict.
+  */
+  task?: {
+    verification?: {
+      status: "not-run" | "running" | "passed" | "failed" | "skipped" | "error";
+      note?: string;
+      changed?: number;
+      checks?: { name: string; passed: boolean; ms: number; output?: string }[];
+    };
+  } & Record<string, unknown>;
   handoff?: unknown;
 }
 
