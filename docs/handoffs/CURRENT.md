@@ -54,8 +54,40 @@ only symptom was the original slowness plus a warning nobody was reading. A
 working version needs a different mechanism — a named pipe, a small compiled
 helper, or `dotnet` hosting the type — not another attempt at the same shape.
 
-`server/winhelper.mjs` is left **untracked and unused** in the working tree.
-Deleting is denied to every Claude session, so:
+#### What a working version needs — so the next attempt starts from here
+
+The three things that attempt established, which are worth more than its code:
+
+1. **The declarations must compile once per process, not per call.** That is the
+   ~450ms. Any mechanism that keeps a process alive holds the type; any that
+   spawns per call pays it again. `OP_DECLARATIONS` in `actions.mjs` is already
+   guarded by `-as [type]`, so it is a no-op in a host that has it.
+2. **stdin to `powershell -Command -` is not a channel.** It buffers until EOF.
+   Nothing that writes commands to a PowerShell's stdin will work, however the
+   framing is done — that is the shape to stop trying.
+3. **Startup and per-call need separate timeouts.** The compile is ~11s against
+   a command time of milliseconds; one timeout for both reads a slow start as a
+   wedge and falls back forever.
+
+Three mechanisms that would actually work, roughly in order of effort:
+
+- **A named pipe.** A PowerShell script started once that opens
+  `\\.\pipe\operator-win` and loops on it. Real bidirectional channel, no stdin
+  buffering, and the server talks to it with `net.connect`.
+- **A tiny compiled helper.** The C# is already written; `csc` it once into an
+  exe that takes argv and prints a line. Removes PowerShell entirely — spawn
+  cost drops to a few ms and there is no compile at all.
+- **Skip Windows scripting.** The window operations are `user32.dll` calls;
+  anything that can P/Invoke can do them.
+
+The second is probably the right one: the source exists, it deletes the whole
+problem rather than working around it, and a spawned exe needs no lifecycle
+management, no queue, and no fallback path.
+
+`server/winhelper.mjs` is untracked and adds nothing the above does not say, so
+it should go — an unused file in `server/`, where every other file is live and
+in the folder map, is a thing a future session wires up by mistake. Deleting is
+denied to every Claude session:
 
 ```
 cmd /c del "D:\Projects\operator\server\winhelper.mjs"
