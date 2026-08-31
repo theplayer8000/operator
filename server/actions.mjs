@@ -102,6 +102,140 @@ async function currentTime() {
   };
 }
 
+/**
+ * Press the media play/pause key on the machine Operator runs on.
+ *
+ * **Exactly the signal a Bluetooth headset's button sends.** The owner asked
+ * why a web page cannot do what his headset does, and the answer is that they
+ * are two different mechanisms: a phone pauses Netflix for Spotify through
+ * *audio focus*, which mobile OSes enforce and Windows has no equivalent of,
+ * while the headset button sends an AVRCP media key that the OS routes to
+ * whatever holds the media session. A page can do neither. A process on the
+ * machine can do the second, which is this.
+ *
+ * ## The first action that touches the OS rather than Operator's own data
+ *
+ * Worth naming as a widening rather than slipping in. Everything else in this
+ * file reads or writes the store; this reaches outside it. It stays acceptable
+ * only because it is shaped like every other capability: **a fixed name that
+ * does exactly one fixed thing.** There is no parameter, so there is nothing a
+ * caller can steer — the guarantee is not that the key is harmless, it is that
+ * this is the only key that can ever be pressed.
+ *
+ * Do not generalise it. A `send_key` action taking a keycode would be a
+ * keyboard for anything that can call an action, which is the generic-write-
+ * gateway mistake this file's header exists to prevent.
+ *
+ * Toggles rather than pauses, because that is what the key does — pressing it
+ * with nothing playing starts whatever last played. That is the honest
+ * behaviour of the hardware button and pretending otherwise would make the
+ * action lie about itself.
+ */
+async function mediaPlayPause() {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+
+  // VK_MEDIA_PLAY_PAUSE is 0xB3. SendKeys cannot express media keys, so this
+  // goes through keybd_event, which is the documented way to synthesise one.
+  const script = [
+    "$sig = '[DllImport(\"user32.dll\")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);';",
+    "$k = Add-Type -MemberDefinition $sig -Name Media -Namespace Win32 -PassThru;",
+    "$k::keybd_event(0xB3, 0, 0, 0);",
+    "$k::keybd_event(0xB3, 0, 2, 0);",
+  ].join(" ");
+
+  try {
+    await run("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return { pressed: "play/pause" };
+  } catch (err) {
+    throw new ActionError(
+      `couldn't send the media key: ${String(err?.message ?? err)}. This works on Windows only.`
+    );
+  }
+}
+
+/**
+ * Bring Operator's own window to the front.
+ *
+ * ## Why this exists when `requestFullscreen()` does not work
+ *
+ * A browser refuses `requestFullscreen()` outside a real user gesture, and a
+ * clap is not one — the call is rejected silently. That was recorded as "the
+ * part that cannot work", which was only true of the *page*. The owner spotted
+ * the gap: the media key already proved Operator has a machine-side half, and
+ * a window is no different. The browser cannot raise itself; a process on the
+ * machine can raise it.
+ *
+ * ## Matched on title, never on a PID
+ *
+ * The owner offered a PID. It would work once: a browser gets a new one every
+ * time it is closed and reopened, so a stored PID becomes a focus action that
+ * silently does nothing, weeks later, for no visible reason. The window title
+ * is what survives — every Operator page sets one, and the browser appends it.
+ *
+ * ## No parameter, deliberately
+ *
+ * Same shape as `media_play_pause`: a fixed name doing one fixed thing. A
+ * general `focus_window` taking a title would let anything that can call an
+ * action raise anything on the desktop, which is a step toward the generic
+ * gateway this file's header exists to refuse. This can only ever raise
+ * Operator.
+ */
+async function focusOperator() {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+
+  /*
+    SetForegroundWindow is deliberately restricted by Windows: a process that
+    does not own the foreground usually cannot steal it, and the call fails
+    quietly rather than erroring. Pressing and releasing ALT first is the
+    long-standing way to satisfy that rule — it makes this process briefly
+    eligible — and ShowWindow(9) restores the window if it was minimised, which
+    SetForegroundWindow alone will not do.
+  */
+  const script = [
+    "$sig = @'",
+    "[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);",
+    "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);",
+    "[DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);",
+    "'@;",
+    "$w = Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru;",
+    // Any window whose title mentions Operator, whichever browser is showing it.
+    "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
+    "if (-not $p) { Write-Output 'NOWINDOW'; exit 0 };",
+    "$w::keybd_event(0x12,0,0,0);",
+    "$w::ShowWindow($p.MainWindowHandle, 9) | Out-Null;",
+    "$w::SetForegroundWindow($p.MainWindowHandle) | Out-Null;",
+    "$w::keybd_event(0x12,0,2,0);",
+    "Write-Output $p.MainWindowTitle;",
+  ].join(" ");
+
+  try {
+    const { stdout } = await run(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { timeout: 6000, windowsHide: true }
+    );
+    const title = String(stdout).trim();
+    if (title === "NOWINDOW") {
+      throw new ActionError(
+        "no window with Operator in its title is open — nothing to bring to the front"
+      );
+    }
+    return { focused: title.slice(0, 120) };
+  } catch (err) {
+    if (err instanceof ActionError) throw err;
+    throw new ActionError(
+      `couldn't bring the window forward: ${String(err?.message ?? err)}. Windows only.`
+    );
+  }
+}
+
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A date param, defaulting to today when omitted — every action that takes
@@ -1196,6 +1330,18 @@ const ACTIONS = {
       "The current date and time on the machine Operator runs on, in the owner's local timezone. Use this for anything about \"now\", \"today\" or what the time is — do NOT read the calendar to work it out.",
     params: "(none)",
     handler: currentTime,
+  },
+  focus_operator: {
+    description:
+      "Bring Operator's own window to the front on the machine it runs on, restoring it if minimised. Use with media_play_pause to summon it. Windows only.",
+    params: "(none)",
+    handler: focusOperator,
+  },
+  media_play_pause: {
+    description:
+      "Press the play/pause media key on the machine Operator runs on — the same signal a Bluetooth headset's button sends, so it pauses whatever is playing (Spotify, a video, anything holding the media session). Toggles: pressing it with nothing playing resumes the last thing.",
+    params: "(none)",
+    handler: mediaPlayPause,
   },
   calendar_range: {
     description:
