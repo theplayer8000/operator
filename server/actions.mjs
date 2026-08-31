@@ -191,6 +191,15 @@ async function focusOperator() {
   const run = promisify(execFile);
 
   /*
+    Which monitor to summon onto. Screen 2 by default — the owner's choice
+    "for now, until I decide otherwise", which is exactly what an environment
+    variable is for: changeable without a code change, and not editable by a
+    worker. Clamped in the script, so unplugging that monitor falls back to the
+    first rather than failing.
+  */
+  const screenIndex = Math.max(1, Number(process.env.OPERATOR_FOCUS_SCREEN ?? 2) || 2);
+
+  /*
     SetForegroundWindow is deliberately restricted by Windows: a process that
     does not own the foreground usually cannot steal it, and the call fails
     quietly rather than erroring. Pressing and releasing ALT first is the
@@ -198,21 +207,73 @@ async function focusOperator() {
     eligible — and ShowWindow(9) restores the window if it was minimised, which
     SetForegroundWindow alone will not do.
   */
+  /*
+    Fullscreen is F11, and F11 TOGGLES — so sending it blind would throw the
+    owner out of fullscreen exactly when he claps while already there. There is
+    no "make fullscreen" message to send a window; the browser owns that state.
+
+    So: measure first. A window whose bounds already cover the whole screen is
+    already fullscreen (or maximised without chrome, which looks the same and
+    wants no change), and F11 is skipped. Anything smaller gets it.
+
+    ShowWindow(9) is SW_RESTORE and only un-minimises — it restores the previous
+    size, which is why the first version came back windowed.
+  */
   const script = [
-    "$sig = @'",
-    "[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);",
-    "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);",
-    "[DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);",
-    "'@;",
+    /*
+      A single-quoted string, NOT a here-string.
+
+      `@'` requires a newline immediately after the header, and this script is
+      joined with spaces to keep it on one command line — so the here-string
+      form fails to parse before any of it runs ("No characters are allowed
+      after a here-string header"). C# does not care about line breaks, so a
+      plain single-quoted string carrying the same declarations is equivalent
+      and survives being flattened. The double quotes inside are safe because
+      the outer quoting is single.
+    */
+    "$sig = '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);" +
+      " [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);" +
+      " [DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);" +
+      " [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);" +
+      " [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);" +
+      " public struct RECT { public int Left, Top, Right, Bottom; }';",
     "$w = Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru;",
     // Any window whose title mentions Operator, whichever browser is showing it.
     "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
     "if (-not $p) { Write-Output 'NOWINDOW'; exit 0 };",
+    "$h = $p.MainWindowHandle;",
     "$w::keybd_event(0x12,0,0,0);",
-    "$w::ShowWindow($p.MainWindowHandle, 9) | Out-Null;",
-    "$w::SetForegroundWindow($p.MainWindowHandle) | Out-Null;",
+    "$w::ShowWindow($h, 9) | Out-Null;",
+    "$w::SetForegroundWindow($h) | Out-Null;",
     "$w::keybd_event(0x12,0,2,0);",
-    "Write-Output $p.MainWindowTitle;",
+    "Add-Type -AssemblyName System.Windows.Forms;",
+    "$all = [System.Windows.Forms.Screen]::AllScreens;",
+    /*
+      Which screen to summon onto. 1-based here because that is how a person
+      counts monitors — "screen 2" is the second one — and clamped rather than
+      erroring, so unplugging the second display degrades to the first instead
+      of breaking the gesture.
+    */
+    `$want = [Math]::Min([Math]::Max(${screenIndex}, 1), $all.Count) - 1;`,
+    "$s = $all[$want].Bounds;",
+    "$r = New-Object Fg.Win+RECT;",
+    "$w::GetWindowRect($h, [ref]$r) | Out-Null;",
+    /*
+      Move it there BEFORE asking for fullscreen. F11 makes a window fill
+      whichever screen it is currently on, so fullscreening first and moving
+      afterwards would either land on the wrong monitor or drop out of
+      fullscreen on the way.
+
+      Only moved when it is not already on that screen — a window already in
+      place should not visibly jump.
+    */
+    "$onScreen = ($r.Left -ge $s.X - 8) -and ($r.Left -lt $s.X + $s.Width);",
+    "if (-not $onScreen) { $w::MoveWindow($h, $s.X + 40, $s.Y + 40, [Math]::Min(1280, $s.Width - 80), [Math]::Min(800, $s.Height - 80), $true) | Out-Null; Start-Sleep -Milliseconds 150; $w::GetWindowRect($h, [ref]$r) | Out-Null };",
+    // A few pixels of slack: a fullscreen window is not always exactly the
+    // screen rect, and being one pixel out must not read as "not fullscreen".
+    "$full = (($r.Right - $r.Left) -ge ($s.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($s.Height - 4));",
+    "if (-not $full) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0) };",
+    "Write-Output ($p.MainWindowTitle + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen' + ($want + 1));",
   ].join(" ");
 
   try {
@@ -221,13 +282,18 @@ async function focusOperator() {
       ["-NoProfile", "-NonInteractive", "-Command", script],
       { timeout: 6000, windowsHide: true }
     );
-    const title = String(stdout).trim();
-    if (title === "NOWINDOW") {
+    const out = String(stdout).trim();
+    if (out === "NOWINDOW") {
       throw new ActionError(
         "no window with Operator in its title is open — nothing to bring to the front"
       );
     }
-    return { focused: title.slice(0, 120) };
+    const [title, fullscreen, screen] = out.split("|");
+    return {
+      focused: (title ?? "").slice(0, 120),
+      fullscreen: fullscreen ?? "unknown",
+      screen: screen ?? "unknown",
+    };
   } catch (err) {
     if (err instanceof ActionError) throw err;
     throw new ActionError(

@@ -420,14 +420,35 @@ const server = createServer(async (req, res) => {
         return json(res, 403, { error: "not authorised to restart", reason: manage.reason });
       }
       const supervised = process.env.OPERATOR_SUPERVISED === "1";
+      /*
+        `{"arm": true}` brings the terminal back armed.
+
+        ADR 0011 disarms on every start because arming should be a human act,
+        and re-arming after each restart had become friction rather than a
+        decision — which erodes the rule in a different direction, by making
+        people want it always on.
+
+        This keeps the decision and drops the second trip. The caller has
+        ALREADY passed `deviceMayManage` above, which is the same check arming
+        itself requires, so this grants nothing that could not be had in two
+        requests. The intent rides an exit code rather than a file, because a
+        worker can write files — see the note in scripts/supervise.mjs.
+
+        Unsupervised, nothing restarts at all, so promising an armed return
+        would be a lie: the flag is reported back as refused rather than
+        silently ignored.
+      */
+      const restartBody = await readBody(req).catch(() => null);
+      const armAfter = restartBody?.arm === true && supervised;
       console.log(
         `[operator] restart requested by ${identity?.device ?? "local"}` +
+          (armAfter ? " — coming back ARMED" : "") +
           (supervised ? "" : " — NOT supervised, this will stop the server")
       );
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(JSON.stringify({ restarting: true, supervised }), () => {
+      res.end(JSON.stringify({ restarting: true, supervised, armed: armAfter }), () => {
         // Give the socket a moment to drain before the process goes away.
-        setTimeout(() => process.exit(75), 150);
+        setTimeout(() => process.exit(armAfter ? 76 : 75), 150);
       });
       return;
     }

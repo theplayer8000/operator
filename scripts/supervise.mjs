@@ -37,6 +37,29 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SERVER = join(ROOT, "server", "index.mjs");
 const RESTART_CODE = 75;
+/*
+  76 is "start me again, armed" — a restart that asked for the terminal to come
+  back on.
+
+  ADR 0011 disarms the terminal on every start because arming should be a human
+  act, and re-arming after each restart was becoming friction rather than a
+  decision. This keeps the decision and removes the second trip: the request
+  that asks for the restart is itself made by an authorised device, so a human
+  did decide, once, for this restart.
+
+  **The intent travels as an exit code, deliberately — never as a file.** A
+  worker has Write across the tree, so an "arm on next boot" marker on disk
+  would be one the agent could drop itself and then trigger a restart to
+  collect, which is the self-granting escalation OPERATOR_TERMINAL_DEVICES is
+  environment-only to prevent. Only the server process can choose its own exit
+  code, and it only chooses this one for a request that already passed the
+  arming check.
+
+  It also does not persist: it arms the ONE launch that follows. The next
+  ordinary restart comes back disarmed, as before.
+*/
+const RESTART_ARMED_CODE = 76;
+let armNextStart = false;
 
 /*
   Even a deliberate restart can loop: a bad edit to server/*.mjs that throws on
@@ -58,8 +81,17 @@ function start() {
     stdio: "inherit",
     // So the server can tell the client whether a restart will actually come
     // back, rather than promising one and simply stopping.
-    env: { ...process.env, OPERATOR_SUPERVISED: "1" },
+    env: {
+      ...process.env,
+      OPERATOR_SUPERVISED: "1",
+      // Consumed by this one launch only — cleared below the moment it is used.
+      ...(armNextStart ? { OPERATOR_TERMINAL: "1" } : {}),
+    },
   });
+  if (armNextStart) {
+    console.log("[supervisor] starting with the terminal armed, as requested");
+    armNextStart = false;
+  }
 
   child.on("exit", (code, signal) => {
     child = null;
@@ -70,10 +102,11 @@ function start() {
       return;
     }
 
-    if (code !== RESTART_CODE) {
+    if (code !== RESTART_CODE && code !== RESTART_ARMED_CODE) {
       process.exit(code ?? 0);
       return;
     }
+    armNextStart = code === RESTART_ARMED_CODE;
 
     const now = Date.now();
     restarts.push(now);
