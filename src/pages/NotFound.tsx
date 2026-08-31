@@ -27,7 +27,7 @@ export default function NotFound() {
 
         <div className="flex flex-wrap gap-2">
           <Link
-            to="/"
+            to="/dashboard"
             className="inline-flex items-center gap-2 px-4 min-h-[44px] rounded-badge bg-xp text-base-950 text-sm font-medium hover:bg-xp-bright transition-colors"
           >
             <Home size={15} /> Dashboard

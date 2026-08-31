@@ -173,7 +173,7 @@ export default function OperatorMobile() {
           )}
         </span>
         <button
-          onClick={() => navigate("/")}
+          onClick={() => navigate("/dashboard")}
           className="font-mono text-[11px] text-ink-600 border border-base-600 rounded-badge px-3 min-h-[44px] min-w-[44px]"
         >
           ✕

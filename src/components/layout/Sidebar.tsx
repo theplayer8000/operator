@@ -14,6 +14,7 @@ import {
   BarChart3,
   ScrollText,
   Compass,
+  Orbit,
   Terminal,
   ClipboardList,
   Settings,
@@ -38,7 +39,14 @@ const NAV_ITEMS = [
   { to: "/contents", label: "Contents", icon: Compass },
 
   // Built — daily use first
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  /*
+    The only route to /map used to be a link inside the Dashboard's graph card,
+    which is gated to screens 1024px and wider — so on a phone there was no way
+    to reach it at all, and the owner reported exactly that. It needs a nav
+    entry like everything else.
+  */
+  { to: "/", label: "Operator", icon: Orbit },
   { to: "/orchestrator", label: "Orchestrator", icon: MessageSquare },
   { to: "/routine", label: "Daily Routine", icon: Repeat },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },

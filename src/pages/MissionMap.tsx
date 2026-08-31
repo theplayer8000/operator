@@ -592,7 +592,7 @@ export default function MissionMap() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") navigate("/");
+      if (e.key === "Escape") navigate("/dashboard");
       // "r" as well as "0" — the hint was set in 10px mono and read as a "B".
       if (e.key === "0" || e.key === "r" || e.key === "R") fitView();
     };
@@ -653,7 +653,7 @@ export default function MissionMap() {
             RECENTRE
           </button>
           <button
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/dashboard")}
             className="pointer-events-auto font-mono text-[11px] text-ink-600 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
           >
             ESC

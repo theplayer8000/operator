@@ -40,6 +40,14 @@ interface Section {
 const SECTIONS: Section[] = [
   {
     to: "/",
+    label: "Operator",
+    icon: LayoutDashboard,
+    status: "built",
+    blurb:
+      "The landing page. On a big screen, the live mission map — every mission orbiting the core, dependencies drawn as strands you can grab. On a phone, the core alone, for talking to.",
+  },
+  {
+    to: "/dashboard",
     label: "Dashboard",
     icon: LayoutDashboard,
     status: "built",

@@ -48,10 +48,16 @@ export default function App() {
         whatever you do to it. Same URL either way, so a link, a notification
         or a bookmark lands on whichever is right for the device holding it.
       */}
+      <Route path="/" element={<MapSurface />} />
+      {/* The old address keeps working, so bookmarks and links do not break. */}
       <Route path="/map" element={<MapSurface />} />
 
       <Route element={<AppLayout />}>
-        <Route path="/" element={<Dashboard />} />
+        {/*
+          The Dashboard moved off "/" on 2026-08-31 — the map is the landing
+          page now. It keeps everything else: sidebar, widgets, the lot.
+        */}
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/routine" element={<DailyRoutine />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />

@@ -4,7 +4,8 @@ import { Search } from "lucide-react";
 
 const DESTINATIONS = [
   { to: "/contents", label: "Contents" },
-  { to: "/", label: "Dashboard" },
+  { to: "/", label: "Operator" },
+  { to: "/dashboard", label: "Dashboard" },
   { to: "/routine", label: "Daily Routine" },
   { to: "/missions", label: "Mission Board" },
   { to: "/calendar", label: "Calendar" },
