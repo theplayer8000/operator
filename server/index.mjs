@@ -35,6 +35,7 @@ import {
   setEnabled,
   deviceMayManage,
   deviceAuthorised,
+  deviceMayUseCapabilities,
   describeRun,
   getRun,
   listRuns,
@@ -609,7 +610,16 @@ const server = createServer(async (req, res) => {
       lets a model correct itself on the next turn rather than guessing.
     */
     if (pathname === "/api/actions") {
-      const allowed = deviceAuthorised(identity);
+      /*
+        Tier 2, not tier 3 — see `deviceMayUseCapabilities` in terminal.mjs.
+
+        This used to require `deviceAuthorised`: a listed device AND an armed
+        terminal. That made ticking off a gym session need the same rights as
+        running arbitrary commands, while `PUT /api/state/<key>` — generic and
+        unvalidated — stayed open to any authenticated device. The validated
+        path was the locked one.
+      */
+      const allowed = deviceMayUseCapabilities(identity);
       if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
 
       if (req.method === "GET") {

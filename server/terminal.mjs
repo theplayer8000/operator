@@ -406,6 +406,46 @@ function publish(run, chunk) {
 }
 
 /**
+ * May this caller use the capability layer — the named, validated actions in
+ * `actions.mjs` that change Operator's OWN data?
+ *
+ * **Yes, for anyone who got past authentication.** No device list, no arming.
+ * This is the middle tier of three, added 2026-08-31 (ADR 0016) because the
+ * previous two-tier model put this in the wrong one:
+ *
+ *   1. identity   — `auth.mjs`, in front of every `/api/` route
+ *   2. capability — here: fixed names, fixed parameter shapes, Operator's data
+ *   3. execution  — `deviceAuthorised` below: the terminal, and jobs
+ *
+ * The argument is not convenience, it is that the old arrangement was
+ * backwards. `PUT /api/state/<key>` is generic, unvalidated, and can overwrite
+ * or delete any slice of the store — and it is gated on identity alone,
+ * because it is what the app itself writes through. A capability action can
+ * only do what the owner could already do through the UI, and it was gated
+ * behind `OPERATOR_TERMINAL_DEVICES` *and* an armed terminal. The safe path
+ * was locked and the dangerous one was open, so a worker asked to tick off a
+ * gym session had to be granted execution rights to do it.
+ *
+ * What this deliberately does NOT extend to, and must not:
+ *
+ * - **Jobs.** A job has tool access, so starting one is arbitrary execution
+ *   wearing a friendlier name. It stays on tier 3.
+ * - **The terminal, on loopback, always armed.** Tempting — someone at the
+ *   desk already has PowerShell, so the gate looks pointless there. It is not:
+ *   Claude Code jobs run ON this machine, so an always-armed loopback would
+ *   let a running agent POST to `/api/terminal/run` and walk straight out of
+ *   the permission envelope that denies it `git push` and deleting files. That
+ *   envelope is the whole of ADR 0012.
+ */
+export function deviceMayUseCapabilities(identity) {
+  if (identity) return { ok: true };
+  // Unreachable in practice — auth.mjs rejects an unidentified caller before
+  // the router sees it. Explicit anyway, so this never becomes the one place
+  // that assumed someone else had checked.
+  return { ok: false, reason: "no identity" };
+}
+
+/**
  * Whether a device may run commands. Separate from *authentication*: being a
  * known tailnet device gets you the app, not a shell.
  */
