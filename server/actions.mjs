@@ -222,6 +222,46 @@ async function screenBounds(run) {
   return screens;
 }
 
+/*
+  The Win32 declarations the window actions need, as PowerShell.
+
+  The here-string terminator `'@` is ALONE at column 0 with nothing after it,
+  because PowerShell requires that — and getting it wrong does not throw, it
+  WAITS for a terminator that never arrives. That is how an attempt at a
+  persistent helper hung silently instead of failing, and it is why the script
+  below is joined with newlines rather than spaces.
+
+  Guarded by an `-as [type]` check: harmless in a fresh process, and the thing a
+  long-lived host would rely on if this ever gets one.
+*/
+const OP_DECLARATIONS = [
+  "$opSrc = @'",
+  "using System;",
+  "using System.Text;",
+  "using System.Runtime.InteropServices;",
+  "public class Op {",
+  '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);',
+  '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);',
+  '  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);',
+  '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+  '  [DllImport("user32.dll")] public static extern void keybd_event(byte v, byte s, uint f, int e);',
+  '  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);',
+  '  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);',
+  '  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);',
+  "  public struct RECT { public int Left, Top, Right, Bottom; }",
+  "  delegate bool EnumProc(IntPtr h, IntPtr p);",
+  "  static IntPtr found; static string want;",
+  "  public static string TitleOf(IntPtr h) { var b = new StringBuilder(300); GetWindowText(h, b, 300); return b.ToString(); }",
+  "  static bool Check(IntPtr h, IntPtr p) { if (!IsWindowVisible(h)) return true; var t = TitleOf(h); if (t.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0) { found = h; return false; } return true; }",
+  "  public static IntPtr ByTitle(string s) { want = s; found = IntPtr.Zero; EnumWindows(Check, IntPtr.Zero); return found; }",
+  "}",
+  "'@",
+  "if (-not ('Op' -as [type])) { Add-Type -TypeDefinition $opSrc -ErrorAction SilentlyContinue }",
+].join("\n");
+
 async function focusOperator({ pause } = {}) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -265,93 +305,19 @@ async function focusOperator({ pause } = {}) {
   */
   const script = [
     /*
-      A single-quoted string, NOT a here-string.
+      Declared per call, which costs ~450ms of C# compilation every summon.
 
-      `@'` requires a newline immediately after the header, and this script is
-      joined with spaces to keep it on one command line — so the here-string
-      form fails to parse before any of it runs ("No characters are allowed
-      after a here-string header"). C# does not care about line breaks, so a
-      plain single-quoted string carrying the same declarations is equivalent
-      and survives being flattened. The double quotes inside are safe because
-      the outer quoting is single.
+      A persistent PowerShell holding the compiled type would remove it, and
+      an attempt at one is recorded in the handoff rather than left here
+      half-working: `powershell -Command -` buffers multi-line input until
+      EOF, so it never became a REPL and every call silently fell back to
+      this path anyway. A different mechanism is needed — see the handoff.
     */
-    "$sig = '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);" +
-      " [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);" +
-      " [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);" +
-      " [DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);" +
-      " [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);" +
-      " [DllImport(\"user32.dll\")] public static extern bool IsZoomed(IntPtr h);" +
-      " [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr h);" +
-      " [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);" +
-      " public struct RECT { public int Left, Top, Right, Bottom; }';",
-    /*
-      Take the CLASS out of what -PassThru returns, not the array.
-
-      Declaring a struct alongside the methods makes Add-Type emit two types,
-      so -PassThru hands back an Object[] rather than a type — and every
-      `$w::Method(...)` call then fails with "does not contain a method named".
-      Those failures are NON-TERMINATING, so the script ran to its final
-      Write-Output and reported "sent-f11" while having done nothing at all.
-
-      That is why this looked like it worked: the return value described what
-      the script intended, not what happened. Measured 2026-08-31 by asking the
-      window where it was afterwards, which is the only honest test.
-    */
-    "$w = @(Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru) | Where-Object { $_.Name -eq 'Win' };",
-    "if (-not $w) { Write-Output 'NOTYPE'; exit 0 };",
-    /*
-      A tiny C# type to do the enumeration, rather than marshalling an
-      EnumWindows delegate through PowerShell — which is possible and is far
-      more fragile than a dozen lines of C# that the same Add-Type call is
-      already compiling anyway.
-    */
-    "$find = 'using System; using System.Text; using System.Runtime.InteropServices;" +
-      " public class Find {" +
-      " [DllImport(\"user32.dll\")] static extern bool EnumWindows(EnumProc f, IntPtr p);" +
-      " [DllImport(\"user32.dll\")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);" +
-      " [DllImport(\"user32.dll\")] static extern bool IsWindowVisible(IntPtr h);" +
-      " delegate bool EnumProc(IntPtr h, IntPtr p);" +
-      " static IntPtr found; static string want;" +
-      " public static string TitleOf(IntPtr h) { var b = new StringBuilder(300); GetWindowText(h, b, 300); return b.ToString(); }" +
-      " static bool Check(IntPtr h, IntPtr p) {" +
-      "  if (!IsWindowVisible(h)) return true;" +
-      "  var t = TitleOf(h);" +
-      "  if (t.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0) { found = h; return false; }" +
-      "  return true; }" +
-      " public static IntPtr ByTitle(string s) { want = s; found = IntPtr.Zero; EnumWindows(Check, IntPtr.Zero); return found; } }';",
-    "Add-Type -TypeDefinition $find -ErrorAction SilentlyContinue;",
-    "if (-not ('Find' -as [type])) { Write-Output 'NOFIND'; exit 0 };",
-    // Any window whose title mentions Operator, whichever browser is showing it.
-    /*
-      Look twice before giving up.
-
-      A window reports an empty MainWindowTitle for a moment while it enters or
-      leaves fullscreen, so a summon arriving during another one's transition
-      finds nothing and reports "no window open" for a window plainly on screen.
-      Measured by calling this three times in quick succession: the first
-      worked, the next two could not find it, and it was back a second later.
-
-      Rare in use — you do not clap twice within half a second — but the failure
-      is indistinguishable from the window genuinely being closed, which is the
-      kind of thing that gets debugged twice.
-    */
-    /*
-      Enumerate ALL windows, not just each process's main one.
-
-      `Get-Process | Where MainWindowTitle` only ever sees ONE window per
-      process, and a browser has many. It found the Operator PWA for a while by
-      luck; the moment a Settings window became Brave's main window, Operator
-      became invisible and the action reported "no window open" about a window
-      plainly on screen. Fifteen brave processes, one visible title.
-
-      EnumWindows walks every top-level window, so a PWA window, a tab window
-      and a second browser are all equally findable. Visible-only, because a
-      hidden or zero-size window is not the one anyone means.
-    */
-    "$p = [Find]::ByTitle('Operator');",
-    "for ($i = 0; $i -lt 4 -and $p -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 300; $p = [Find]::ByTitle('Operator') };",
+    OP_DECLARATIONS,
+    "$p = [Op]::ByTitle('Operator');",
+    "for ($i = 0; $i -lt 4 -and $p -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 300; $p = [Op]::ByTitle('Operator') };",
     "if ($p -eq [IntPtr]::Zero) { Write-Output 'NOWINDOW'; exit 0 };",
-    "$title = [Find]::TitleOf($p);",
+    "$title = [Op]::TitleOf($p);",
     "$h = $p;",
     /*
       Pause whatever is playing, from inside THIS script rather than a second
@@ -362,7 +328,7 @@ async function focusOperator({ pause } = {}) {
       Same key as media_play_pause, which stays as its own action because it is
       independently useful.
     */
-    `if (${pauseMedia}) { $w::keybd_event(0xB3,0,0,0); $w::keybd_event(0xB3,0,2,0) };`,
+    `if (${pauseMedia}) { [Op]::keybd_event(0xB3,0,0,0); [Op]::keybd_event(0xB3,0,2,0) };`,
     /*
       SwitchToThisWindow rather than the ALT tap. Pressing ALT is the classic
       way past Windows' foreground restriction, but a browser reads a lone ALT
@@ -381,9 +347,9 @@ async function focusOperator({ pause } = {}) {
       IsIconic is the actual question being asked here. SwitchToThisWindow
       raises it either way.
     */
-    "$w::SwitchToThisWindow($h, $true);",
-    "if ($w::IsIconic($h)) { $w::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 120 };",
-    "$w::SetForegroundWindow($h) | Out-Null;",
+    "[Op]::SwitchToThisWindow($h, $true);",
+    "if ([Op]::IsIconic($h)) { [Op]::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 120 };",
+    "[Op]::SetForegroundWindow($h) | Out-Null;",
     /*
       The target screen's geometry arrives as literals from Node, already
       cached — so this script never loads System.Windows.Forms, which was 270ms
@@ -392,7 +358,7 @@ async function focusOperator({ pause } = {}) {
     */
     `$s = @{ X = ${target.x}; Y = ${target.y}; Width = ${target.width}; Height = ${target.height} };`,
     "$r = New-Object Fg.Win+RECT;",
-    "$w::GetWindowRect($h, [ref]$r) | Out-Null;",
+    "[Op]::GetWindowRect($h, [ref]$r) | Out-Null;",
     "$onScreen = ($r.Left -ge $s.X - 8) -and ($r.Left -lt $s.X + $s.Width);",
     /*
       A fullscreen window cannot be moved.
@@ -424,7 +390,7 @@ async function focusOperator({ pause } = {}) {
     "$moved = $false;",
     "$steps = @();",
     "if (-not $onScreen) {",
-    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 260; $steps += 'exit-fullscreen' };",
+    "  if ($wasFull) { [Op]::keybd_event(0x7A,0,0,0); [Op]::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 260; $steps += 'exit-fullscreen' };",
     /*
       Un-maximise BEFORE moving, and this is the step that was missing.
 
@@ -436,18 +402,18 @@ async function focusOperator({ pause } = {}) {
       started on, having toggled twice for nothing. Which is precisely what the
       owner described.
     */
-    "  if ($w::IsZoomed($h)) { $w::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 160; $steps += 'un-maximise' };",
-    "  $ok = $w::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true);",
+    "  if ([Op]::IsZoomed($h)) { [Op]::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 160; $steps += 'un-maximise' };",
+    "  $ok = [Op]::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true);",
     "  $steps += ('move=' + $ok);",
     "  Start-Sleep -Milliseconds 160;",
-    "  $w::SetForegroundWindow($h) | Out-Null;",
+    "  [Op]::SetForegroundWindow($h) | Out-Null;",
     "  $moved = $true;",
-    "  $w::GetWindowRect($h, [ref]$r) | Out-Null;",
+    "  [Op]::GetWindowRect($h, [ref]$r) | Out-Null;",
     "  $steps += ('landed=' + $r.Left);",
     "};",
     // Now measure against the TARGET screen and fullscreen there if needed.
     "$full = (($r.Right - $r.Left) -ge ($s.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($s.Height - 4));",
-    "if (-not $full) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0) };",
+    "if (-not $full) { [Op]::keybd_event(0x7A,0,0,0); [Op]::keybd_event(0x7A,0,2,0) };",
     /*
       Report the STEPS, not just the outcome.
 
@@ -460,13 +426,21 @@ async function focusOperator({ pause } = {}) {
     */
     "$steps += ('final=' + $r.Left + ',' + ($r.Right - $r.Left) + 'x' + ($r.Bottom - $r.Top));",
     `Write-Output ($title + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen${Math.min(screenIndex, screens.length)}' + '|' + $(if ($moved) { 'moved' } else { 'in-place' }) + '|' + ($steps -join ' '));`,
-  ].join(" ");
+  /*
+    Joined with NEWLINES, not spaces.
+
+    The declarations above are a here-string, and PowerShell requires its `'@`
+    terminator to be alone on its own line. Flattening the script onto one line
+    puts text after it, at which point the string never terminates — and
+    PowerShell does not error, it waits.
+  */
+  ].join("\n");
 
   try {
     const { stdout } = await run(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-Command", script],
-      { timeout: 6000, windowsHide: true }
+      { timeout: 8000, windowsHide: true }
     );
     const out = String(stdout).trim();
     if (out === "NOWINDOW") {

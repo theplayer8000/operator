@@ -22,6 +22,45 @@ Off by default and desk-only. The microphone is open while armed, which is a
 posture change rather than a setting, so the toggle sits on screen (bottom
 right) rather than in Settings.
 
+### The listener runs on the MACHINE now, not in a tab
+
+`server/listen.mjs`. ffmpeg captures the microphone, this reads raw PCM and
+looks for two transients. Off unless `OPERATOR_LISTEN` names a device
+(currently `Headset (Tosin's Headphones)`), environment-only for the same
+reason `OPERATOR_TERMINAL_DEVICES` is.
+
+It moved off the page because two browser mechanisms defeat it there and fixing
+either alone leaves it broken: `requestAnimationFrame` is throttled to ~1fps in
+a background window, and Chromium **suspends** an `AudioContext` when the page
+is occluded. Both were patched before the retreat. Both are the browser
+correctly refusing to let a hidden page be busy — and clapping is by definition
+something you do while looking elsewhere.
+
+**The actual bug was one unmeasured constant.** The owner's headset peaks at
+**0.081** on a clap with the room at **0.001**; the threshold was **0.18**, more
+than double what the microphone can produce. It could never have fired, in
+either implementation, on any number of claps. The bar is now a ratio to
+measured ambient, because the ratio is what is stable across microphones.
+
+### ⚠ The summon is still ~1.5s, and the fix did not land
+
+Every summon spawns PowerShell (~320ms) and compiles the Win32 declarations
+with `Add-Type` (~450ms) before a single call happens.
+
+**A persistent PowerShell was attempted and reverted.** `powershell -Command -`
+buffers multi-line input until EOF rather than behaving as a REPL, so the
+helper never reached ready, every call silently fell back to spawning, and the
+only symptom was the original slowness plus a warning nobody was reading. A
+working version needs a different mechanism — a named pipe, a small compiled
+helper, or `dotnet` hosting the type — not another attempt at the same shape.
+
+`server/winhelper.mjs` is left **untracked and unused** in the working tree.
+Deleting is denied to every Claude session, so:
+
+```
+cmd /c del "D:\Projects\operator\server\winhelper.mjs"
+```
+
 ### The state it is in right now
 
 **It works, and the threshold is still being tuned.** The owner swapped to a
