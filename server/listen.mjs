@@ -56,6 +56,16 @@ const FFMPEG_CANDIDATES = [
   "ffmpeg",
 ].filter(Boolean);
 
+/*
+  Gain applied to the captured stream, in dB. Zero is off.
+
+  Needed because a microphone level set too low is invisible from here and
+  fatal to speech: a clap clears a bad level, a voice does not. 30dB is about
+  31x, which lifts this machine's measured 0.0009 speech peak to roughly 0.028
+  - inside the range Whisper works in.
+*/
+const GAIN_DB = Number(process.env.OPERATOR_LISTEN_GAIN ?? 0) || 0;
+
 const RATE = 16000;
 /** ~16ms of audio. Small enough to time a clap, big enough not to thrash. */
 const CHUNK_SAMPLES = 256;
@@ -145,6 +155,23 @@ export function startListening(onDoubleClap) {
         "-i", `audio=${DEVICE}`,
         "-ac", "1",
         "-ar", String(RATE),
+        /*
+          Software gain, because the microphone's own level is not something
+          this can set.
+
+          Measured 2026-08-31 on the owner's headset: speech peaks at 0.0009
+          against a room floor of 0.0007 — barely distinguishable — while a
+          clap on the SAME microphone reaches 0.352. A clap is loud enough to
+          clear a badly-set input level and a voice is not, which is exactly
+          why claps worked for hours while speech never did.
+
+          Applied to the whole stream, so ambient and transients scale
+          together and the clap detector's ratio-to-ambient threshold is
+          unaffected. It amplifies noise as well as speech — Whisper's VAD is
+          what stops that becoming invented words, and it is the reason that
+          filter is not optional.
+        */
+        ...(GAIN_DB ? ["-af", `volume=${GAIN_DB}dB`] : []),
         "-f", "s16le",
         "-",
       ],
@@ -306,6 +333,7 @@ export async function captureAndTranscribe(seconds = 6) {
       makes "clap and start talking" work instead of "clap, wait, talk".
     */
     const pcm = await collectAudio(seconds);
+    console.log(`[operator] capture: ${pcm.length} bytes, preRoll had ${preRoll.length} chunks / ${preRollBytes} bytes`);
     await writeFile(wav, wavFromPcm(pcm));
     /*
       Measure what was captured. An empty transcript has two very different
