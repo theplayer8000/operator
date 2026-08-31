@@ -118,15 +118,50 @@ export default function AppLayout() {
                 : "border-base-600 bg-base-800 text-ink-700 hover:text-ink-300"
           }`}
         >
-          <span className="flex items-center gap-0.5" aria-hidden>
-            {[0, 1, 2].map((i) => (
+          {/*
+            A live level meter, not a decorative pulse.
+
+            "Clapping does nothing" has three causes that look identical from
+            outside: the mic is not open, the mic is open and hears nothing, or
+            it hears you and the threshold is too high. Only the last is a
+            number anyone can change, and without a meter there is no way to
+            tell which one you have — which is exactly how this got debugged by
+            guessing a threshold.
+
+            The notch is the bar a clap has to beat. If the meter moves when you
+            clap but never reaches the notch, the number is wrong; if it does
+            not move at all, the microphone is.
+          */}
+          {clap.listening ? (
+            <span className="relative flex items-end gap-[2px] h-4 w-8 shrink-0" aria-hidden>
+              {[0, 1, 2, 3, 4].map((i) => {
+                const lit = clap.level > (i + 1) / 6;
+                return (
+                  <span
+                    key={i}
+                    className={`w-1 rounded-full transition-all duration-100 ${
+                      lit ? "bg-current" : "bg-current/20"
+                    }`}
+                    style={{ height: `${30 + i * 17}%` }}
+                  />
+                );
+              })}
               <span
-                key={i}
-                className={`w-1 rounded-full bg-current ${clap.listening ? "animate-breathe" : ""}`}
-                style={{ height: 6 + i * 3, animationDelay: `${i * 0.2}s` }}
+                className="absolute inset-y-0 w-px bg-current/60"
+                style={{ left: `${Math.min(100, clap.threshold * 100)}%` }}
               />
-            ))}
-          </span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-0.5" aria-hidden>
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="w-1 rounded-full bg-current"
+                  style={{ height: 6 + i * 3 }}
+                />
+              ))}
+            </span>
+          )}
           {/*
             The reason IS the label when there is one. A generic "unavailable"
             with the detail hidden in a tooltip is how this went undiagnosed:
@@ -134,7 +169,12 @@ export default function AppLayout() {
             three different fixes and look identical from outside.
           */}
           <span className="truncate">
-            {clap.reason ?? (clap.listening ? "listening" : "clap to summon")}
+            {clap.reason ??
+              (clap.listening
+                ? clap.claps > 0
+                  ? `heard ${clap.claps}`
+                  : "listening"
+                : "clap to summon")}
           </span>
         </button>
       )}

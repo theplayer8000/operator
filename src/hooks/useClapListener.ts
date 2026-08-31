@@ -29,8 +29,18 @@ import { readStorage, writeStorage } from "@/lib/storage";
 
 const ENABLED_KEY = "clap.enabled";
 
-/** Above this fraction of full scale counts as a transient worth considering. */
-const PEAK_THRESHOLD = 0.34;
+/*
+  Above this fraction of full scale counts as a transient worth considering.
+
+  Lowered from 0.34 after the owner's claps stopped registering: he had swapped
+  to a wired headset, and `autoGainControl: false` (which this needs, or the
+  gain rides the transient away) means a quieter input simply never reaches a
+  fixed bar. A threshold picked without seeing a level meter is a guess, which
+  is why there is now a level meter — see `level` below.
+*/
+const PEAK_THRESHOLD = Number(
+  typeof localStorage !== "undefined" ? (localStorage.getItem("os.clap.threshold") ?? "") : "",
+) || 0.18;
 /** A clap is over fast. Anything sustained above threshold is not one. */
 const MAX_CLAP_MS = 140;
 /** Two claps must fall inside this window to count as the gesture. */
@@ -47,6 +57,18 @@ export interface ClapState {
   listening: boolean;
   /** Why it is not listening, when that needs saying. */
   reason: string | null;
+  /**
+   * Loudest thing heard recently, 0–1, and the threshold it has to beat.
+   *
+   * Exposed so the UI can show a meter. Without one, "clapping does nothing"
+   * has three indistinguishable causes — the mic is not open, the mic is open
+   * but hears nothing, or it hears you and the bar is too high — and only the
+   * third is a number I can change. A meter tells all three apart at a glance.
+   */
+  level: number;
+  threshold: number;
+  /** How many claps it has heard since arming. Proof it is working at all. */
+  claps: number;
 }
 
 /**
@@ -69,6 +91,8 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
     readStorage<boolean>(ENABLED_KEY, false),
   );
   const [listening, setListening] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [claps, setClaps] = useState(0);
   /*
     Say why it cannot work, without waiting to be switched on.
 
@@ -137,6 +161,8 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
     let lastClapAt = 0;
     let firstClapAt = 0;
     let cooldownUntil = 0;
+    let peakHold = 0;
+    let lastPublish = 0;
 
     const start = async () => {
       try {
@@ -182,6 +208,23 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
           }
 
           const now = performance.now();
+
+          /*
+            Publish the level, but only a few times a second.
+
+            The audio loop runs at frame rate; calling setState on every frame
+            would re-render the whole layout 60 times a second to move a meter
+            two pixels. A decaying peak also reads far better than an
+            instantaneous one — a clap is over in a few frames and would
+            otherwise be a flicker nobody could see.
+          */
+          if (peak > peakHold) peakHold = peak;
+          if (now - lastPublish > 100) {
+            lastPublish = now;
+            setLevel(peakHold);
+            peakHold *= 0.55;
+          }
+
           if (now < cooldownUntil) return;
 
           if (peak >= PEAK_THRESHOLD) {
@@ -202,6 +245,7 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
           if (firstClapAt && sinceLast >= MIN_GAP_MS && sinceLast <= MAX_GAP_MS) {
             firstClapAt = 0;
             cooldownUntil = now + COOLDOWN_MS;
+            setClaps((n) => n + 1);
             callbackRef.current();
             return;
           }
@@ -231,8 +275,9 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
       stream?.getTracks().forEach((t) => t.stop());
       void context?.close();
       setListening(false);
+      setLevel(0);
     };
   }, [enabled, supported]);
 
-  return { supported, enabled, setEnabled, listening, reason };
+  return { supported, enabled, setEnabled, listening, reason, level, threshold: PEAK_THRESHOLD, claps };
 }

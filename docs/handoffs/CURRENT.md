@@ -1,91 +1,100 @@
 # CURRENT — work in progress
 
 **Updated:** 2026-08-31
-**`main`:** `cf75ae8`, clean and pushed.
+**`main`:** clean and pushed.
 **Workers:** Claude Code, Gemini, and **Local** (Ollama, `qwen2.5:3b`).
-**Terminal:** armed, at the owner's request — it does NOT survive a restart.
+**Terminal:** armed. It survives a restart now only if one is asked for — see below.
 **Rule:** see *"Every piece of work keeps a live handoff"* in `CLAUDE.md`.
 
-> Written before starting rather than after, because the owner is near a usage
-> limit and this session may stop mid-build. If it did, everything below the
-> line is what the next session needs.
+## Voice and presence — phase 1 done, the gesture is live
 
-## Starting now — voice
+**Operator speaks.** Speaker icon in the Orchestrator header, off until asked
+for, per-device, with a voice picker. On-device synthesis: no dependency,
+nothing leaves the machine, and — unlike the microphone — **not secure-context
+gated**, so it works at the bare tailnet IP too.
 
-**Phase 1 of [`presence-layer-design.md`](../presence-layer-design.md): speech
-OUT.** Operator speaks its replies.
+**Two claps summons it.** Pauses whatever is playing, brings the window to the
+front on screen 2, fullscreen, and navigates to the Dashboard. The detector is
+arithmetic over `AnalyserNode` output — no model, no dependency, and **no audio
+leaves the page**, not even to Operator's own server.
 
-Chosen first because it is the largest change in how the thing feels for the
-least risk: `SpeechSynthesis` is on-device on Windows and iOS, adds no
-dependency, sends nothing anywhere, and — unlike the microphone — **is not
-secure-context gated**, so it works at the bare tailnet IP as well as the
-`.ts.net` hostname.
+Off by default and desk-only. The microphone is open while armed, which is a
+posture change rather than a setting, so the toggle sits on screen (bottom
+right) rather than in Settings.
 
-Speech **in** follows and is a different job: local `faster-whisper` with Silero
-VAD ([ADR 0015](../decisions/0015-hermes-agent.md)), and `getUserMedia` **is**
-secure-context gated, so it will only ever work on the `https` hostname.
+### The state it is in right now
 
-It is also the gate on the wall display: a screen showing a graph is a
-screensaver, and the `LISTENING` readouts in the owner's references only mean
-something once something is listening.
+**It works, and the threshold is still being tuned.** The owner swapped to a
+wired headset and claps stopped registering — a fixed bar with
+`autoGainControl: false` (which the detector needs) does not survive a change of
+input device.
 
-### Where it got to
+So the button now shows a **live level meter with the threshold marked**, which
+turns "clapping does nothing" from one symptom into three distinguishable ones:
 
-**Phase 1 is DONE and pushed.** Speech out works: the speaker icon in the
-Orchestrator header, off until asked for, per-device, plus a voice picker. Three
-things that would each have shipped broken are written up in the commit
-(`feat(voice): Operator speaks`) — a watermark so replies are not re-read on
-every poll, markdown stripped before speaking, and the utterance held in a ref
-because Chrome garbage-collects it mid-sentence.
+- the meter does not move → the microphone is the problem
+- it moves but never reaches the notch → `PEAK_THRESHOLD` is too high
+- it passes the notch and nothing happens → the gesture logic is the problem
 
-Also landed: a `now` action, because asking the time made Gemini call
-`calendar_range` and `jobs_list` first. **Needs a server restart to appear.**
+Default lowered to `0.18`, and overridable per-device without a rebuild:
+`localStorage.setItem("os.clap.threshold", "0.12")`, then reload.
 
-### Next, and what gates it
+It also counts claps heard, so "heard 3" is proof the detector works even when
+the double-clap window is being missed.
 
-**The clap detector.** Two claps → switch to the graph and start listening.
-Designed in `presence-layer-design.md` §4b–4d, not built. It needs one decision
-from the owner first: **the microphone stays open**, which is a posture change
-even though no audio leaves the page. It is also `https`-hostname only.
+### Run Operator as the installed app, not a browser tab
 
-Then **speech in** — local `faster-whisper` (ADR 0015).
+`focus_operator` raises a *window*; it cannot switch a browser tab, and no API
+can. The PWA is already installed — opening it that way gives a window with no
+tab strip and the problem disappears. **Close the browser tab if the app window
+is open**, or the summon may grab whichever it finds first.
 
-### Two findings worth acting on before building more
+## What restarting looks like now
 
-Both from reading [isair/jarvis](https://github.com/isair/jarvis), and both
-queued in Updates:
+```
+POST /api/restart {"arm": true}
+```
 
-1. **Operator sends all ~35 actions to every worker on every turn.** That costs
-   tokens and makes the wrong tool likelier — which already happened. Actions
-   are grouped by prefix, so a keyword pass would cut it cheaply. Measure first.
-2. **Piper** is the answer to "a dedicated voice" — a local neural voice in
-   ~60MB rather than whatever Windows ships. `useSpeech` already owns the
-   surface, so the browser path becomes the fallback.
+Comes back with the terminal armed. ADR 0011 still holds: the caller has
+already passed the same check arming itself needs, so this grants nothing that
+could not be had in two requests — it removes a second trip that was becoming
+friction, and friction was the real risk, because it makes people want the
+terminal permanently on.
 
-## Recently landed (all pushed)
+**The intent travels as an exit code (76), never a file.** A worker has `Write`
+across the tree, so an "arm on next boot" marker on disk is one the agent could
+drop and then trigger a restart to collect.
 
-- **The mission map** — `/`, big screens only. An organic force layout that
-  **settles and stops**, so nodes do not drift under the pointer. 9 missions,
-  5 dependencies. Nine layout cases under test in the scratchpad; they caught a
-  cycle bug that marked only one member of a loop.
-- **`mission_set_dependency`** — `dependsOn` was the only structural field the
-  capability layer could not reach. Refuses self-links and loops.
-- **A local worker** (`server/ollama.mjs`) — no quota, no cost, nothing leaves
-  the machine. **24s → 1.2s** once `keep_alive` stopped it reloading 1.8GB per
-  call. It is on the GPU via Vulkan, not CPU.
-- **Three apps registered** in `OPERATOR_APPS` — `darams-crm` (supervised),
-  `vite-main`, `vite-agent`.
-- **Two silent landmines cleared** — the launcher lived in a temp scratchpad
-  that gets cleaned, and `whois` cached "couldn't ask the daemon" as "not a
-  peer", intermittently locking the owner's own PC out.
+## Three bugs worth not repeating
 
-## Waiting on the owner
+- **`Add-Type -PassThru` returns an ARRAY** when the definition declares a
+  struct alongside methods. Every `$w::Method()` then fails — *non-terminating*,
+  so the script ran to its final `Write-Output` and reported success while doing
+  nothing. Verify by asking the window where it ended up, never by reading a
+  return value.
+- **A maximised or fullscreen window ignores `MoveWindow`.** Order has to be
+  leave fullscreen → move → re-enter, with pauses, because the browser
+  re-lays-out asynchronously.
+- **A lone ALT tap** is the classic way past Windows' foreground restriction and
+  a browser reads it as "focus the menu" — which is why a nav link kept getting
+  a focus ring. `SwitchToThisWindow` does it with no keystroke.
 
-- **`OPERATOR_USAGE_BUDGET_USD=10` is a stopgap**, not the ceiling ADR 0013
-  describes. It resets every restart and counts valuation dollars, not credits.
-- **Gym mission should update itself** from gym data — queued. Both halves
-  exist (`gym_toggle_exercise`, `mission_set_progress`); what is missing is one
-  action and a rule for what progress *means*.
-- **The 76 permission rules** in `.claude/settings.local.json`, and `greptile`
+## Next
+
+**Speech in** — local `faster-whisper` ([ADR 0015](../decisions/0015-hermes-agent.md)).
+The clap already opens the microphone, so the capture buffer has somewhere to
+start, and the callback fires on the second clap precisely so it can.
+
+Then, in rough order: **Piper** for a real voice rather than whatever Windows
+ships; **tool relevance filtering**, because all ~35 actions go to every worker
+on every turn and that already made Gemini pick the wrong one; and the **live
+layer** on the mission map, which the chat-in-the-graph plan waits on.
+
+## Still waiting on the owner
+
+- `OPERATOR_USAGE_BUDGET_USD=10` is a stopgap, not ADR 0013's ceiling. It resets
+  each restart and counts valuation dollars, not credits.
+- The **76 permission rules** in `.claude/settings.local.json`, and `greptile`
   enabled against ADR 0014 — see
   [`2026-08-27-claude-code-health-check.md`](2026-08-27-claude-code-health-check.md).
+- **Gym mission should update itself** from gym data — queued.
