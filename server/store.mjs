@@ -6,7 +6,7 @@
 // API does, without two independent copies that could disagree about what was
 // just written.
 
-import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,9 +139,32 @@ export async function load() {
 export async function persist() {
   cache.updatedAt = new Date().toISOString();
   await mkdir(dirname(DATA_FILE), { recursive: true });
-  const tmp = `${DATA_FILE}.tmp`;
-  await writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
-  await renameWithRetry(tmp, DATA_FILE);
+  /*
+    A temp name UNIQUE to this write, not a shared `.tmp`.
+
+    Observed 2026-08-31: `ENOENT` renaming `operator.json.tmp`, twice. A shared
+    temp name makes two overlapping writes collide — A writes tmp, B overwrites
+    it, A renames it into place, and B's rename then finds nothing. The write
+    is lost.
+
+    That is a collision rather than a lock, so the retry above cannot help and
+    `ENOENT` is deliberately not in its transient list: retrying does not bring
+    a consumed file back. Giving each write its own temp file removes the race
+    at the source instead.
+
+    Distinct from the EPERM of 2026-08-22, which really was a transient lock and
+    really is worth retrying — same symptom, opposite cause, and treating them
+    alike would have papered over a lost write.
+  */
+  const tmp = `${DATA_FILE}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+    await renameWithRetry(tmp, DATA_FILE);
+  } catch (err) {
+    // Never leave a half-written temp file behind to be mistaken for a store.
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 /**
