@@ -535,6 +535,34 @@ const server = createServer(async (req, res) => {
       return json(res, 200, listClients());
     }
 
+    /*
+      What the microphone is hearing, so the UI can react to a voice.
+
+      Polled far more often than anything else here — the mission map redraws
+      from it — so it is deliberately the cheapest route in the file: it reads
+      four numbers already in memory and touches nothing. No store, no
+      subprocess, no disk.
+
+      Deliberately says nothing about whether Operator is SPEAKING. Speech out
+      is `SpeechSynthesis` in the browser, so the server genuinely does not
+      know, and a `speaking: false` here would be a confident lie in an API
+      rather than an absent field. The page reads `speechSynthesis.speaking`
+      directly — it is the one asking it to speak.
+
+      That changes if Piper lands and speech moves server-side, at which point
+      this is where it belongs.
+    */
+    if (pathname === "/api/listen") {
+      return json(res, 200, {
+        listening: listenState.listening,
+        device: listenState.device,
+        level: Number((listenState.level ?? 0).toFixed(4)),
+        threshold: Number((listenState.threshold ?? 0).toFixed(4)),
+        claps: listenState.claps,
+        reason: listenState.reason,
+      });
+    }
+
     // Owner-approved outbound call — see server/status.mjs for why it's here
     // and not in the browser.
     if (pathname === "/api/claude-status") {

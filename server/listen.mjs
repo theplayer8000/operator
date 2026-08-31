@@ -190,6 +190,17 @@ export function startListening(onDoubleClap) {
     let ambient = 0.001;
 
     child.stdout.on("data", (buf) => {
+      /*
+        Audio is flowing, so this attempt genuinely worked — clear the failure
+        count. Without this `restarts` only ever climbs, and after one bad
+        patch the listener would sit on 60-second retries for the rest of the
+        process's life even while the microphone was working perfectly.
+
+        Reset here rather than on spawn: ffmpeg starts happily against a
+        disconnected Bluetooth device and only fails a moment later, so a
+        successful spawn proves nothing. A byte of PCM does.
+      */
+      if (restarts) restarts = 0;
       rememberAudio(buf);
       // Samples are 2 bytes; a chunk boundary can split one, so keep the odd
       // byte for next time rather than reading a sample that is half of two.
@@ -263,11 +274,38 @@ export function startListening(onDoubleClap) {
         respawns a failing process every second until someone notices the log.
       */
       restarts += 1;
-      if (restarts > 8) {
-        state.reason = `listener stopped after repeated failures (last exit ${code})`;
-        console.warn(`[operator] listen: giving up after ${restarts} restarts`);
+      /*
+        Back off to a slow retry — do NOT stop.
+
+        This used to give up permanently after eight failures, which is wrong
+        for the microphone this actually runs on: a Bluetooth headset drops
+        every time it idles or the owner walks away, so the listener would be
+        dead within thirty seconds of him taking it off and stay dead until
+        someone restarted the server. The clap gesture would then silently not
+        work, which is indistinguishable from it being broken.
+
+        The original concern was respawning a failing process every second
+        forever, and a minute between attempts answers that: a device that is
+        genuinely gone costs one spawn a minute, and one that comes back is
+        picked up without anyone doing anything.
+      */
+      const giveUp = restarts > 8;
+      if (giveUp) {
+        state.reason = `microphone unavailable — retrying every minute (last exit ${code})`;
+        if (restarts === 9) console.warn(`[operator] listen: backing off to 60s retries`);
+        setTimeout(spawnOnce, 60_000);
         return;
       }
+      /*
+        Say so WHILE retrying, not only after giving up.
+
+        Between the first failure and the ninth this used to report
+        `listening: false, reason: null` — indistinguishable from a listener
+        that was never asked to start, for up to about a minute. Anything
+        reading this state then has to choose between calling a broken
+        microphone idle or calling an idle one broken, and both are wrong.
+      */
+      state.reason = `microphone unavailable — retrying (${restarts}/8, last exit ${code})`;
       setTimeout(spawnOnce, Math.min(10_000, 500 * restarts));
     });
   };

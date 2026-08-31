@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { GitBranch, AlertTriangle, ArrowUpRight } from "lucide-react";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
+import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { layoutMissionGraph, NODE_R } from "./missionGraphLayout";
 import type { MissionStatus } from "@/lib/types";
 
@@ -58,6 +59,36 @@ export default function MissionGraph() {
   const { active } = useMissionBoard();
   const [hovered, setHovered] = useState<string | null>(null);
 
+  /*
+    The map IS the voice interface.
+
+    The owner's brief, and it is a better idea than a meter in a corner: when
+    Operator hears you the whole thing breathes, and when it answers it breathes
+    differently. You look at one thing and know which of the two is happening,
+    from across a room, without reading anything.
+
+    Two distinct signals rather than one "audio" light — hearing and speaking
+    need telling apart at exactly the moment they matter, and merging them into
+    activity would make the map say something is happening while hiding which.
+  */
+  const voice = useVoiceActivity();
+
+  /*
+    Normalised loudness, 0–1, relative to the threshold a clap must beat.
+
+    Raw level is unusable for this: a quiet microphone lives around 0.001 and
+    speech might reach 0.02, so a bar drawn from it would never visibly move.
+    Scaling against the detector's own threshold means the map reacts the same
+    way on any microphone — which is the same reasoning that made the clap
+    threshold a ratio rather than an absolute after it was guessed wrong twice.
+  */
+  const heard = voice.listening
+    ? Math.min(1, voice.level / Math.max(0.004, voice.threshold))
+    : 0;
+  // Below this it is room noise, and a map that twitches at silence is worse
+  // than one that stays still.
+  const hearing = heard > 0.35;
+
   const layout = useMemo(() => layoutMissionGraph(active), [active]);
   const nodeById = useMemo(
     () => new Map(layout.nodes.map((n) => [n.mission.id, n])),
@@ -104,6 +135,31 @@ export default function MissionGraph() {
             </p>
           </div>
         </div>
+        {/*
+          Says which of the three states the map is in, because a still map is
+          otherwise ambiguous between "quiet room" and "microphone is off" —
+          and the second one is worth knowing before you talk to it.
+
+          Nothing at all when the listener is off. An "idle" chip on a machine
+          with no microphone would be permanent furniture advertising a feature
+          that isn't running.
+        */}
+        {voice.listening && (
+          <span
+            className="shrink-0 flex items-center gap-1.5 text-[11px] font-mono text-ink-600"
+            title={voice.speaking ? "Operator is speaking" : "Microphone is open"}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full transition-all duration-150"
+              style={{
+                background: voice.speaking ? "#8D7FE0" : "#E8B04D",
+                opacity: voice.speaking ? 1 : 0.35 + heard * 0.65,
+                transform: `scale(${voice.speaking ? 1.4 : 1 + heard * 0.6})`,
+              }}
+            />
+            {voice.speaking ? "speaking" : hearing ? "hearing" : "listening"}
+          </span>
+        )}
         <Link
           to="/missions"
           className="shrink-0 flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-100 transition-colors"
@@ -152,7 +208,40 @@ export default function MissionGraph() {
               <stop offset="0%" stopColor="currentColor" stopOpacity="0.30" />
               <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
             </radialGradient>
+            {/*
+              The voice wash. Two colours, deliberately not one:
+              gold when it HEARS you, violet when it SPEAKS. Looking at the map
+              tells you which is happening without reading a word.
+            */}
+            <radialGradient id="mg-voice">
+              <stop offset="0%" stopColor="currentColor" stopOpacity="0.20" />
+              <stop offset="55%" stopColor="currentColor" stopOpacity="0.06" />
+              <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+            </radialGradient>
           </defs>
+
+          {/*
+            Under everything, so it lights the map rather than covering it.
+
+            Scaled by loudness rather than switched on and off — a binary glow
+            reads as a notification, and this should read as the room being
+            heard. Speaking wins when both are true, because Operator talking
+            over itself is the state worth showing.
+          */}
+          {(hearing || voice.speaking) && (
+            <ellipse
+              cx={layout.width / 2}
+              cy={layout.height / 2}
+              rx={layout.width * 0.62}
+              ry={layout.height * 0.62}
+              fill="url(#mg-voice)"
+              className="transition-opacity duration-150 pointer-events-none"
+              style={{
+                color: voice.speaking ? "#8D7FE0" : "#E8B04D",
+                opacity: voice.speaking ? 0.9 : 0.35 + heard * 0.65,
+              }}
+            />
+          )}
 
           {/* Edges under the nodes, so a line never crosses a label. */}
           <g fill="none">
@@ -209,6 +298,27 @@ export default function MissionGraph() {
                       animation: `mg-float ${5 + (i % 4) * 0.9}s ease-in-out ${i * 0.35}s infinite`,
                     }}
                   >
+                    {/*
+                      Each node swells with the voice, out of phase.
+
+                      The delay is `i * 0.06`, so loudness travels ACROSS the
+                      map rather than every node throbbing in unison — a
+                      synchronised pulse reads as a loading spinner, a
+                      travelling one reads as something alive hearing you.
+                      Tiny, because this must not move a click target: the
+                      halo grows, the node itself does not.
+                    */}
+                    {(hearing || voice.speaking) && (
+                      <circle
+                        r={r + 26 + (voice.speaking ? 10 : heard * 22)}
+                        fill="url(#mg-voice)"
+                        className="transition-all duration-150"
+                        style={{
+                          color: voice.speaking ? "#8D7FE0" : "#E8B04D",
+                          transitionDelay: `${(i % 6) * 60}ms`,
+                        }}
+                      />
+                    )}
                     <circle r={r + 26} fill="url(#mg-halo)" />
                     {/* Progress ring — reads at a glance from across a desk. */}
                     <circle
