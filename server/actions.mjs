@@ -280,6 +280,7 @@ async function focusOperator({ pause } = {}) {
       " [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);" +
       " [DllImport(\"user32.dll\")] public static extern void keybd_event(byte v, byte s, uint f, int e);" +
       " [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);" +
+      " [DllImport(\"user32.dll\")] public static extern bool IsZoomed(IntPtr h);" +
       " [DllImport(\"user32.dll\")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int t, bool r);" +
       " public struct RECT { public int Left, Top, Right, Bottom; }';",
     /*
@@ -297,6 +298,28 @@ async function focusOperator({ pause } = {}) {
     */
     "$w = @(Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru) | Where-Object { $_.Name -eq 'Win' };",
     "if (-not $w) { Write-Output 'NOTYPE'; exit 0 };",
+    /*
+      A tiny C# type to do the enumeration, rather than marshalling an
+      EnumWindows delegate through PowerShell — which is possible and is far
+      more fragile than a dozen lines of C# that the same Add-Type call is
+      already compiling anyway.
+    */
+    "$find = 'using System; using System.Text; using System.Runtime.InteropServices;" +
+      " public class Find {" +
+      " [DllImport(\"user32.dll\")] static extern bool EnumWindows(EnumProc f, IntPtr p);" +
+      " [DllImport(\"user32.dll\")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);" +
+      " [DllImport(\"user32.dll\")] static extern bool IsWindowVisible(IntPtr h);" +
+      " delegate bool EnumProc(IntPtr h, IntPtr p);" +
+      " static IntPtr found; static string want;" +
+      " public static string TitleOf(IntPtr h) { var b = new StringBuilder(300); GetWindowText(h, b, 300); return b.ToString(); }" +
+      " static bool Check(IntPtr h, IntPtr p) {" +
+      "  if (!IsWindowVisible(h)) return true;" +
+      "  var t = TitleOf(h);" +
+      "  if (t.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0) { found = h; return false; }" +
+      "  return true; }" +
+      " public static IntPtr ByTitle(string s) { want = s; found = IntPtr.Zero; EnumWindows(Check, IntPtr.Zero); return found; } }';",
+    "Add-Type -TypeDefinition $find -ErrorAction SilentlyContinue;",
+    "if (-not ('Find' -as [type])) { Write-Output 'NOFIND'; exit 0 };",
     // Any window whose title mentions Operator, whichever browser is showing it.
     /*
       Look twice before giving up.
@@ -311,13 +334,24 @@ async function focusOperator({ pause } = {}) {
       is indistinguishable from the window genuinely being closed, which is the
       kind of thing that gets debugged twice.
     */
-    "$p = $null;",
-    "for ($i = 0; $i -lt 5 -and -not $p; $i++) {",
-    "  if ($i -gt 0) { Start-Sleep -Milliseconds 300 };",
-    "  $p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
-    "};",
-    "if (-not $p) { Write-Output 'NOWINDOW'; exit 0 };",
-    "$h = $p.MainWindowHandle;",
+    /*
+      Enumerate ALL windows, not just each process's main one.
+
+      `Get-Process | Where MainWindowTitle` only ever sees ONE window per
+      process, and a browser has many. It found the Operator PWA for a while by
+      luck; the moment a Settings window became Brave's main window, Operator
+      became invisible and the action reported "no window open" about a window
+      plainly on screen. Fifteen brave processes, one visible title.
+
+      EnumWindows walks every top-level window, so a PWA window, a tab window
+      and a second browser are all equally findable. Visible-only, because a
+      hidden or zero-size window is not the one anyone means.
+    */
+    "$p = [Find]::ByTitle('Operator');",
+    "for ($i = 0; $i -lt 4 -and $p -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 300; $p = [Find]::ByTitle('Operator') };",
+    "if ($p -eq [IntPtr]::Zero) { Write-Output 'NOWINDOW'; exit 0 };",
+    "$title = [Find]::TitleOf($p);",
+    "$h = $p;",
     /*
       Pause whatever is playing, from inside THIS script rather than a second
       action. Two invocations meant paying PowerShell's ~320ms startup and the
@@ -361,21 +395,58 @@ async function focusOperator({ pause } = {}) {
       asynchronously and measuring too early reads the previous geometry.
     */
     // Is it fullscreen on WHATEVER screen it is currently on?
-    "$cur = [System.Windows.Forms.Screen]::FromHandle($h).Bounds;",
+    /*
+      Which screen is it on NOW — worked out from the cached layout rather than
+      by loading System.Windows.Forms for one lookup. `FromHandle` was left
+      behind when the assembly load was removed for speed, which would have
+      thrown at runtime; kept as a reminder that dropping a dependency means
+      finding every use of it, not just the import.
+    */
+    `$screens = @(${screens
+      .map((s) => `@{ X = ${s.x}; Y = ${s.y}; Width = ${s.width}; Height = ${s.height} }`)
+      .join(", ")});`,
+    "$cur = $screens[0];",
+    "foreach ($sc in $screens) { if ($r.Left -ge $sc.X - 8 -and $r.Left -lt $sc.X + $sc.Width) { $cur = $sc } };",
     "$wasFull = (($r.Right - $r.Left) -ge ($cur.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($cur.Height - 4));",
     "$moved = $false;",
+    "$steps = @();",
     "if (-not $onScreen) {",
-    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 220 };",
-    "  $w::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true) | Out-Null;",
-    "  Start-Sleep -Milliseconds 120;",
+    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 260; $steps += 'exit-fullscreen' };",
+    /*
+      Un-maximise BEFORE moving, and this is the step that was missing.
+
+      Leaving fullscreen restores a window to whatever it was before — which for
+      a browser is usually MAXIMISED, and MoveWindow is silently ignored on a
+      maximised window exactly as it is on a fullscreen one. So the sequence
+      exited fullscreen, failed to move, measured itself as not filling the
+      target screen, and pressed F11 again — landing fullscreen on the screen it
+      started on, having toggled twice for nothing. Which is precisely what the
+      owner described.
+    */
+    "  if ($w::IsZoomed($h)) { $w::ShowWindow($h, 9) | Out-Null; Start-Sleep -Milliseconds 160; $steps += 'un-maximise' };",
+    "  $ok = $w::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true);",
+    "  $steps += ('move=' + $ok);",
+    "  Start-Sleep -Milliseconds 160;",
     "  $w::SetForegroundWindow($h) | Out-Null;",
     "  $moved = $true;",
     "  $w::GetWindowRect($h, [ref]$r) | Out-Null;",
+    "  $steps += ('landed=' + $r.Left);",
     "};",
     // Now measure against the TARGET screen and fullscreen there if needed.
     "$full = (($r.Right - $r.Left) -ge ($s.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($s.Height - 4));",
     "if (-not $full) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0) };",
-    "Write-Output ($p.MainWindowTitle + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen' + ($want + 1) + '|' + $(if ($moved) { 'moved' } else { 'in-place' }));",
+    /*
+      Report the STEPS, not just the outcome.
+
+      Every diagnosis of this action so far has been reconstructed from what the
+      window looked like afterwards, because the return value only ever said
+      what was intended. It reported "sent-f11" while doing nothing at all for
+      an entire session. A list of what actually ran — and what MoveWindow
+      returned, and where the window landed — is the difference between reading
+      the answer and inferring it.
+    */
+    "$steps += ('final=' + $r.Left + ',' + ($r.Right - $r.Left) + 'x' + ($r.Bottom - $r.Top));",
+    `Write-Output ($title + '|' + $(if ($full) { 'already-fullscreen' } else { 'sent-f11' }) + '|screen${Math.min(screenIndex, screens.length)}' + '|' + $(if ($moved) { 'moved' } else { 'in-place' }) + '|' + ($steps -join ' '));`,
   ].join(" ");
 
   try {
@@ -390,12 +461,18 @@ async function focusOperator({ pause } = {}) {
         "no window with Operator in its title is open — nothing to bring to the front"
       );
     }
-    const [title, fullscreen, screen] = out.split("|");
-    return {
+    const [title, fullscreen, screen, moved, steps] = out.split("|");
+    const result = {
       focused: (title ?? "").slice(0, 120),
       fullscreen: fullscreen ?? "unknown",
       screen: screen ?? "unknown",
+      moved: moved ?? "unknown",
+      steps: steps ?? "",
     };
+    // Logged as well as returned: the caller is usually a clap, and nobody is
+    // reading a fetch response when this misbehaves.
+    console.log(`[operator] summon — ${result.screen} ${result.fullscreen} ${result.moved} ${result.steps}`);
+    return result;
   } catch (err) {
     if (err instanceof ActionError) throw err;
     throw new ActionError(
