@@ -339,6 +339,51 @@ pass over the prompt would cut the list sharply for almost nothing — and
 Worth doing **before** the action count grows again, and worth measuring rather
 than assuming: count the tokens the declarations currently cost per turn first.
 
+#### "Most likely what Operator will become" — the owner, 2026-08-31
+
+Directionally right, and worth separating what to take from what taking it
+whole would cost. Same test as [ADR 0015](decisions/0015-hermes-agent.md):
+**components, not identity.**
+
+**Take these.** Each is already decided or already queued, which is the point —
+the reference is confirmation rather than a new plan:
+
+| From jarvis | Status here |
+|---|---|
+| Local Whisper in, Piper out | decided (ADR 0015); Piper queued |
+| Small model always loaded, for routing | the local worker, built |
+| Tool relevance filtering | queued — the real finding |
+| Memory digest before injection, for small models | unbuilt; it is harness gap #4 |
+| Secrets auto-redacted in stored memory | not considered here, and should be |
+| Whisper hallucination filters (confidence, no-speech) | folds into the VAD decision |
+| "stop" as spoken interruption | cheap, obvious, worth copying |
+
+**The one to be deliberate about: "100% local" is a product identity, and it is
+not Operator's.**
+
+Operator's promise is *self-hosted — your data never leaves hardware you
+control*, which is why every external host is approved by name. jarvis's promise
+is stronger: nothing leaves at all. The stronger promise buys less. Taken
+literally it means **trading Claude Code for a 3B model**, and Claude Code is
+currently the thing doing the actual engineering on this codebase — work no
+local model on this hardware can do. Voice should go local. The *worker* should
+not.
+
+The right shape is the one the provider boundary already has: **local for the
+things that must be constant, cheap and private** — routing, transcription,
+verification, deciding whether to speak — **and a cloud worker for the hard
+work, approved by name.** That is not a compromise on the vision; it is the
+vision, which was always about the data rather than about isolation.
+
+**Two more differences worth not sleepwalking into.** jarvis is Python and
+PyTorch; `server/` is Node with one npm dependency by ADR, so anything adopted
+runs as a spawned binary — the precedent Edge and ffmpeg already set — not as a
+new stack. And jarvis uses **MCP** for tools where Operator deliberately chose a
+CLI, because a CLI is worker-agnostic and MCP is not. That trade is worth
+revisiting only when Operator wants something outside its own data (Home
+Assistant, GitHub), because that is where MCP's ecosystem is the actual
+argument — and that is a named-host decision, not a protocol preference.
+
 ### 5. Wake word
 
 Hardest, least valuable, and on an i5-10400 with no usable GPU it would compete
