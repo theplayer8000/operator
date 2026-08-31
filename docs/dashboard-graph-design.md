@@ -219,6 +219,43 @@ Two ways to sequence, and the second is better:
 That also means the control plane and this can proceed independently, which is
 worth having given both are large.
 
+## The chat moves into the graph — proposed 2026-08-31
+
+His plan: **retire the Orchestrator as a page and put the conversation into the
+graph view**, as a small compact box along the bottom. The graph is what you
+look at; the chat is a line you type into.
+
+That is a better shape than it first sounds, and the reason is the graph's
+second layer. `control-plane-design.md` already has live jobs attaching to the
+mission they advance — so a conversation happening *on top of* the map means
+you watch the thing you asked about light up while it is worked on, rather than
+reading a transcript that describes it. The chat stops being the interface and
+becomes the input to one.
+
+Three things it must not lose, all of which currently live in the Orchestrator
+page and none of which fit in a small box:
+
+- **The permission question.** ADR 0012's whole point is that a denied tool
+  suspends the turn and is answerable in one tap. It cannot become something
+  you have to open a panel to find, or the turn sits waiting while the map
+  looks calm.
+- **The tab strip.** Jobs are conversations that outlive a request; a compact
+  box implies one thread. Either the tabs survive somewhere, or a job becomes a
+  node on the map — which is probably the right answer and is the same idea as
+  the live layer.
+- **The worker blurb and deny list.** Not decoration: it is where you find out
+  what the thing in front of you is allowed to do. Fine to move behind a
+  disclosure, not fine to drop.
+
+**And the phone keeps the page.** Per the device split in
+`presence-layer-design.md`, the graph is desk-only — so the Orchestrator page
+cannot simply be deleted, or the phone loses the ability to answer a permission
+prompt, which is the one thing it most needs to do. The page stays as the phone
+surface; the graph gains the chat as the desk one.
+
+Sequenced after the live layer rather than before it: a chat box on a static
+map is just the same conversation in a smaller box.
+
 ## What to build, in order
 
 1. **The mission graph.** Nodes from `missions.records`, edges from

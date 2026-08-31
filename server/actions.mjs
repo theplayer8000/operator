@@ -64,6 +64,44 @@ function todayKey() {
   ).padStart(2, "0")}`;
 }
 
+/**
+ * What time is it — the cheapest action here, and it exists because its
+ * absence was expensive.
+ *
+ * Asked "what time is it" on 2026-08-31, Gemini called `calendar_range` and
+ * then `jobs_list` before answering: two extra round trips, several seconds
+ * each, to reach a fact the server knows for free. Nothing was wrong with the
+ * model's reasoning — the calendar is genuinely the closest thing on offer when
+ * nothing simply reports the clock.
+ *
+ * Same lesson as the gym read action, which cost $0.92 and two minutes for a
+ * question the store could have answered directly: **a missing trivial action
+ * does not cause a refusal, it causes expensive improvisation**, and that is
+ * far harder to notice.
+ *
+ * Local time, deliberately. `toDateKey()` exists across this codebase because
+ * UTC is wrong for a person's day (OPS-009), and a worker asked what today is
+ * must get the same answer the Dashboard shows.
+ */
+async function currentTime() {
+  const d = new Date();
+  return {
+    date: todayKey(),
+    time: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+    weekday: d.toLocaleDateString("en-GB", { weekday: "long" }),
+    // Spelled out, because a model reading "2026-08-31" often says the wrong
+    // month aloud and this is now sometimes spoken rather than read.
+    readable: d.toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    iso: d.toISOString(),
+  };
+}
+
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A date param, defaulting to today when omitted — every action that takes
@@ -1152,6 +1190,12 @@ const ACTIONS = {
       "What the gym session is on a date: its exercises, which are ticked, whether it's a rest day or was skipped. Use this to answer any question about training — never read the store directly.",
     params: "date? (YYYY-MM-DD or \"today\")",
     handler: gymDay,
+  },
+  now: {
+    description:
+      "The current date and time on the machine Operator runs on, in the owner's local timezone. Use this for anything about \"now\", \"today\" or what the time is — do NOT read the calendar to work it out.",
+    params: "(none)",
+    handler: currentTime,
   },
   calendar_range: {
     description:

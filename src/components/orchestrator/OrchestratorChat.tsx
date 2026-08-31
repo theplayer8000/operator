@@ -711,6 +711,28 @@ export default function OrchestratorChat() {
                 )}
               </button>
             )}
+            {/*
+              The voice picker appears only once speaking is on — a select for
+              a feature that is off is a control for nothing. Grouped with the
+              toggle rather than buried in Settings because choosing a voice is
+              something you do WHILE listening to one.
+            */}
+            {speech.supported && speech.enabled && speech.voices.length > 0 && (
+              <select
+                value={speech.voiceName ?? ""}
+                onChange={(e) => speech.setVoiceName(e.target.value || null)}
+                title="Which voice Operator speaks with, on this device"
+                aria-label="Operator's voice"
+                className="hidden sm:block h-11 max-w-[150px] px-2 rounded-badge border border-base-600 bg-base-800 text-[11px] text-ink-500 hover:text-ink-300 focus:outline-none focus:border-xp/40"
+              >
+                <option value="">Default voice</option>
+                {speech.voices.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    {v.name.replace(/^Microsoft\s+/, "").replace(/\s+-\s+English.*$/, "")}
+                  </option>
+                ))}
+              </select>
+            )}
             {j.jobs.length > 0 && (
               <ConfirmButton onConfirm={() => void j.clearAll()} label="Clear all conversations" compact />
             )}
