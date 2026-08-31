@@ -149,6 +149,8 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
     let stream: MediaStream | null = null;
     let context: AudioContext | null = null;
     let processor: ScriptProcessorNode | null = null;
+    let wake = 0;
+    const onWake = () => { if (context && context.state === "suspended") void context.resume(); };
     let cancelled = false;
 
     /*
@@ -211,6 +213,25 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
         // processor that leads nowhere. Nothing is written to the output
         // buffer, so this makes no sound.
         processor.connect(context.destination);
+
+        /*
+          Keep the AudioContext running when the window is not in front.
+
+          Moving detection onto the audio thread fixed requestAnimationFrame
+          being throttled, and did not fix this: Chromium SUSPENDS an
+          AudioContext outright when it decides the page is hidden or occluded,
+          and a suspended context fires no `onaudioprocess` at all. The
+          microphone stream stays live throughout, so the meter looks perfectly
+          healthy the moment you tab back to check — which is why this hides
+          from the only person who could notice it.
+
+          Resumed on visibility changes and on a slow interval, because
+          occlusion by another window does not always raise an event. `resume()`
+          on an already-running context is a no-op, so the poll costs nothing.
+        */
+        document.addEventListener("visibilitychange", onWake);
+        window.addEventListener("focus", onWake);
+        wake = window.setInterval(onWake, 2000);
 
         setListening(true);
         setReason(null);
@@ -286,6 +307,9 @@ export function useClapListener(onDoubleClap: () => void, muted = false): ClapSt
 
     return () => {
       cancelled = true;
+      window.clearInterval(wake);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
       try { if (processor) { processor.onaudioprocess = null; processor.disconnect(); } } catch { /* already gone */ }
       // Release the device rather than leaving the recording indicator on
       // after the page has moved on.
