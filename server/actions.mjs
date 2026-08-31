@@ -185,7 +185,44 @@ async function mediaPlayPause() {
  * gateway this file's header exists to refuse. This can only ever raise
  * Operator.
  */
-async function focusOperator() {
+/*
+  Screen geometry, cached.
+
+  Loading System.Windows.Forms to ask where the monitors are costs about 270ms
+  of the ~2.5s the summon originally took, and the answer almost never changes.
+  Cached for five minutes, so unplugging a monitor is picked up within one
+  gesture rather than needing a restart, and the common case pays nothing.
+*/
+let screenCache = { at: 0, screens: null };
+const SCREEN_TTL_MS = 5 * 60_000;
+
+async function screenBounds(run) {
+  if (screenCache.screens && Date.now() - screenCache.at < SCREEN_TTL_MS) {
+    return screenCache.screens;
+  }
+  const { stdout } = await run(
+    "powershell",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Add-Type -AssemblyName System.Windows.Forms; " +
+        "[System.Windows.Forms.Screen]::AllScreens | ForEach-Object { " +
+        "'{0},{1},{2},{3}' -f $_.Bounds.X, $_.Bounds.Y, $_.Bounds.Width, $_.Bounds.Height }",
+    ],
+    { timeout: 6000, windowsHide: true }
+  );
+  const screens = String(stdout)
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.split(",").map(Number))
+    .filter((p) => p.length === 4 && p.every(Number.isFinite))
+    .map(([x, y, width, height]) => ({ x, y, width, height }));
+  if (screens.length) screenCache = { at: Date.now(), screens };
+  return screens;
+}
+
+async function focusOperator({ pause } = {}) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const run = promisify(execFile);
@@ -198,6 +235,13 @@ async function focusOperator() {
     first rather than failing.
   */
   const screenIndex = Math.max(1, Number(process.env.OPERATOR_FOCUS_SCREEN ?? 2) || 2);
+
+  const pauseMedia = pause === false ? "$false" : "$true";
+  const screens = await screenBounds(run);
+  if (!screens.length) throw new ActionError("couldn't read the display layout");
+  // Clamped rather than erroring: unplugging the second monitor should fall
+  // back to the first, not break the gesture.
+  const target = screens[Math.min(screenIndex, screens.length) - 1];
 
   /*
     SetForegroundWindow is deliberately restricted by Windows: a process that
@@ -254,23 +298,52 @@ async function focusOperator() {
     "$w = @(Add-Type -MemberDefinition $sig -Name Win -Namespace Fg -PassThru) | Where-Object { $_.Name -eq 'Win' };",
     "if (-not $w) { Write-Output 'NOTYPE'; exit 0 };",
     // Any window whose title mentions Operator, whichever browser is showing it.
-    "$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
+    /*
+      Look twice before giving up.
+
+      A window reports an empty MainWindowTitle for a moment while it enters or
+      leaves fullscreen, so a summon arriving during another one's transition
+      finds nothing and reports "no window open" for a window plainly on screen.
+      Measured by calling this three times in quick succession: the first
+      worked, the next two could not find it, and it was back a second later.
+
+      Rare in use — you do not clap twice within half a second — but the failure
+      is indistinguishable from the window genuinely being closed, which is the
+      kind of thing that gets debugged twice.
+    */
+    "$p = $null;",
+    "for ($i = 0; $i -lt 5 -and -not $p; $i++) {",
+    "  if ($i -gt 0) { Start-Sleep -Milliseconds 300 };",
+    "  $p = Get-Process | Where-Object { $_.MainWindowTitle -like '*Operator*' } | Select-Object -First 1;",
+    "};",
     "if (-not $p) { Write-Output 'NOWINDOW'; exit 0 };",
     "$h = $p.MainWindowHandle;",
-    "$w::keybd_event(0x12,0,0,0);",
+    /*
+      Pause whatever is playing, from inside THIS script rather than a second
+      action. Two invocations meant paying PowerShell's ~320ms startup and the
+      Add-Type compile twice for a gesture that is meant to feel instant, which
+      was most of why the owner called it slow.
+
+      Same key as media_play_pause, which stays as its own action because it is
+      independently useful.
+    */
+    `if (${pauseMedia}) { $w::keybd_event(0xB3,0,0,0); $w::keybd_event(0xB3,0,2,0) };`,
+    /*
+      SwitchToThisWindow rather than the ALT tap. Pressing ALT is the classic
+      way past Windows' foreground restriction, but a browser reads a lone ALT
+      as "focus the menu" — which is why a nav link ended up with a focus ring
+      around it after every clap.
+    */
+    "$w::SwitchToThisWindow($h, $true);",
     "$w::ShowWindow($h, 9) | Out-Null;",
     "$w::SetForegroundWindow($h) | Out-Null;",
-    "$w::keybd_event(0x12,0,2,0);",
-    "Add-Type -AssemblyName System.Windows.Forms;",
-    "$all = [System.Windows.Forms.Screen]::AllScreens;",
     /*
-      Which screen to summon onto. 1-based here because that is how a person
-      counts monitors — "screen 2" is the second one — and clamped rather than
-      erroring, so unplugging the second display degrades to the first instead
-      of breaking the gesture.
+      The target screen's geometry arrives as literals from Node, already
+      cached — so this script never loads System.Windows.Forms, which was 270ms
+      of every summon for an answer that changes when a monitor is unplugged
+      and not otherwise.
     */
-    `$want = [Math]::Min([Math]::Max(${screenIndex}, 1), $all.Count) - 1;`,
-    "$s = $all[$want].Bounds;",
+    `$s = @{ X = ${target.x}; Y = ${target.y}; Width = ${target.width}; Height = ${target.height} };`,
     "$r = New-Object Fg.Win+RECT;",
     "$w::GetWindowRect($h, [ref]$r) | Out-Null;",
     "$onScreen = ($r.Left -ge $s.X - 8) -and ($r.Left -lt $s.X + $s.Width);",
@@ -292,9 +365,9 @@ async function focusOperator() {
     "$wasFull = (($r.Right - $r.Left) -ge ($cur.Width - 4)) -and (($r.Bottom - $r.Top) -ge ($cur.Height - 4));",
     "$moved = $false;",
     "if (-not $onScreen) {",
-    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 400 };",
+    "  if ($wasFull) { $w::keybd_event(0x7A,0,0,0); $w::keybd_event(0x7A,0,2,0); Start-Sleep -Milliseconds 220 };",
     "  $w::MoveWindow($h, $s.X + 60, $s.Y + 60, [Math]::Min(1200, $s.Width - 120), [Math]::Min(760, $s.Height - 120), $true) | Out-Null;",
-    "  Start-Sleep -Milliseconds 250;",
+    "  Start-Sleep -Milliseconds 120;",
     "  $w::SetForegroundWindow($h) | Out-Null;",
     "  $moved = $true;",
     "  $w::GetWindowRect($h, [ref]$r) | Out-Null;",
@@ -1428,8 +1501,8 @@ const ACTIONS = {
   },
   focus_operator: {
     description:
-      "Bring Operator's own window to the front on the machine it runs on, restoring it if minimised. Use with media_play_pause to summon it. Windows only.",
-    params: "(none)",
+      "Summon Operator: pause whatever is playing, bring its window to the front on the configured screen, and make it fullscreen. Windows only.",
+    params: 'pause? (default true — set false to leave audio alone)',
     handler: focusOperator,
   },
   media_play_pause: {

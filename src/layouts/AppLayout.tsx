@@ -54,15 +54,22 @@ export default function AppLayout() {
       what the eye follows and it should not arrive over the top of music still
       playing.
     */
-    const act = (action: string) =>
-      fetch("/api/actions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, params: {} }),
-      }).catch(() => {});
+    /*
+      ONE call, not two.
 
-    void act("media_play_pause");
-    void act("focus_operator");
+      This used to fire media_play_pause and focus_operator separately, which
+      meant paying PowerShell's ~320ms startup and its C# compile twice for a
+      gesture that should feel instant — most of the delay the owner reported.
+      focus_operator now presses the media key itself, inside the same script.
+
+      Still fire-and-forget: failing to summon must not stop the navigation,
+      which is the part that always works.
+    */
+    void fetch("/api/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "focus_operator", params: {} }),
+    }).catch(() => {});
     navigate("/");
   }, [navigate]);
 
