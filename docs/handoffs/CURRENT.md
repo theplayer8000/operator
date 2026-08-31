@@ -29,11 +29,38 @@ It is also the gate on the wall display: a screen showing a graph is a
 screensaver, and the `LISTENING` readouts in the owner's references only mean
 something once something is listening.
 
-### If this session stopped before finishing
+### Where it got to
 
-Nothing about voice is committed yet unless a commit message says so. Check
-`git log` first. The design and both decisions are already written down, so
-the work is resumable from `presence-layer-design.md` alone.
+**Phase 1 is DONE and pushed.** Speech out works: the speaker icon in the
+Orchestrator header, off until asked for, per-device, plus a voice picker. Three
+things that would each have shipped broken are written up in the commit
+(`feat(voice): Operator speaks`) — a watermark so replies are not re-read on
+every poll, markdown stripped before speaking, and the utterance held in a ref
+because Chrome garbage-collects it mid-sentence.
+
+Also landed: a `now` action, because asking the time made Gemini call
+`calendar_range` and `jobs_list` first. **Needs a server restart to appear.**
+
+### Next, and what gates it
+
+**The clap detector.** Two claps → switch to the graph and start listening.
+Designed in `presence-layer-design.md` §4b–4d, not built. It needs one decision
+from the owner first: **the microphone stays open**, which is a posture change
+even though no audio leaves the page. It is also `https`-hostname only.
+
+Then **speech in** — local `faster-whisper` (ADR 0015).
+
+### Two findings worth acting on before building more
+
+Both from reading [isair/jarvis](https://github.com/isair/jarvis), and both
+queued in Updates:
+
+1. **Operator sends all ~35 actions to every worker on every turn.** That costs
+   tokens and makes the wrong tool likelier — which already happened. Actions
+   are grouped by prefix, so a keyword pass would cut it cheaply. Measure first.
+2. **Piper** is the answer to "a dedicated voice" — a local neural voice in
+   ~60MB rather than whatever Windows ships. `useSpeech` already owns the
+   surface, so the browser path becomes the fallback.
 
 ## Recently landed (all pushed)
 

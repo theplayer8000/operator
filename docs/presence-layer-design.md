@@ -287,6 +287,58 @@ feature**, but the reverse is fine. Answering a permission prompt, ticking a
 gym session and reading a handoff must all work on a phone. Watching a live
 graph need not.
 
+### 4d. What `isair/jarvis` already proves — read 2026-08-31
+
+The owner pointed at [github.com/isair/jarvis](https://github.com/isair/jarvis),
+a 100%-local voice assistant. Worth reading properly rather than admiring,
+because it is a working instance of the design in this document and it settles
+some things by existing.
+
+**It confirms two decisions independently.** Its speech stack is local Whisper
+in, **Piper** out — which is what [ADR 0015](decisions/0015-hermes-agent.md)
+chose from a different starting point. And it keeps a **small fast model loaded
+alongside the chat model** purely for intent classification and tool routing,
+which is exactly the always-on local worker in
+[`control-plane-design.md`](control-plane-design.md). "Always loaded" is also
+the keep-alive lesson Operator learned the expensive way: 24s to 1.2s once the
+model stopped being evicted between calls.
+
+**Piper answers "can we get a dedicated voice."** Browser `SpeechSynthesis`
+uses whatever voices the OS ships, which is why the current picker is a list of
+Microsoft's. Piper is a local neural voice in about 60MB — a real voice rather
+than a system one, still nothing leaving the machine. That is the natural
+upgrade to phase 1 and it needs no architectural change: `useSpeech` already
+owns the whole surface, so the browser path becomes the fallback.
+
+**It solves the feedback problem with a model, not a mute.** Operator hearing
+its own speech is flagged above as a clap-detector failure mode; they run echo
+detection through the small model. Pausing detection while speaking is still the
+cheaper first answer, but it is worth knowing the harder case has a known
+solution.
+
+#### The finding that is actually about Operator
+
+**It routes tools by embedding relevance, explicitly "to prevent degradation
+with unlimited MCPs" — and Operator currently does the opposite.**
+
+Every one of `actions.mjs`'s ~35 actions is sent to every worker on every turn,
+as a full tool declaration. That has two costs, and the second is worse:
+
+- Tokens, on every request, for tools the task will never touch.
+- **Model quality.** A long tool list makes the wrong tool likelier, which is
+  not theoretical here: asked the time, Gemini reached for `calendar_range` and
+  `jobs_list`. That was read as a missing `now` action — correctly — but a
+  crowded list is the other half of the same story, and adding actions makes it
+  worse.
+
+Operator does not need embeddings for this. The actions are already grouped by
+feature (`gym_*`, `mission_*`, `calendar_*`, `routine_*`, `job_*`), so a keyword
+pass over the prompt would cut the list sharply for almost nothing — and
+`routing.mjs` already does rules-first-classifier-second for a similar job.
+
+Worth doing **before** the action count grows again, and worth measuring rather
+than assuming: count the tokens the declarations currently cost per turn first.
+
 ### 5. Wake word
 
 Hardest, least valuable, and on an i5-10400 with no usable GPU it would compete

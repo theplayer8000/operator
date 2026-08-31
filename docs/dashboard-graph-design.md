@@ -247,11 +247,22 @@ page and none of which fit in a small box:
   what the thing in front of you is allowed to do. Fine to move behind a
   disclosure, not fine to drop.
 
-**And the phone keeps the page.** Per the device split in
-`presence-layer-design.md`, the graph is desk-only — so the Orchestrator page
-cannot simply be deleted, or the phone loses the ability to answer a permission
-prompt, which is the one thing it most needs to do. The page stays as the phone
-surface; the graph gains the chat as the desk one.
+**The nav entry goes on the desk, and stays on the phone.** Clarified by the
+owner 2026-08-31: *"ion wanna see it in my tab list anymore on my pc, on mobile
+sure, pc no."*
+
+So this is not "the page also exists" — on a big screen the Orchestrator stops
+being a destination entirely and the sidebar loses the entry, because the chat
+now lives where you are already looking. On a phone it remains exactly what it
+is today, since the graph is not built there and a permission prompt has to be
+answerable from a pocket.
+
+That makes `NAV_ITEMS` **conditional on viewport for the first time**, which is
+a small thing with one sharp edge: the route must keep working when it is not
+linked. Someone will still have `/orchestrator` bookmarked, `/chat` already
+redirects to it, and a notification will deep-link to a job. Removing the nav
+entry must not become removing the route — hiding a door is not the same as
+bricking it up, and only the first is intended.
 
 Sequenced after the live layer rather than before it: a chat box on a static
 map is just the same conversation in a smaller box.
