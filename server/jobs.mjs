@@ -2044,7 +2044,15 @@ function assertMine(identity) {
   throw new Error(`Claude is busy on "${jobs.get(held.id)?.title ?? held.id}" from ${held.device ?? "another device"}`);
 }
 
-export async function create(prompt, model, identity, resources = [], provider = "auto", taskKind = "coding") {
+export async function create(
+  prompt,
+  model,
+  identity,
+  resources = [],
+  provider = "auto",
+  taskKind = "coding",
+  { executionAllowed = true } = {},
+) {
   const text = String(prompt ?? "").trim();
   if (!text) throw new Error("nothing to send");
   assertMine(identity);
@@ -2062,10 +2070,40 @@ export async function create(prompt, model, identity, resources = [], provider =
     turn would mean a conversation whose worker changes underneath it, and the
     two workers' sessions are not interchangeable.
   */
+  /*
+    Which workers this caller may actually reach.
+
+    Not every worker is the same risk, and treating them as one is what made
+    talking to Operator require an armed terminal. `claude-code` has full tool
+    access — starting one IS arbitrary execution. Gemini and the local model
+    have `tools: "capability-actions"`, so they can do precisely what an
+    unarmed caller could already do by calling an action directly. Requiring
+    the terminal for those is friction buying nothing.
+
+    So an unarmed caller gets the capability-only workers. The router chooses
+    from that shorter list rather than choosing freely and being refused after
+    the fact, which would produce "no" for a request that had a perfectly good
+    home.
+  */
+  const reachable = listProviders().filter(
+    (p) => executionAllowed || p.capabilities?.tools !== true,
+  );
+  if (reachable.length === 0) {
+    throw new Error(
+      "no worker available without the terminal armed — arm it on the Dev page to reach Claude Code",
+    );
+  }
+
   let routed = null;
   if (!provider || provider === "auto") {
-    routed = await routeTask(text, listProviders().map((p) => p.id));
+    routed = await routeTask(text, reachable.map((p) => p.id));
     provider = routed.provider;
+  }
+
+  if (!reachable.some((p) => p.id === provider)) {
+    throw new Error(
+      `${provider} needs the terminal armed — it can run commands. Arm it on the Dev page, or ask something the local model can answer.`,
+    );
   }
 
   const selection = selectWorker(provider, model);

@@ -259,8 +259,25 @@ const server = createServer(async (req, res) => {
     if (pathname === "/api/jobs") {
       const allowed = deviceAuthorised(identity);
       if (req.method === "POST") {
-        if (!allowed.ok) {
-          return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        /*
+          Talking to Operator does not require an armed terminal. Reaching a
+          worker that can run commands does.
+
+          Gating all job creation on the terminal made him arm it just to ask a
+          question — and bought nothing, because Gemini and the local model have
+          `tools: "capability-actions"` and can therefore do exactly what an
+          unarmed caller could already do by calling an action directly. Only
+          `claude-code` has full tool access, and starting one of those genuinely
+          IS execution.
+
+          So the tier is decided by the WORKER rather than by the fact that it is
+          a job. An unarmed but authenticated caller may start a conversation;
+          `create()` then routes within the workers he can actually reach and
+          says so plainly if he asked for one he cannot.
+        */
+        const mayUse = deviceMayUseCapabilities(identity);
+        if (!mayUse.ok) {
+          return json(res, 403, { error: "not authorised", reason: mayUse.reason });
         }
         const body = await readBody(req);
         try {
@@ -273,7 +290,8 @@ const server = createServer(async (req, res) => {
               identity,
               body?.resources,
               body?.provider,
-              body?.taskKind
+              body?.taskKind,
+              { executionAllowed: allowed.ok }
             )
           );
         } catch (err) {
