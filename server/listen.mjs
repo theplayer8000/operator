@@ -116,6 +116,10 @@ let restarts = 0;
 */
 let ambient = 0.001;
 
+/** The last listener error, so an identical one is counted rather than printed. */
+let lastListenError = "";
+let repeatedListenErrors = 0;
+
 
 /** Latest peak, so the UI can show a meter without the browser holding a mic. */
 export const state = { listening: false, device: DEVICE || null, level: 0, threshold: 0, claps: 0, reason: null };
@@ -269,7 +273,31 @@ export function startListening(onDoubleClap) {
 
     child.stderr.on("data", (d) => {
       const text = String(d).trim();
-      if (text) console.warn(`[operator] listen: ${text.slice(0, 200)}`);
+      /*
+        Say a repeated failure ONCE, then count it.
+
+        A disconnected microphone makes ffmpeg print the same four lines every
+        retry, and the retry is every 60 seconds forever. That produced roughly
+        two thousand identical lines in one day and buried everything worth
+        reading — the owner's point about the log overflowing is mostly this.
+
+        The message still appears, and its recurrence is still visible; it just
+        stops being the only thing in the file.
+      */
+      if (!text) return;
+      const key = text.slice(0, 80);
+      if (key === lastListenError) {
+        repeatedListenErrors += 1;
+        // A power of ten, so a persistent fault leaves a trail without leaving
+        // a wall: 10x, 100x, 1000x.
+        if (repeatedListenErrors % 100 === 0) {
+          console.warn(`[operator] listen: still failing (${repeatedListenErrors}x): ${key}`);
+        }
+        return;
+      }
+      lastListenError = key;
+      repeatedListenErrors = 1;
+      console.warn(`[operator] listen: ${text.slice(0, 200)}`);
     });
 
     child.on("exit", (code) => {

@@ -94,6 +94,23 @@ if ($espeakExe) { $env:PHONEMIZER_ESPEAK_PATH = $espeakExe }
 $espeakData = Read-UserEnv "ESPEAK_DATA_PATH"
 if ($espeakData) { $env:ESPEAK_DATA_PATH = $espeakData }
 
+# Roll the log if it has got large, keeping exactly one previous file.
+#
+# It appends forever otherwise. A disconnected microphone alone produced about
+# two thousand identical lines in a day, and the interesting part - the startup
+# banner, actions, jobs - ends up buried under whatever is currently broken.
+#
+# Rotated at START rather than while running: nothing holds a handle at this
+# moment, so there is no risk of truncating a file the server is mid-write on.
+# One previous file, because the reason to read this is almost always "what
+# happened just now", and anything older is in git or the changelog.
+$maxLogBytes = 2MB
+if ((Test-Path $log) -and ((Get-Item $log).Length -gt $maxLogBytes)) {
+    $previous = "$log.1"
+    if (Test-Path $previous) { Remove-Item $previous -Force -ErrorAction SilentlyContinue }
+    Move-Item -Path $log -Destination $previous -Force -ErrorAction SilentlyContinue
+}
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -Path $log -Value "==== serve started $stamp ===="
 
