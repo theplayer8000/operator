@@ -59,15 +59,8 @@ import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
 import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
 import { matchIntent } from "./intent.mjs";
+import { matchVoiceCommand, VOICE_ARM_MS } from "./voicecommand.mjs";
 
-/**
- * How long a clap leaves the terminal armed.
- *
- * Long enough to walk over and use it, short enough that an accidental trigger
- * is not a standing invitation. Environment-only, like every other security
- * dial here, so a worker cannot widen its own window.
- */
-const CLAP_ARM_MS = Math.max(0, Number(process.env.OPERATOR_CLAP_ARM_MINUTES ?? 20) || 20) * 60_000;
 import { synthesize, available as ttsAvailable, state as ttsState } from "./tts.mjs";
 
 const gzip = promisify(gzipCb);
@@ -663,6 +656,41 @@ const server = createServer(async (req, res) => {
           the phone rather than only in serve.log — but the client is told
           plainly this is an observation, not an offer. Nothing acts on it.
         */
+        /*
+          Arming by voice, which replaces arming by clap.
+
+          This is the one spoken thing allowed to act immediately, and the
+          reasoning is that it has to be: arming is what makes everything else
+          reachable, so it cannot be the thing waiting on evidence.
+
+          Three gates, and the middle one is the important one:
+
+          - the phrase has to match a short, closed, anchored list
+          - the DEVICE has to be one that could already arm, checked exactly as
+            the Dev page's button checks it. Speaking grants nothing tapping
+            would not; this is a new way to ask, not a new permission
+          - it expires, because Whisper does mishear and a terminal left armed
+            for days by a sentence he never said is the failure worth bounding
+
+          Works from the phone as well as the desk, deliberately — this is the
+          route phone audio arrives on, and "notify me if u need anything" is
+          not much use if he then has to walk to the machine to arm it.
+        */
+        const spoken = heard?.text ? matchVoiceCommand(heard.text) : null;
+        let armed = null;
+        if (spoken) {
+          const mayArm = deviceMayManage(identity);
+          if (!mayArm.ok) {
+            armed = { done: false, reason: mayArm.reason };
+            console.warn(`[operator] voice "${spoken}" refused: ${mayArm.reason}`);
+          } else {
+            const on = spoken === "arm";
+            setEnabled(on, identity, on ? VOICE_ARM_MS : 0, on ? jobs.busy : null);
+            armed = { done: true, enabled: on };
+            console.log(`[operator] terminal ${on ? "ARMED" : "disarmed"} by voice from ${identity?.device ?? "?"}`);
+          }
+        }
+
         let intent = null;
         try {
           intent = heard?.text ? matchIntent(heard.text) : null;
@@ -671,12 +699,28 @@ const server = createServer(async (req, res) => {
               `[operator] intent (WOULD run, not running): ${intent.action}` +
                 `${intent.needs ? ` via ${intent.needs.find}` : ""} — ${intent.why}`,
             );
+          } else if (heard?.text) {
+            /*
+              Log the MISSES too, with what was actually said.
+
+              This path only recorded hits, which made the observation useless
+              for the thing it exists to answer. A hit proves a rule fires; a
+              miss is where a real phrasing falls through, and reading those is
+              the whole reason this runs before it is trusted to act. Three
+              correct clock matches told me nothing about the sentences it
+              silently declined.
+
+              The transcript is his own speech on his own machine, going to his
+              own log — the same place every action he takes is already
+              recorded.
+            */
+            console.log(`[operator] intent: no match — ${JSON.stringify(heard.text.slice(0, 120))}`);
           }
         } catch (err) {
           console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
         }
 
-        return json(res, 200, { ...heard, wouldMatch: intent });
+        return json(res, 200, { ...heard, wouldMatch: intent, command: armed });
       } catch (err) {
         return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
       }
@@ -943,26 +987,20 @@ server.listen(PORT, HOST, () => {
       "pause that" is independently useful. It is just not automatic.
     */
     /*
-      Arm the terminal, for a while.
+      The clap no longer arms anything.
 
-      His ask: the clap should arm it too, so summoning Operator and being able
-      to use it are one gesture rather than two — and eventually his voice does
-      this instead of a clap.
+      It did, briefly, bounded to twenty minutes because the detector
+      false-fires. Then the detector turned out to be deaf on this machine
+      entirely — the Realtek emits 895 non-zero samples in three seconds and
+      digital silence for the rest — so clap-arming could never have worked
+      here regardless of the window.
 
-      Bounded rather than permanent, and the reason is measured rather than
-      cautious: this detector false-fires. It logged fifteen claps in an evening
-      nobody made, on a microphone that was working. Arming is arbitrary code
-      execution, so a stray door slam leaving the terminal armed for days
-      defeats the point of it being disarmed by default — which exists to stop a
-      lost phone or a runaway job running commands, not to stop the person
-      standing in the room.
-
-      A clap is also proof of physical presence, and anyone in the room could
-      use the keyboard anyway. That is why the gesture is allowed to arm at all;
-      the window is why it is safe to let it.
+      His replacement is better than a fix for that would have been: arming by
+      VOICE. A clap is anonymous, so any sharp sound qualifies and the window
+      existed to bound the damage. A spoken sentence is identifiable, arrives
+      through the browser microphone that actually works, and can be required
+      to come from a device already allowed to arm. See the transcribe route.
     */
-    setEnabled(true, { device: "a clap at the machine" }, CLAP_ARM_MS, jobs.busy);
-
     void runAction("focus_operator").catch((err) => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
     });
