@@ -179,7 +179,26 @@ export function useMicLevel(): MicLevel {
       */
       try {
         const all = await navigator.mediaDevices.enumerateDevices();
-        setDevices(all.filter((d) => d.kind === "audioinput" && d.deviceId));
+        /*
+          Windows publishes ALIASES next to the real inputs: a "Default -
+          Microphone (…)" and a "Communications - Microphone (…)" pointing at
+          whatever is currently selected in the control panel. Listing them
+          makes one microphone appear three times, which is what the owner was
+          looking at when he asked "ehh whats all this".
+
+          They are filtered by the `default`/`communications` deviceId rather
+          than by their label, because the label prefix is localised and the id
+          is not.
+        */
+        setDevices(
+          all.filter(
+            (d) =>
+              d.kind === "audioinput" &&
+              d.deviceId &&
+              d.deviceId !== "default" &&
+              d.deviceId !== "communications",
+          ),
+        );
       } catch {
         /* Not fatal: the microphone still works, it just cannot be re-chosen. */
       }
