@@ -120,11 +120,34 @@ export default function OperatorChat({
     async (text: string) => {
       if (!text.trim() || jobs.busy) return;
       setExpanded(true);
+
+      /*
+        `selected`, not `selectedId`.
+
+        `selectedId` is raw state and is never checked against the job list;
+        `selected` is `jobs.find(...) ?? null`, so it is only set when the job
+        genuinely still exists. Sending to the unvalidated one meant a stale id
+        survived every server restart and every "clear all", and the next thing
+        the owner said came back "no such job" — which he hit asking the time.
+      */
+      const live = jobs.selected?.id ?? null;
+
       try {
-        if (jobs.selectedId) await jobs.send(jobs.selectedId, text);
+        if (live) await jobs.send(live, text);
         else await jobs.create(text, undefined, [], worker ?? undefined);
-      } catch {
-        /* useJobs owns the error surface; it renders below. */
+      } catch (err) {
+        /*
+          A job can also disappear between the check and the send — another
+          device clearing, or a restart landing in that gap. Losing what he
+          just said to a race is worse than quietly starting a new thread.
+        */
+        if (String((err as Error)?.message ?? "").includes("no such job")) {
+          try {
+            await jobs.create(text, undefined, [], worker ?? undefined);
+          } catch {
+            /* useJobs owns the error surface; it renders below. */
+          }
+        }
       }
     },
     [jobs, worker],
@@ -135,19 +158,17 @@ export default function OperatorChat({
     if (!text || jobs.busy) return;
     setDraft("");
     setExpanded(true);
-    try {
-      // Continue the open thread if there is one, otherwise start a job. The
-      // router picks the worker, exactly as it does from the desk.
-      if (jobs.selectedId) await jobs.send(jobs.selectedId, text);
-      else await jobs.create(text);
-    } catch {
-      /* useJobs owns the error surface; it renders below. */
-    }
+    // One path for both, so the button and the voice cannot diverge — which is
+    // how only one of them carried the stale-id bug.
+    await sendText(text);
   };
 
   const answer = async (permissionId: string, decision: "allow" | "deny", remember = false) => {
-    if (!jobs.selectedId) return;
-    const problem = await jobs.answerPermission(jobs.selectedId, permissionId, decision, remember);
+    // Validated, for the same reason sending is: a question on a job that no
+    // longer exists cannot be answered, and trying reports a confusing failure.
+    const live = jobs.selected?.id;
+    if (!live) return;
+    const problem = await jobs.answerPermission(live, permissionId, decision, remember);
     // "Already settled" is information, not a failure — it happens when the
     // same question was answered from another device, which is normal here.
     if (problem) setNote(problem);

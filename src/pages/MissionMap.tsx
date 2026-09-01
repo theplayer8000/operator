@@ -105,6 +105,17 @@ export default function MissionMap() {
   const bodiesRef = useRef<Body[]>([]);
   const edgesRef = useRef<Edge[]>([]);
   const [hovered, setHovered] = useState<MissionRecord | null>(null);
+  /*
+    The render loop reads hover through a ref, not the dependency array.
+
+    It used to be `useEffect(..., [hovered])`, so moving the mouse over a
+    mission tore the whole animation loop down and rebuilt it — re-running
+    resize and re-seeding ninety particles, sixty times a second while the
+    cursor moved. That is what made dragging feel like it "does f all": the
+    loop was restarting underneath the drag.
+  */
+  const hoveredRef = useRef<MissionRecord | null>(null);
+  hoveredRef.current = hovered;
 
   /*
     Live inputs the render loop reads without restarting.
@@ -378,7 +389,7 @@ export default function MissionMap() {
         ctx.stroke();
       }
 
-      const focus = hovered?.id ?? null;
+      const focus = hoveredRef.current?.id ?? null;
       const near = new Set<string>();
       if (focus) {
         near.add(focus);
@@ -441,7 +452,7 @@ export default function MissionMap() {
         const m = b.mission;
         const colour = STATUS_COLOR[m.status] ?? STATUS_COLOR.not_started;
         const dim = focus !== null && !near.has(b.id);
-        const isHover = hovered?.id === b.id;
+        const isHover = hoveredRef.current?.id === b.id;
         const a = dim ? 0.22 : 1;
 
         // Voice ring — an outline, never a filled disc. Filled haloes overlap
@@ -509,7 +520,7 @@ export default function MissionMap() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
     };
-  }, [hovered]);
+  }, []);
 
   /* ---- interaction ---------------------------------------------------- */
 
@@ -526,11 +537,27 @@ export default function MissionMap() {
 
   const bodyAt = (clientX: number, clientY: number) => {
     const { x, y } = toWorld(clientX, clientY);
-    return bodiesRef.current.find((b) => Math.hypot(b.x - x, b.y - y) <= b.r + 6) ?? null;
+    /*
+      Generous by the ZOOM, not a fixed number. At 0.6x a 30-unit node is 18
+      screen pixels across, and a 6-unit slop is a pixel and a half — which is
+      why grabbing one felt like it missed.
+    */
+    const slop = 10 / Math.max(0.3, view.current.zoom);
+    return bodiesRef.current.find((b) => Math.hypot(b.x - x, b.y - y) <= b.r + slop) ?? null;
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    /*
+      Capture on the canvas, not the event target, and never let it throw.
+      With capture held, the pointer can leave the element entirely and the
+      drag survives — which is why `onPointerLeave` must NOT be wired to
+      release: it fires mid-drag and cancelled both dragging and panning.
+    */
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* Not fatal: the drag still works while the pointer stays inside. */
+    }
     const hit = bodyAt(e.clientX, e.clientY);
     pointer.current.down = true;
     pointer.current.moved = 0;
@@ -675,7 +702,7 @@ export default function MissionMap() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
         onWheel={onWheel}
       />
 
