@@ -83,6 +83,17 @@ if ($ntfyToken) { $env:OPERATOR_NTFY_TOKEN = $ntfyToken }
 $appUrl = Read-UserEnv "OPERATOR_APP_URL"
 if ($appUrl) { $env:OPERATOR_APP_URL = $appUrl }
 
+# Where espeak-ng lives, for Kokoro's phonemiser (server/tts.mjs).
+# Read explicitly rather than trusting inheritance, for the same reason every
+# other variable here is: Task Scheduler's environment has not been reliable,
+# which is the whole reason this script exists.
+$espeakLib = Read-UserEnv "PHONEMIZER_ESPEAK_LIBRARY"
+if ($espeakLib) { $env:PHONEMIZER_ESPEAK_LIBRARY = $espeakLib }
+$espeakExe = Read-UserEnv "PHONEMIZER_ESPEAK_PATH"
+if ($espeakExe) { $env:PHONEMIZER_ESPEAK_PATH = $espeakExe }
+$espeakData = Read-UserEnv "ESPEAK_DATA_PATH"
+if ($espeakData) { $env:ESPEAK_DATA_PATH = $espeakData }
+
 $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -Path $log -Value "==== serve started $stamp ===="
 
@@ -94,6 +105,9 @@ Add-Content -Path $log -Value "==== usage ceiling: $budgetState ===="
 
 if ($ntfyUrl -and $ntfyTopic) { $ntfyState = $ntfyUrl } else { $ntfyState = "off" }
 Add-Content -Path $log -Value "==== notifications: $ntfyState ===="
+
+if ($espeakLib) { $espeakState = "present" } else { $espeakState = "MISSING" }
+Add-Content -Path $log -Value "==== espeak-ng: $espeakState ===="
 
 if ($apps) {
     try {

@@ -26,6 +26,7 @@
 
 import { randomUUID } from "node:crypto";
 import { notify, configured as notifyConfigured } from "./notify.mjs";
+import { remember, forget, listFacts } from "./memory.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -1490,6 +1491,42 @@ const ACTIONS = {
     params: "date? (YYYY-MM-DD or \"today\")",
     handler: gymDay,
   },
+  /*
+    Memory: what Operator knows about the OWNER, as opposed to his data.
+
+    Exposed as actions so a worker can use them and, more importantly, so HE
+    can correct them — a memory only the system can write is one he cannot
+    argue with, and an assistant confidently repeating something it guessed
+    wrong is worse than one that forgot.
+
+    Reading is silent (it is in SILENT_ACTIONS); remembering and forgetting
+    notify, because a change to what Operator believes about him is exactly the
+    class of thing he should hear about while it happens.
+  */
+  memory_remember: {
+    description:
+      "Store one durable fact about the OWNER — a preference, a constraint, how he works. Not his data (missions, gym, calendar have their own actions) and not a note about this conversation. Say `source: \"stated\"` only if he actually said it; anything you worked out is inferred, and defaults to inferred if you omit it.",
+    params: 'text, source? ("stated" | "inferred")',
+    handler: async ({ text, source }) => {
+      const fact = await remember(text, { source });
+      return { id: fact.id, text: fact.text, source: fact.source };
+    },
+  },
+  memory_forget: {
+    description:
+      "Remove a stored fact about the owner, by its id or by its exact text. Use when he corrects something or says to forget it.",
+    params: "idOrText",
+    handler: async ({ idOrText, id, text }) => ({
+      forgot: await forget(idOrText ?? id ?? text),
+    }),
+  },
+  memory_list: {
+    description:
+      "Everything Operator currently believes about the owner, with how each was learned. Read this before asserting something personal back to him.",
+    params: "(none)",
+    handler: async () => ({ facts: await listFacts() }),
+  },
+
   now: {
     description:
       "The current date and time on the machine Operator runs on, in the owner's local timezone. Use this for anything about \"now\", \"today\" or what the time is — do NOT read the calendar to work it out.",
@@ -1762,6 +1799,13 @@ const ACTION_GROUPS = {
 
   jobs_list: "jobs",
   job_events: "jobs",
+
+  /*
+    Ungrouped on purpose, so memory reaches EVERY worker on every turn rather
+    than only when a keyword happens to mention it. Remembering something is
+    never the subject of the sentence — it happens while talking about the gym,
+    or a mission, or nothing in particular.
+  */
 };
 
 /**
@@ -1878,6 +1922,8 @@ const SILENT_ACTIONS = new Set([
   "routine_day",
   "jobs_list",
   "job_events",
+  // Reading what Operator believes about him is not a change to it.
+  "memory_list",
 ]);
 
 /**

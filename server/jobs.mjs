@@ -60,6 +60,7 @@
 import { spawn } from "node:child_process";
 import { notify } from "./notify.mjs";
 import { reviewWork } from "./semantic.mjs";
+import { recallFor } from "./memory.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -600,6 +601,42 @@ const APPEND_PROMPT = [
   "and shows the log tail if it does not. Restarting asks the owner first; listing",
   "and checking status do not.",
 ].join(" ");
+
+/**
+ * The standing prompt plus what Operator knows about the owner.
+ *
+ * Memory is appended here rather than baked into APPEND_PROMPT because it
+ * changes: a fact learned this morning has to reach this afternoon's turn, and
+ * a constant computed at module load never would.
+ *
+ * `recallFor` returns the empty string when nothing is known, so a fresh
+ * install pays nothing — no "you know nothing about the user" sentence
+ * occupying tokens forever, which is the shape this kind of thing usually
+ * rots into.
+ *
+ * One honest cost, recorded because it is easy to miss: a prompt that changes
+ * every turn defeats prompt caching. It is bounded at roughly 500 tokens and
+ * usually far less, but with OPERATOR_MAX_CONCURRENT above 1 that multiplies.
+ * If it ever matters, the fix is to inject only on a job's FIRST turn — the
+ * session resumes and the model still has it — rather than to shrink what he
+ * is allowed to be known by.
+ */
+async function systemPromptFor() {
+  try {
+    const recalled = await recallFor("");
+    return recalled ? `${APPEND_PROMPT}
+
+${recalled}` : APPEND_PROMPT;
+  } catch (err) {
+    /*
+      Memory failing must never cost him a turn. An assistant that forgets is
+      worse than one that never knew; an assistant that refuses to run because
+      it could not remember is worse than both.
+    */
+    console.warn(`[operator] memory unavailable: ${err?.message ?? err}`);
+    return APPEND_PROMPT;
+  }
+}
 
 const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
 /** Assume a turn costs at least this, when nothing has run yet to measure. */
@@ -1374,7 +1411,7 @@ async function runViaSdk(job, prompt) {
       deniedTools: DENIED_TOOLS,
       allowedTools: ALLOWED_TOOLS,
       budgetUsd: BUDGET_USD || null,
-      appendSystemPrompt: APPEND_PROMPT,
+      appendSystemPrompt: await systemPromptFor(),
       /*
         Option C. `default` is the only mode that consults the callback —
         `bypassPermissions` decides for itself and would make every line of the
@@ -1598,7 +1635,7 @@ async function runTurn(job) {
         ]
       : []),
     "--append-system-prompt",
-    APPEND_PROMPT,
+    await systemPromptFor(),
     "--output-format",
     "stream-json",
     // Not optional. Claude Code refuses `--output-format stream-json` under
