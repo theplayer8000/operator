@@ -38,12 +38,17 @@ export default function MicSource({
   voice,
   choice,
   onChoose,
+  autoSend,
+  onAutoSend,
   className = "",
 }: {
   mic: MicLevel;
   voice: VoiceActivity;
   choice: MicChoice;
   onChoose: (next: MicChoice) => void;
+  /** Heard sentences go straight to Operator instead of filling the box. */
+  autoSend: boolean;
+  onAutoSend: (next: boolean) => void;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -94,11 +99,13 @@ export default function MicSource({
             active={choice === "device"}
             busy={choice === "device" && !mic.active && !mic.error}
             disabled={!mic.supported}
-            title="This device"
+            title={mic.deviceLabel ? `This device — ${mic.deviceLabel}` : "This device"}
             detail={
-              mic.supported
-                ? "The microphone in whatever you are holding. Continuous, and transcribes without a clap."
-                : "Needs the https://…ts.net address — a bare IP is not a secure page."
+              !mic.supported
+                ? "Needs the https://…ts.net address — a bare IP is not a secure page."
+                : mic.active
+                  ? "Continuous, and transcribes without a clap. The browser applies its own noise suppression and auto-gain, which is why this often sounds better than the same microphone through ffmpeg."
+                  : "The microphone in whatever you are holding. Continuous, and transcribes without a clap."
             }
             onClick={() => {
               onChoose("device");
@@ -120,6 +127,41 @@ export default function MicSource({
               setOpen(false);
             }}
           />
+          {/*
+            Auto-send, as a switch rather than a decision made for him.
+
+            He asked for it directly — "at the moment i say something it pastes
+            into the box and i gotta click send". It is a toggle and not the
+            silent default because it spends money: a misheard sentence becomes
+            a job with nothing in between. The filters in front of it are what
+            make it reasonable at all — a voiced-fraction check for typing,
+            Whisper's VAD, and the hallucination list that stopped twenty
+            phantom jobs.
+          */}
+          <button
+            onClick={() => onAutoSend(!autoSend)}
+            className="w-full text-left px-3 py-2.5 rounded-badge hover:bg-base-700/60 transition-colors min-h-[44px] border-t border-base-600 mt-1"
+          >
+            <span className="flex items-center gap-2">
+              <span
+                className={`w-8 h-4 rounded-full shrink-0 relative transition-colors ${
+                  autoSend ? "bg-xp/70" : "bg-base-600"
+                }`}
+              >
+                <span
+                  className="absolute top-0.5 w-3 h-3 rounded-full bg-ink-100 transition-all"
+                  style={{ left: autoSend ? "18px" : "2px" }}
+                />
+              </span>
+              <span className="text-sm text-ink-300">Send as I speak</span>
+            </span>
+            <span className="block text-[11px] text-ink-700 mt-0.5 leading-relaxed">
+              {autoSend
+                ? "Each sentence goes straight to Operator."
+                : "Sentences fill the box; you press send."}
+            </span>
+          </button>
+
           {mic.error && (
             <p className="px-3 py-2 text-[11px] text-vital-down leading-relaxed">{mic.error}</p>
           )}

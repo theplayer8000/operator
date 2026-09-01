@@ -64,6 +64,12 @@ export default function OperatorMobile() {
     attention.
   */
   const [micChoice, setMicChoice] = useState<MicChoice>("device");
+  /*
+    Off by default, and not persisted yet. A preference that spends money
+    should not survive a reload silently — turning it on is a deliberate act
+    each session until it has been lived with.
+  */
+  const [autoSend, setAutoSend] = useState(false);
   const transcript = usePhoneTranscript(mic, mic.active);
   /*
     The newest thing heard, handed to the chat so it lands somewhere he can see
@@ -219,7 +225,7 @@ export default function OperatorMobile() {
 
       {/* Status, top-left. Only ever says something true. */}
       <div className="relative flex items-center justify-between px-5 pt-5">
-        <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} />
+        <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} autoSend={autoSend} onAutoSend={setAutoSend} />
         <div className="flex items-center gap-2">
           {/*
             Opening the microphone needs a user gesture, so it is a button and
@@ -292,7 +298,7 @@ export default function OperatorMobile() {
         behaviour, so the two cannot drift apart.
       */}
       <div data-chat>
-        <OperatorChat className="relative mx-3 mb-4" heard={lastHeard} />
+        <OperatorChat className="relative mx-3 mb-4" heard={lastHeard} autoSend={autoSend} />
       </div>
     </div>
   );

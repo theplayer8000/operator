@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, X, Loader2, ChevronDown, Volume2, VolumeX } from "lucide-react";
 import { useJobs } from "@/hooks/useJobs";
 import { useSpeech } from "@/hooks/useSpeech";
@@ -44,6 +44,7 @@ import { useSpeech } from "@/hooks/useSpeech";
 export default function OperatorChat({
   className = "",
   heard,
+  autoSend = false,
 }: {
   className?: string;
   /**
@@ -59,6 +60,8 @@ export default function OperatorChat({
    * leaves the decision one tap away.
    */
   heard?: string | null;
+  /** Send what was heard immediately instead of filling the box. */
+  autoSend?: boolean;
 }) {
   const jobs = useJobs();
   const [draft, setDraft] = useState("");
@@ -94,6 +97,21 @@ export default function OperatorChat({
           e.type === "permission_answer",
       ),
     [jobs.events],
+  );
+
+  /** One place that actually sends, so voice and the button cannot diverge. */
+  const sendText = useCallback(
+    async (text: string) => {
+      if (!text.trim() || jobs.busy) return;
+      setExpanded(true);
+      try {
+        if (jobs.selectedId) await jobs.send(jobs.selectedId, text);
+        else await jobs.create(text);
+      } catch {
+        /* useJobs owns the error surface; it renders below. */
+      }
+    },
+    [jobs],
   );
 
   const send = async () => {
@@ -144,9 +162,15 @@ export default function OperatorChat({
   useEffect(() => {
     if (!heard || heard === lastHeard.current) return;
     lastHeard.current = heard;
-    setDraft((prev) => (prev.trim() ? `${prev.trim()} ${heard}` : heard));
     setExpanded(true);
-  }, [heard]);
+    if (autoSend) {
+      // Straight through. Guarded by `busy` inside sendText so a sentence
+      // arriving mid-turn joins the thread rather than colliding with it.
+      void sendText(heard);
+      return;
+    }
+    setDraft((prev) => (prev.trim() ? `${prev.trim()} ${heard}` : heard));
+  }, [heard, autoSend, sendText]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {

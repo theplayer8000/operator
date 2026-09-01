@@ -49,6 +49,20 @@ export interface MicLevel {
   streamRef: React.MutableRefObject<MediaStream | null>;
   /** The stream is open. */
   active: boolean;
+  /**
+   * The microphone the browser actually chose, as the OS names it.
+   *
+   * "This device" is not a device — it is whatever the platform considers the
+   * default input, which on a machine with three of them is a real question.
+   * The owner asked it the moment the thing started working ("which device is
+   * it picking off rn cuz its working wth"), and a picker that cannot answer
+   * that is hiding the one fact he needs.
+   *
+   * Only available once permission has been granted; before that browsers
+   * report an empty label deliberately, since the list of your microphones is
+   * itself identifying.
+   */
+  deviceLabel: string | null;
   /** Why it is not open, when the owner tried and it did not work. */
   error: string | null;
   /** Browser could do this at all. False on an insecure origin. */
@@ -62,6 +76,7 @@ export function useMicLevel(): MicLevel {
   const levelRef = useRef(0);
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deviceLabel, setDeviceLabel] = useState<string | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -82,6 +97,7 @@ export function useMicLevel(): MicLevel {
     void ctxRef.current?.close().catch(() => {});
     ctxRef.current = null;
     levelRef.current = 0;
+    setDeviceLabel(null);
     setActive(false);
   }, []);
 
@@ -113,6 +129,9 @@ export function useMicLevel(): MicLevel {
         },
       });
       streamRef.current = stream;
+      // What the platform actually handed over, which is the only honest
+      // answer to "which microphone is this".
+      setDeviceLabel(stream.getAudioTracks()[0]?.label || null);
 
       const AudioCtor =
         window.AudioContext ??
@@ -171,5 +190,5 @@ export function useMicLevel(): MicLevel {
   // indicator lit, which on a phone looks exactly like an app spying on you.
   useEffect(() => disable, [disable]);
 
-  return { levelRef, streamRef, active, error, supported, enable, disable };
+  return { levelRef, streamRef, active, error, supported, deviceLabel, enable, disable };
 }

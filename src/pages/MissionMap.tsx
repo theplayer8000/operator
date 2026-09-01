@@ -91,6 +91,12 @@ export default function MissionMap() {
   */
   const mic = useMicLevel();
   const [micChoice, setMicChoice] = useState<MicChoice>("device");
+  /*
+    Off by default, and not persisted yet. A preference that spends money
+    should not survive a reload silently — turning it on is a deliberate act
+    each session until it has been lived with.
+  */
+  const [autoSend, setAutoSend] = useState(false);
   const transcript = usePhoneTranscript(mic, mic.active);
   const lastHeard = transcript.lines.length
     ? transcript.lines[transcript.lines.length - 1]
@@ -655,17 +661,23 @@ export default function MissionMap() {
         </div>
 
         <div className="flex items-center gap-4">
-          {voice.listening && (
-            <span className="flex items-center gap-2 font-mono text-[11px] text-ink-500">
+          {/*
+            The old server-mic chip is gone: MicSource on the left now says
+            which microphone is in use and whether it is live, and two
+            indicators disagreeing about the same thing — "LISTENING" next to
+            "THIS DEVICE" — is worse than either alone. The owner said so:
+            "bit confused here".
+
+            Speaking is the exception, because it is a different fact. The
+            picker says what Operator can HEAR; this says it is talking.
+          */}
+          {voice.speaking && (
+            <span className="flex items-center gap-2 font-mono text-[11px]" style={{ color: "#8D7FE0" }}>
               <span
-                className="w-1.5 h-1.5 rounded-full transition-all duration-150"
-                style={{
-                  background: voice.speaking ? "#8D7FE0" : "#E8B04D",
-                  opacity: voice.speaking ? 1 : 0.3 + heard * 0.7,
-                  transform: `scale(${voice.speaking ? 1.5 : 1 + heard * 0.8})`,
-                }}
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: "#8D7FE0", boxShadow: "0 0 8px #8D7FE0" }}
               />
-              {voice.speaking ? "SPEAKING" : hearing ? "HEARING" : "LISTENING"}
+              SPEAKING
             </span>
           )}
           {/*
@@ -675,7 +687,7 @@ export default function MissionMap() {
             read as "B to reset" — which is a fair description of a control
             nobody can see.
           */}
-          <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} className="pointer-events-auto" />
+          <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} autoSend={autoSend} onAutoSend={setAutoSend} className="pointer-events-auto" />
           <button
             onClick={fitView}
             className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
@@ -739,7 +751,7 @@ export default function MissionMap() {
         draggable everywhere the chat is not.
       */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
-        <OperatorChat className="w-full max-w-2xl pointer-events-auto" heard={lastHeard} />
+        <OperatorChat className="w-full max-w-2xl pointer-events-auto" heard={lastHeard} autoSend={autoSend} />
       </div>
 
       <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden xl:block">
