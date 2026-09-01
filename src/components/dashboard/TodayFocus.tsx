@@ -26,7 +26,7 @@ export default function TodayFocus({
   }
 
   return (
-    <Card title="Today's Focus" icon={<Target size={15} />} span={2}>
+    <Card title="Primary Objective" icon={<Target size={15} />} span={2}>
       {editing ? (
         <div className="flex items-center gap-2">
           <input

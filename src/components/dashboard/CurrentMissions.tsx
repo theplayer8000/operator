@@ -29,7 +29,7 @@ export default function CurrentMissions() {
 
   return (
     <Card
-      title="Current Missions"
+      title="Active Missions"
       icon={<Swords size={15} />}
       span={2}
       action={

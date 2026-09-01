@@ -8,7 +8,7 @@ import {
   CornerLeftUp,
   GitCommitHorizontal,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
@@ -44,6 +44,17 @@ export default function Dev() {
   } = useDevBrowser();
 
   const parent = path === "." ? null : crumbs.slice(0, -1).map((c) => c.name).join("/") || ".";
+
+  /*
+    Keep the deepest crumb in view. A scrolling row that always shows its
+    LEFT edge shows you "operator >" and hides the directory you actually
+    opened, which is the one piece of information the bar exists to give.
+  */
+  const crumbBar = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = crumbBar.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [crumbs]);
 
   /*
     `/dev?file=<path>` opens that file straight away.
@@ -177,8 +188,23 @@ export default function Dev() {
           <header className="flex items-center gap-3 px-4 py-3 border-b border-base-600">
             <FileText size={14} className="text-ink-500 shrink-0" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm text-ink-100 font-mono truncate">{file.path}</p>
-              <p className="text-xs text-ink-700">
+              {/*
+                Filename first, folder underneath.
+
+                `truncate` on the full path clips the END, so a phone showed
+                "src/components/dash…" and never the filename — the only part
+                you are looking for. The directory is still there, just demoted
+                to where losing its tail costs nothing.
+              */}
+              <p className="text-sm text-ink-100 font-mono truncate">
+                {file.path.split("/").pop()}
+              </p>
+              <p className="text-xs text-ink-700 truncate">
+                {file.path.includes("/") && (
+                  <span className="text-ink-600">
+                    {file.path.slice(0, file.path.lastIndexOf("/"))} ·{" "}
+                  </span>
+                )}
                 {formatBytes(file.size)} ·{" "}
                 {new Date(file.modified).toLocaleString("en-GB", {
                   day: "numeric",
@@ -213,20 +239,36 @@ export default function Dev() {
         </section>
       ) : (
         <section className="card-base p-4 sm:p-5 animate-fade-up">
-          {/* Breadcrumbs */}
-          <header className="flex items-center gap-1 flex-wrap mb-2 pb-2 border-b border-base-600 text-xs">
+          {/*
+            Breadcrumbs scroll sideways; they must not wrap.
+
+            `flex-wrap` put `src / components / dashboard` on three lines on a
+            phone, which is what made this page look broken — and it is the
+            rule design-system.md names as one of the four broken most often:
+            scroll a long row rather than wrapping it. The row is bled to the
+            card edges so the scroll reads as intentional, matching the tab
+            strip above.
+
+            It also scrolls itself to the end, so the directory you are IN is
+            the one you can see. Without that, opening a deep path shows you
+            "operator ›" and hides everything that matters.
+          */}
+          <header
+            ref={crumbBar}
+            className="flex items-center gap-1 flex-nowrap overflow-x-auto scrollbar-none mb-2 pb-2 border-b border-base-600 text-xs -mx-4 px-4 sm:-mx-5 sm:px-5"
+          >
             <button
               onClick={() => openDir(".")}
-              className="font-mono text-ink-500 hover:text-ink-100 transition-colors"
+              className="font-mono text-ink-500 hover:text-ink-100 transition-colors shrink-0 min-h-[32px]"
             >
               operator
             </button>
             {crumbs.map((c) => (
-              <span key={c.path} className="flex items-center gap-1">
-                <ChevronRight size={11} className="text-ink-700" />
+              <span key={c.path} className="flex items-center gap-1 shrink-0">
+                <ChevronRight size={11} className="text-ink-700 shrink-0" />
                 <button
                   onClick={() => openDir(c.path)}
-                  className="font-mono text-ink-500 hover:text-ink-100 transition-colors"
+                  className="font-mono text-ink-500 hover:text-ink-100 transition-colors min-h-[32px]"
                 >
                   {c.name}
                 </button>

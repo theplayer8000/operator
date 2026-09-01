@@ -181,6 +181,11 @@ export default function Settings() {
                 <p className="text-sm text-ink-300">{slice.label}</p>
                 <p className="text-xs text-ink-700 leading-relaxed">{slice.description}</p>
               </div>
+              {/*
+                The full phrase is the accessible name, not decoration:
+                ConfirmButton is icon-only, so `label` is all a screen reader
+                gets. "Clear" alone would be six identical buttons.
+              */}
               <ConfirmButton
                 label={`Clear ${slice.label}`}
                 onConfirm={() => void clearKeys(slice.keys, slice.label)}
