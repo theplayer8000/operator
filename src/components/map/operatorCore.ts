@@ -43,6 +43,15 @@ export interface CoreState {
   speaking: boolean;
   /** A turn is running. */
   busy: boolean;
+  /**
+   * How many, capped by the caller. 0 when idle.
+   *
+   * `busy` alone was honest while one turn ran at a time; with concurrency it
+   * flattens "thinking" and "thinking about three things" into one picture,
+   * and this display exists to say what Operator is doing. Optional so the
+   * phone surface, which does not poll job counts, keeps working unchanged.
+   */
+  load?: number;
   /** Base radius. ~62 on the wall display, much larger on a phone. */
   radius: number;
 }
@@ -69,9 +78,17 @@ export function drawCore(ctx: CanvasRenderingContext2D, state: CoreState) {
     Math.exp(-Math.pow((beat - 0.08) * 14, 2)) +
     0.55 * Math.exp(-Math.pow((beat - 0.24) * 14, 2));
 
-  const excitement = Math.max(lift, busy ? 0.45 : 0);
+  /*
+    A busier core, literally. Each concurrent turn adds to the floor, so three
+    at once is visibly harder work than one — the difference a boolean threw
+    away.
+  */
+  const work = busy ? Math.min(1, 0.45 + Math.max(0, (state.load ?? 1) - 1) * 0.2) : 0;
+  const excitement = Math.max(lift, work);
   const colour: Rgb = speaking ? VIOLET : busy && lift === 0 ? THINKING : GOLD;
-  const spin = tick * (0.004 + excitement * 0.02) + (busy ? tick * 0.012 : 0);
+  // Rings spin faster per concurrent turn, which is the clearest signal of
+  // load at a glance and costs nothing to read from across a room.
+  const spin = tick * (0.004 + excitement * 0.02) + (busy ? tick * 0.012 * Math.min(2, state.load ?? 1) : 0);
   const pulse = 1 + thump * 0.06 + excitement * 0.16;
 
   ctx.globalCompositeOperation = "lighter";

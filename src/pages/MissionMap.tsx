@@ -146,7 +146,16 @@ export default function MissionMap() {
     is not an error and is not surfaced: the heart simply idles, which is
     honest — Operator is not running anything it will admit to.
   */
-  const busyRef = useRef(false);
+  /*
+    How many turns are running, not merely whether any are.
+
+    A boolean was honest while one ran at a time. With OPERATOR_MAX_CONCURRENT
+    above 1 it stops being: three turns and one look identical, and a display
+    whose whole job is telling him what Operator is doing should not flatten
+    "thinking" and "thinking about three things at once" into the same picture.
+  */
+  const busyRef = useRef(0);
+  const [busyCount, setBusyCount] = useState(0);
   useEffect(() => {
     let stopped = false;
     const poll = async () => {
@@ -156,10 +165,23 @@ export default function MissionMap() {
         const body = await res.json();
         if (stopped) return;
         const jobs: { status?: string }[] = Array.isArray(body?.jobs) ? body.jobs : [];
-        busyRef.current =
-          Boolean(body?.running) || jobs.some((j) => j.status === "running" || j.status === "queued");
+        /*
+          `runningIds` where the server offers it, falling back to counting
+          statuses. Queued jobs count too: from here "Operator has work" is the
+          honest reading, and a queued turn is work he asked for that has not
+          finished.
+        */
+        const ids: string[] = Array.isArray(body?.runningIds) ? body.runningIds : [];
+        const next = ids.length
+          ? ids.length + jobs.filter((j) => j.status === "queued").length
+          : jobs.filter((j) => j.status === "running" || j.status === "queued").length;
+        busyRef.current = next;
+        setBusyCount((prev) => (prev === next ? prev : next));
       } catch {
-        if (!stopped) busyRef.current = false;
+        if (!stopped) {
+          busyRef.current = 0;
+          setBusyCount(0);
+        }
       }
     };
     void poll();
@@ -455,8 +477,14 @@ export default function MissionMap() {
          his pocket. The four states and the reasoning live there.
       */
       tick += 1;
-      const busy = busyRef.current;
-      drawCore(ctx, { tick, lift, speaking: v.speaking, busy, radius: CORE_R });
+      /*
+        Scaled by how many, so three turns look busier than one. Capped at
+        three: past that the core would be a strobe, and "very busy" and
+        "extremely busy" are not a distinction worth blinding him over.
+      */
+      const load = Math.min(3, busyRef.current);
+      const busy = load > 0;
+      drawCore(ctx, { tick, lift, speaking: v.speaking, busy, load, radius: CORE_R });
 
       // Nodes
       for (const b of bodies) {
@@ -779,6 +807,31 @@ export default function MissionMap() {
             Speaking is the exception, because it is a different fact. The
             picker says what Operator can HEAR; this says it is talking.
           */}
+          {/*
+            A count, because the spin says "busy" and not "busy with how much".
+            Only when something is running: a permanent "0 running" chip is
+            furniture, and this HUD already hides the mic row when the
+            microphone is off for the same reason.
+          */}
+          {busyCount > 0 && (
+            <span
+              className="flex items-center gap-2 font-mono text-[11px]"
+              style={{ color: "#78C8E8" }}
+              title={`${busyCount} turn${busyCount === 1 ? "" : "s"} running or queued`}
+            >
+              <span className="flex items-center gap-0.5" aria-hidden>
+                {[0, 1, 2].map((i) => (
+                  <span
+                    key={i}
+                    className="w-1 h-1 rounded-full animate-breathe"
+                    style={{ background: "#78C8E8", animationDelay: `${i * 0.22}s` }}
+                  />
+                ))}
+              </span>
+              {busyCount === 1 ? "WORKING" : `WORKING ×${busyCount}`}
+            </span>
+          )}
+
           {voice.speaking && (
             <span className="flex items-center gap-2 font-mono text-[11px]" style={{ color: "#8D7FE0" }}>
               <span
