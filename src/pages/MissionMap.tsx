@@ -175,7 +175,18 @@ export default function MissionMap() {
     x: 0,
     y: 0,
     down: false,
-    dragging: null as Body | null,
+    /*
+      The dragged node's ID, not the object.
+
+      `bodiesRef.current` is rebuilt whole whenever the mission array changes
+      identity, which `useRemoteStorage` causes on every sync — a second or two
+      apart. Holding the object meant the drag silently became an orphan at the
+      next sync: moving it updated something nothing rendered, and every
+      `dragging === b` check stopped matching so the real node went back under
+      physics. Exactly "click, wait a second or two, then drag, nothing
+      happens". An id survives the rebuild because positions are carried over.
+    */
+    dragging: null as string | null,
     panning: false,
     lastX: 0,
     lastY: 0,
@@ -284,7 +295,7 @@ export default function MissionMap() {
       /* ---- physics ------------------------------------------------------ */
       for (let i = 0; i < bodies.length; i++) {
         const a = bodies[i];
-        if (pointer.current.dragging === a) continue;
+        if (pointer.current.dragging === a.id) continue;
         for (let j = i + 1; j < bodies.length; j++) {
           const b = bodies[j];
           let dx = b.x - a.x;
@@ -304,7 +315,7 @@ export default function MissionMap() {
           const fy = (dy / d) * force;
           a.vx -= fx;
           a.vy -= fy;
-          if (pointer.current.dragging !== b) {
+          if (pointer.current.dragging !== b.id) {
             b.vx += fx;
             b.vy += fy;
           }
@@ -341,18 +352,18 @@ export default function MissionMap() {
         const k = (d - rest) * 0.0042;
         const fx = (dx / d) * k;
         const fy = (dy / d) * k;
-        if (pointer.current.dragging !== from) {
+        if (pointer.current.dragging !== from.id) {
           from.vx += fx;
           from.vy += fy;
         }
-        if (pointer.current.dragging !== to) {
+        if (pointer.current.dragging !== to.id) {
           to.vx -= fx;
           to.vy -= fy;
         }
       }
 
       for (const b of bodies) {
-        if (pointer.current.dragging === b) continue;
+        if (pointer.current.dragging === b.id) continue;
         b.vx *= 0.86;
         b.vy *= 0.86;
         const speed = Math.hypot(b.vx, b.vy);
@@ -563,7 +574,7 @@ export default function MissionMap() {
     pointer.current.moved = 0;
     pointer.current.lastX = e.clientX;
     pointer.current.lastY = e.clientY;
-    if (hit) pointer.current.dragging = hit;
+    if (hit) pointer.current.dragging = hit.id;
     else pointer.current.panning = true;
   };
 
@@ -593,8 +604,13 @@ export default function MissionMap() {
     pointer.current.moved += Math.abs(dx) + Math.abs(dy);
 
     if (pointer.current.dragging) {
+      // Resolved fresh each move, so a rebuild between frames cannot strand it.
+      const b = bodiesRef.current.find((n) => n.id === pointer.current.dragging);
+      if (!b) {
+        pointer.current.dragging = null;
+        return;
+      }
       const { x, y } = toWorld(e.clientX, e.clientY);
-      const b = pointer.current.dragging;
       // Velocity carried from the pointer, so releasing mid-sweep throws the
       // node instead of dropping it dead.
       b.vx = x - b.x;
@@ -619,7 +635,7 @@ export default function MissionMap() {
       finishing a drag on top of a node opens that mission — which makes the
       map feel like it is fighting you.
     */
-    if (dragged && pointer.current.moved < 6) navigate(`/missions/${dragged.id}`);
+    if (dragged && pointer.current.moved < 6) navigate(`/missions/${dragged}`);
     pointer.current.down = false;
     pointer.current.dragging = null;
     pointer.current.panning = false;
