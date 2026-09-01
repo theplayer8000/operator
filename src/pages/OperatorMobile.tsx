@@ -275,7 +275,7 @@ export default function OperatorMobile() {
         the older a line is the less it matters, and fading says that without
         a timestamp on every row.
       */}
-      {mic.active && (transcript.lines.length > 0 || transcript.working) && (
+      {mic.active && (
         <div className="relative px-8 mt-2 pointer-events-none select-none">
           <div className="mx-auto max-w-sm text-center space-y-1">
             {transcript.lines.map((line, i) => {
@@ -290,9 +290,17 @@ export default function OperatorMobile() {
                 </p>
               );
             })}
-            {transcript.working && (
-              <p className="font-mono text-[11px] text-ink-700">listening…</p>
-            )}
+            {/*
+              What the last segment did, always visible while the mic is on.
+
+              "it's detecting nilch" was not debuggable from another machine:
+              a discarded silent segment, a zero-byte recording, a refused
+              upload and a genuine transcript of nothing all look identical
+              from the outside. One faint line turns that into a fact.
+            */}
+            <p className="font-mono text-[10px] text-ink-700/70">
+              {transcript.working ? "transcribing…" : transcript.status}
+            </p>
           </div>
         </div>
       )}

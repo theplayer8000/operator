@@ -32,8 +32,15 @@ import type { MicLevel } from "./useMicLevel";
 
 /** How much audio per segment. Long enough for a sentence, short enough to feel live. */
 const SEGMENT_MS = 4000;
-/** Below this peak the segment is treated as silence and never sent. */
-const SILENCE_PEAK = 0.06;
+/**
+ * Below this peak the segment is treated as silence and never sent.
+ *
+ * 0.02, not the 0.06 first guessed. A phone applies aggressive auto-gain and
+ * noise suppression, which flattens peaks — the bar has to sit above room tone
+ * and below normal speech, and guessing it high means the feature does nothing
+ * and says nothing, which is exactly how it first behaved.
+ */
+const SILENCE_PEAK = 0.02;
 
 export interface PhoneTranscript {
   /** Most recent lines heard, newest last. Capped. */
@@ -42,6 +49,15 @@ export interface PhoneTranscript {
   working: boolean;
   /** Last failure, if the upload or transcription broke. */
   error: string | null;
+  /**
+   * What the last segment actually did.
+   *
+   * Exists because "it's detecting nilch" is not debuggable from another
+   * machine: silence-discarded, a zero-byte recording, a rejected upload and a
+   * transcript of nothing all look identical from the outside. This turns that
+   * into one readable line.
+   */
+  status: string;
   clear: () => void;
 }
 
@@ -49,6 +65,7 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
   const [lines, setLines] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState("starting…");
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const stoppedRef = useRef(false);
@@ -58,6 +75,7 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
     if (!enabled || !mic.active || !stream) return;
     if (typeof MediaRecorder === "undefined") {
       setError("This browser cannot record audio.");
+      setStatus("no MediaRecorder");
       return;
     }
 
@@ -80,7 +98,14 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       if (stoppedRef.current) return;
       peakThisSegment = 0;
 
-      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+      } catch (err) {
+        setError(`Could not record: ${(err as Error)?.message ?? err}`);
+        setStatus("MediaRecorder refused this stream");
+        return;
+      }
       recorderRef.current = recorder;
       const parts: Blob[] = [];
 
@@ -94,7 +119,19 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
         // a gap in which he can say something that is never heard.
         if (!stoppedRef.current) runSegment();
 
-        if (peakThisSegment < SILENCE_PEAK || blob.size < 2000) return;
+        /*
+          Say why a segment was dropped rather than dropping it quietly. Both
+          of these are normal and both look like a broken feature.
+        */
+        if (blob.size < 800) {
+          setStatus(`recorded ${blob.size}B — too small to send`);
+          return;
+        }
+        if (peakThisSegment < SILENCE_PEAK) {
+          setStatus(`quiet (peak ${peakThisSegment.toFixed(3)} < ${SILENCE_PEAK})`);
+          return;
+        }
+        setStatus(`sending ${(blob.size / 1024).toFixed(0)}KB, peak ${peakThisSegment.toFixed(2)}`);
 
         setWorking(true);
         try {
@@ -108,8 +145,11 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
           const text = String(body?.text ?? "").trim();
           if (text) {
             setError(null);
+            setStatus(`heard it (${(blob.size / 1024).toFixed(0)}KB)`);
             // Capped: this is a glance under the core, not a document.
             setLines((prev) => [...prev, text].slice(-6));
+          } else {
+            setStatus("sent, but no speech found in it");
           }
         } catch (err) {
           setError((err as Error)?.message ?? "Could not transcribe.");
@@ -143,5 +183,5 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
     };
   }, [enabled, mic.active, mic.streamRef, mic.levelRef]);
 
-  return { lines, working, error, clear: () => setLines([]) };
+  return { lines, working, error, status, clear: () => setLines([]) };
 }
