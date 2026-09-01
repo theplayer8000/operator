@@ -4,7 +4,7 @@ import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
-import MicSource, { type MicChoice } from "@/components/map/MicSource";
+import MicSource from "@/components/map/MicSource";
 import type { MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET } from "@/components/map/operatorCore";
 import OperatorChat from "@/components/map/OperatorChat";
@@ -90,7 +90,6 @@ export default function MissionMap() {
     actually plugged into the machine someone is sitting at.
   */
   const mic = useMicLevel();
-  const [micChoice, setMicChoice] = useState<MicChoice>("device");
   /*
     Off by default, and not persisted yet. A preference that spends money
     should not survive a reload silently — turning it on is a deliberate act
@@ -617,11 +616,40 @@ export default function MissionMap() {
     }
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
-    const zoom = Math.max(0.35, Math.min(1.6, Math.min(w / (maxX - minX), h / (maxY - minY))));
+    /*
+      A margin, and the chat is in the way.
+
+      Fitting the bounds exactly puts the outermost node against the edge, and
+      the bottom of the canvas is covered by the chat bar — which is why the
+      lowest mission was half off screen immediately after pressing RECENTRE.
+      The usable height is not the canvas height.
+    */
+    const usableH = h - 150;
+    const zoom = Math.max(
+      0.3,
+      Math.min(1.6, Math.min(w / (maxX - minX), usableH / (maxY - minY)) * 0.94),
+    );
+
+    /*
+      Calm the web as well as framing it.
+
+      The simulation never settles by design, and the repulsion that keeps
+      missions apart is far stronger than the pull that keeps them home — so a
+      view fitted to this instant is wrong a second later, which is exactly how
+      it looked broken. Zeroing velocities makes RECENTRE mean "settle down and
+      show me everything" rather than "photograph a moving thing".
+    */
+    for (const b of bodies) {
+      b.vx = 0;
+      b.vy = 0;
+    }
+
     view.current = {
       zoom,
+      // Shifted up by half the space the chat occupies, so the centre of the
+      // web sits in the centre of what you can actually see.
       panX: -((minX + maxX) / 2) * zoom,
-      panY: -((minY + maxY) / 2) * zoom,
+      panY: -((minY + maxY) / 2) * zoom - 40,
     };
   };
 
@@ -687,7 +715,7 @@ export default function MissionMap() {
             read as "B to reset" — which is a fair description of a control
             nobody can see.
           */}
-          <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} autoSend={autoSend} onAutoSend={setAutoSend} className="pointer-events-auto" />
+          <MicSource mic={mic} autoSend={autoSend} onAutoSend={setAutoSend} className="pointer-events-auto" />
           <button
             onClick={fitView}
             className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"

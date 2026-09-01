@@ -1,51 +1,40 @@
 import { useState } from "react";
-import { Mic, MicOff, Check, Loader2 } from "lucide-react";
+import { Mic, Check, Loader2, ChevronDown } from "lucide-react";
 import type { MicLevel } from "@/hooks/useMicLevel";
-import type { VoiceActivity } from "@/hooks/useVoiceActivity";
 
 /**
- * Which microphone Operator is listening through, and a way to change it.
+ * Which microphone this page listens through.
  *
- * The owner's ask: *"can we have it so like this mic on the top left is like
- * this device or pc device ... sorts the mic problem temporarily and then we
- * can slot the boom mic back in"*.
+ * ## It lists real devices, not categories
  *
- * It is a real problem rather than a preference. There are three microphones
- * in play and all three have failed differently in one day: the Bluetooth
- * headset disconnects constantly and measured 1.3x signal-to-noise when it did
- * not; the Realtek reads a flat 0.0006 whether or not anyone is speaking; and
- * DroidCam is excellent until the phone locks and then goes silently to zero.
- * The device holding the page is the only one guaranteed to be near his mouth
- * and awake.
+ * The first version offered "This device" or "the PC", which the owner found
+ * confusing and was right to: *"if ur doing a device picker then remove the pc
+ * microphone droid cam and instead do a picker that fits the ui"*. Neither
+ * label named a microphone. "This device" then took whatever Windows called
+ * the default — his Bluetooth headset, the one that keeps disconnecting,
+ * rather than the Realtek beside it — so the picker looked like a setting
+ * while actually being someone else's decision.
  *
- * So this does two things a status light could not: it says which microphone
- * is actually being used, and it lets him move between them without an
- * environment variable and a restart.
+ * It now lists what `enumerateDevices` reports and lets one be chosen. The
+ * server-side listener the clap gesture uses is deliberately NOT here: that is
+ * an always-on background thing configured by `OPERATOR_LISTEN`, and putting
+ * it in a menu about what the open page hears conflated two unrelated ideas.
  *
- * ## The two are not equivalent, and it says so
+ * ## Labels only exist after permission
  *
- * **This device** is the browser's own microphone: continuous, local, and the
- * only one that transcribes without a clap. **The PC** is whatever
- * `OPERATOR_LISTEN` names — always on, works when nobody is looking at a page,
- * and the one the clap gesture uses. Presenting them as interchangeable would
- * be a lie; the label under each says what it actually gives you.
+ * Browsers withhold device names until the microphone has been granted once —
+ * the list of your inputs is itself identifying. So the menu offers a single
+ * "turn it on" until then, and the list appears afterwards. Blank rows first
+ * would read as broken rather than locked.
  */
-
-export type MicChoice = "device" | "pc";
 
 export default function MicSource({
   mic,
-  voice,
-  choice,
-  onChoose,
   autoSend,
   onAutoSend,
   className = "",
 }: {
   mic: MicLevel;
-  voice: VoiceActivity;
-  choice: MicChoice;
-  onChoose: (next: MicChoice) => void;
   /** Heard sentences go straight to Operator instead of filling the box. */
   autoSend: boolean;
   onAutoSend: (next: boolean) => void;
@@ -53,96 +42,94 @@ export default function MicSource({
 }) {
   const [open, setOpen] = useState(false);
 
-  const usingDevice = choice === "device" && mic.active;
-  const heard = voice.listening
-    ? Math.min(1, voice.level / Math.max(0.004, voice.threshold))
-    : 0;
+  /*
+    Device names are long and mostly punctuation — "Microphone (Realtek USB
+    Audio)". The bracketed part is the distinguishing bit.
+  */
+  const shortName = (label: string) => {
+    const inner = label.match(/\(([^)]+)\)/)?.[1];
+    return (inner ?? label).replace(/\s*\(.*$/, "").trim();
+  };
 
-  const label = usingDevice
-    ? "THIS DEVICE"
-    : choice === "device"
-      ? "MIC OFF"
-      : voice.listening
-        ? "PC"
-        : "PC — OFFLINE";
-
-  const live = usingDevice || (choice === "pc" && voice.listening);
+  const current = mic.deviceLabel ? shortName(mic.deviceLabel) : null;
 
   return (
     <div className={`relative ${className}`}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors min-h-[44px]"
-        aria-label="Choose which microphone to listen through"
+        className="flex items-center gap-2 font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors min-h-[44px] max-w-[220px]"
+        aria-label="Choose a microphone"
         aria-expanded={open}
       >
         <span
           className="w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-150"
           style={{
-            background: live ? "#E8B04D" : "#3A4152",
-            boxShadow: live ? "0 0 8px rgba(232,176,77,0.8)" : "none",
-            transform: usingDevice ? undefined : `scale(${1 + heard * 0.8})`,
+            background: mic.active ? "#E8B04D" : "#3A4152",
+            boxShadow: mic.active ? "0 0 8px rgba(232,176,77,0.8)" : "none",
           }}
         />
-        {label}
+        <span className="truncate uppercase">
+          {mic.connecting ? "connecting" : mic.active ? (current ?? "listening") : "mic off"}
+        </span>
+        <ChevronDown size={11} className="shrink-0 opacity-60" />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 w-60 card-base p-1 animate-fade-up">
-          {/*
-            Each option says what it actually gives you. They are not
-            interchangeable — one is continuous and local, the other is always
-            on and clap-triggered — and a picker that hid that would just move
-            the confusion somewhere harder to find.
-          */}
-          <Option
-            active={choice === "device"}
-            busy={choice === "device" && !mic.active && !mic.error}
-            disabled={!mic.supported}
-            title={mic.deviceLabel ? `This device — ${mic.deviceLabel}` : "This device"}
-            detail={
-              !mic.supported
-                ? "Needs the https://…ts.net address — a bare IP is not a secure page."
-                : mic.active
-                  ? "Continuous, and transcribes without a clap. The browser applies its own noise suppression and auto-gain, which is why this often sounds better than the same microphone through ffmpeg."
-                  : "The microphone in whatever you are holding. Continuous, and transcribes without a clap."
-            }
-            onClick={() => {
-              onChoose("device");
-              void mic.enable();
-              setOpen(false);
-            }}
-          />
-          <Option
-            active={choice === "pc"}
-            title={voice.device ? `PC — ${voice.device}` : "PC"}
-            detail={
-              voice.listening
-                ? "Always on, even with no page open. Clap twice to make it listen."
-                : (voice.reason ?? "Not running.")
-            }
-            onClick={() => {
-              onChoose("pc");
-              mic.disable();
-              setOpen(false);
-            }}
-          />
-          {/*
-            Auto-send, as a switch rather than a decision made for him.
+        <div className="absolute left-0 top-full mt-1 z-20 w-64 card-base p-1 animate-fade-up">
+          {!mic.supported ? (
+            <p className="px-3 py-2.5 text-[11px] text-ink-600 leading-relaxed">
+              The microphone needs a secure page — open Operator at its https://…ts.net address
+              rather than a bare IP.
+            </p>
+          ) : mic.devices.length === 0 ? (
+            /*
+              Before permission there is nothing to list, so offer the one
+              action that produces a list.
+            */
+            <Row
+              icon={mic.connecting ? "busy" : "mic"}
+              label={mic.active ? "Microphone on" : "Turn on the microphone"}
+              onClick={() => {
+                void mic.enable();
+                setOpen(false);
+              }}
+            />
+          ) : (
+            <>
+              {mic.devices.map((d) => (
+                <Row
+                  key={d.deviceId}
+                  icon={mic.active && mic.deviceLabel === d.label ? "check" : "mic"}
+                  label={d.label ? shortName(d.label) : "Unnamed input"}
+                  onClick={() => {
+                    void mic.enable(d.deviceId);
+                    setOpen(false);
+                  }}
+                />
+              ))}
+              {mic.active && (
+                <Row
+                  icon="off"
+                  label="Turn off"
+                  onClick={() => {
+                    mic.disable();
+                    setOpen(false);
+                  }}
+                />
+              )}
+            </>
+          )}
 
-            He asked for it directly — "at the moment i say something it pastes
-            into the box and i gotta click send". It is a toggle and not the
-            silent default because it spends money: a misheard sentence becomes
-            a job with nothing in between. The filters in front of it are what
-            make it reasonable at all — a voiced-fraction check for typing,
-            Whisper's VAD, and the hallucination list that stopped twenty
-            phantom jobs.
+          {/*
+            Auto-send, as a switch rather than a decision made for him. A
+            toggle and not the silent default because it spends money: a
+            misheard sentence becomes a job with nothing in between.
           */}
           <button
             onClick={() => onAutoSend(!autoSend)}
             className="w-full text-left px-3 py-2.5 rounded-badge hover:bg-base-700/60 transition-colors min-h-[44px] border-t border-base-600 mt-1"
           >
-            <span className="flex items-center gap-2">
+            <span className="flex items-center gap-2.5">
               <span
                 className={`w-8 h-4 rounded-full shrink-0 relative transition-colors ${
                   autoSend ? "bg-xp/70" : "bg-base-600"
@@ -171,44 +158,38 @@ export default function MicSource({
   );
 }
 
-function Option({
-  active,
-  busy,
-  disabled,
-  title,
-  detail,
+function Row({
+  icon,
+  label,
   onClick,
 }: {
-  active: boolean;
-  busy?: boolean;
-  disabled?: boolean;
-  title: string;
-  detail: string;
+  icon: "check" | "mic" | "busy" | "off";
+  label: string;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
-      className={`w-full text-left px-3 py-2.5 rounded-badge transition-colors min-h-[44px] ${
-        disabled ? "opacity-40 cursor-default" : "hover:bg-base-700/60"
-      }`}
+      className="w-full text-left px-3 py-2.5 rounded-badge hover:bg-base-700/60 transition-colors min-h-[44px]"
     >
-      <span className="flex items-center gap-2">
-        {busy ? (
-          <Loader2 size={12} className="animate-spin text-ink-600 shrink-0" />
-        ) : active ? (
-          <Check size={12} className="text-xp shrink-0" />
-        ) : disabled ? (
-          <MicOff size={12} className="text-ink-700 shrink-0" />
+      <span className="flex items-center gap-2.5">
+        {icon === "busy" ? (
+          <Loader2 size={13} className="animate-spin text-ink-600 shrink-0" />
+        ) : icon === "check" ? (
+          <Check size={13} className="text-xp shrink-0" />
+        ) : icon === "off" ? (
+          <span className="w-[13px] shrink-0" />
         ) : (
-          <Mic size={12} className="text-ink-600 shrink-0" />
+          <Mic size={13} className="text-ink-600 shrink-0" />
         )}
-        <span className={`text-sm truncate ${active ? "text-ink-100" : "text-ink-300"}`}>
-          {title}
+        <span
+          className={`text-sm truncate ${
+            icon === "check" ? "text-ink-100" : icon === "off" ? "text-ink-600" : "text-ink-300"
+          }`}
+        >
+          {label}
         </span>
       </span>
-      <span className="block text-[11px] text-ink-700 mt-0.5 leading-relaxed">{detail}</span>
     </button>
   );
 }

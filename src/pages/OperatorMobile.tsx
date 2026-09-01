@@ -5,7 +5,7 @@ import OperatorChat from "@/components/map/OperatorChat";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
-import MicSource, { type MicChoice } from "@/components/map/MicSource";
+import MicSource from "@/components/map/MicSource";
 import { drawCore } from "@/components/map/operatorCore";
 
 /**
@@ -63,7 +63,6 @@ export default function OperatorMobile() {
     something overheard, not as a transcript competing with the core for
     attention.
   */
-  const [micChoice, setMicChoice] = useState<MicChoice>("device");
   /*
     Off by default, and not persisted yet. A preference that spends money
     should not survive a reload silently — turning it on is a deliberate act
@@ -225,7 +224,7 @@ export default function OperatorMobile() {
 
       {/* Status, top-left. Only ever says something true. */}
       <div className="relative flex items-center justify-between px-5 pt-5">
-        <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} autoSend={autoSend} onAutoSend={setAutoSend} />
+        <MicSource mic={mic} autoSend={autoSend} onAutoSend={setAutoSend} />
         <div className="flex items-center gap-2">
           {/*
             Opening the microphone needs a user gesture, so it is a button and

@@ -50,6 +50,15 @@ export interface MicLevel {
   /** The stream is open. */
   active: boolean;
   /**
+   * A permission prompt or device open is genuinely in flight.
+   *
+   * Distinct from "not active", which is also the resting state. The picker
+   * spun a spinner on `!active && !error` and so span forever whenever the
+   * microphone had simply never been switched on — a progress indicator for
+   * something nobody had started.
+   */
+  connecting: boolean;
+  /**
    * The microphone the browser actually chose, as the OS names it.
    *
    * "This device" is not a device — it is whatever the platform considers the
@@ -63,12 +72,27 @@ export interface MicLevel {
    * itself identifying.
    */
   deviceLabel: string | null;
+  /**
+   * Every microphone this browser can offer, so one can be CHOSEN.
+   *
+   * Without this, `getUserMedia({audio: true})` takes whatever Windows calls
+   * the default — which on the owner's machine is the Bluetooth headset that
+   * disconnects constantly, not the Realtek sitting next to it. "This device"
+   * then looked like a setting while actually being someone else's decision.
+   *
+   * Labels are empty until permission has been granted at least once: the list
+   * of your microphones is itself identifying, so browsers withhold it.
+   */
+  devices: MediaDeviceInfo[];
   /** Why it is not open, when the owner tried and it did not work. */
   error: string | null;
   /** Browser could do this at all. False on an insecure origin. */
   supported: boolean;
-  /** Must be called from a user gesture — browsers require one, iOS strictly. */
-  enable: () => Promise<void>;
+  /**
+   * Must be called from a user gesture — browsers require one, iOS strictly.
+   * Pass a `deviceId` to open a specific microphone rather than the default.
+   */
+  enable: (deviceId?: string) => Promise<void>;
   disable: () => void;
 }
 
@@ -77,6 +101,8 @@ export function useMicLevel(): MicLevel {
   const [active, setActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deviceLabel, setDeviceLabel] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -98,12 +124,22 @@ export function useMicLevel(): MicLevel {
     ctxRef.current = null;
     levelRef.current = 0;
     setDeviceLabel(null);
+    setConnecting(false);
     setActive(false);
   }, []);
 
-  const enable = useCallback(async () => {
-    if (streamRef.current) return;
+  const enable = useCallback(async (deviceId?: string) => {
+    // Already open on the microphone being asked for: nothing to do. Asking
+    // for a DIFFERENT one means closing this stream first, or the old track
+    // keeps the level meter alive on the wrong device.
+    if (streamRef.current) {
+      const current = streamRef.current.getAudioTracks()[0];
+      if (!deviceId || current?.getSettings().deviceId === deviceId) return;
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
     setError(null);
+    setConnecting(true);
 
     if (!supported) {
       setError(
@@ -111,12 +147,15 @@ export function useMicLevel(): MicLevel {
           ? "The microphone needs a secure page — open Operator at its https://…ts.net address rather than a bare IP."
           : "This browser will not give a page the microphone.",
       );
+      setConnecting(false);
       return;
     }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          // A named device when one was chosen; otherwise the platform default.
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
           /*
             Let the platform clean the signal up. The owner's own microphones
             are poor — his speech peaked at 0.0009 against a 0.0007 room floor
@@ -132,6 +171,18 @@ export function useMicLevel(): MicLevel {
       // What the platform actually handed over, which is the only honest
       // answer to "which microphone is this".
       setDeviceLabel(stream.getAudioTracks()[0]?.label || null);
+
+      /*
+        Enumerate only AFTER permission, because that is when labels exist.
+        Doing it earlier returns a list of blank entries, which is worse than
+        no list — it looks like a broken picker rather than a locked one.
+      */
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setDevices(all.filter((d) => d.kind === "audioinput" && d.deviceId));
+      } catch {
+        /* Not fatal: the microphone still works, it just cannot be re-chosen. */
+      }
 
       const AudioCtor =
         window.AudioContext ??
@@ -172,6 +223,7 @@ export function useMicLevel(): MicLevel {
         rafRef.current = requestAnimationFrame(read);
       };
       rafRef.current = requestAnimationFrame(read);
+      setConnecting(false);
       setActive(true);
     } catch (err) {
       const name = (err as Error)?.name;
@@ -190,5 +242,5 @@ export function useMicLevel(): MicLevel {
   // indicator lit, which on a phone looks exactly like an app spying on you.
   useEffect(() => disable, [disable]);
 
-  return { levelRef, streamRef, active, error, supported, deviceLabel, enable, disable };
+  return { levelRef, streamRef, active, connecting, error, supported, deviceLabel, devices, enable, disable };
 }
