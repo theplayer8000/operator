@@ -4,6 +4,7 @@ import { useJobs } from "@/hooks/useJobs";
 import OperatorChat from "@/components/map/OperatorChat";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useMicLevel } from "@/hooks/useMicLevel";
+import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import { drawCore } from "@/components/map/operatorCore";
 
 /**
@@ -52,6 +53,16 @@ export default function OperatorMobile() {
     an app that opens your microphone unasked is one you stop trusting.
   */
   const mic = useMicLevel();
+  /*
+    What it is hearing, in words, straight under the core.
+
+    A test surface first and a feature second — the owner asked for it "just
+    for like a quick test" so he can see the phone actually picking him up
+    before the boom mic arrives. Deliberately faint: it should read as
+    something overheard, not as a transcript competing with the core for
+    attention.
+  */
+  const transcript = usePhoneTranscript(mic, mic.active);
 
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
@@ -256,6 +267,39 @@ export default function OperatorMobile() {
         <p className="relative mx-5 mt-3 text-[11px] text-ink-600 leading-relaxed">
           {mic.error ??
             "Open Operator at its https://…ts.net address to use this phone's microphone — a bare IP is not a secure page, so the browser will not hand it over."}
+        </p>
+      )}
+
+      {/*
+        Sits under the core, barely there. Newest last, oldest fading out —
+        the older a line is the less it matters, and fading says that without
+        a timestamp on every row.
+      */}
+      {mic.active && (transcript.lines.length > 0 || transcript.working) && (
+        <div className="relative px-8 mt-2 pointer-events-none select-none">
+          <div className="mx-auto max-w-sm text-center space-y-1">
+            {transcript.lines.map((line, i) => {
+              const age = transcript.lines.length - 1 - i;
+              return (
+                <p
+                  key={`${i}-${line.slice(0, 12)}`}
+                  className="text-sm leading-snug transition-opacity duration-500"
+                  style={{ color: "rgba(196,205,222,1)", opacity: Math.max(0.12, 0.5 - age * 0.09) }}
+                >
+                  {line}
+                </p>
+              );
+            })}
+            {transcript.working && (
+              <p className="font-mono text-[11px] text-ink-700">listening…</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {transcript.error && mic.active && (
+        <p className="relative mx-8 mt-2 text-center text-[11px] text-ink-700">
+          {transcript.error}
         </p>
       )}
 

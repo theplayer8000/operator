@@ -57,7 +57,7 @@ import {
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
-import { startListening, state as listenState } from "./listen.mjs";
+import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -562,6 +562,50 @@ const server = createServer(async (req, res) => {
         claps: listenState.claps,
         reason: listenState.reason,
       });
+    }
+
+    /*
+      Audio recorded on a phone, transcribed here.
+
+      The phone reads its own microphone for the level meter — local and
+      instant — but the WORDS were still coming from the microphone attached to
+      this PC. So the owner could watch his phone's mic move the core while
+      Whisper listened to a different room entirely. This closes that gap.
+
+      Not the browser's own SpeechRecognition, which would have been a one-line
+      answer: on iOS it sends the audio to APPLE. That is an external host under
+      CLAUDE.md's approval rule, it is his voice rather than a prompt, and he
+      has approved no such thing. This path keeps everything on his hardware —
+      the phone posts to his own server over the tailnet and the same resident
+      Whisper the clap gesture uses does the work.
+
+      Tier 2: transcribing his own voice is not execution, so it does not need
+      an armed terminal. Capped at 8 MB, which is minutes of Opus and far more
+      than the few seconds this is for.
+    */
+    if (pathname === "/api/listen/transcribe" && req.method === "POST") {
+      const allowed = deviceMayUseCapabilities(identity);
+      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+
+      const chunks = [];
+      let size = 0;
+      let tooBig = false;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 8 * 1024 * 1024) {
+          tooBig = true;
+          break;
+        }
+        chunks.push(chunk);
+      }
+      if (tooBig) return json(res, 413, { error: "audio too large" });
+
+      try {
+        const heard = await transcribeUpload(Buffer.concat(chunks));
+        return json(res, 200, heard);
+      } catch (err) {
+        return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
+      }
     }
 
     // Owner-approved outbound call — see server/status.mjs for why it's here

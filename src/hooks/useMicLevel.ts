@@ -38,6 +38,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export interface MicLevel {
   /** Live 0–1 peak. Read inside a rAF loop; it changes every frame. */
   levelRef: React.MutableRefObject<number>;
+  /**
+   * The open stream, for anything that needs the audio rather than its level.
+   *
+   * Shared rather than opened twice: a second `getUserMedia` on the same device
+   * is a second permission prompt at best, and on some platforms it returns a
+   * silent track — the exact failure that cost an evening on the desktop side
+   * when two ffmpeg processes fought over one dshow device.
+   */
+  streamRef: React.MutableRefObject<MediaStream | null>;
   /** The stream is open. */
   active: boolean;
   /** Why it is not open, when the owner tried and it did not work. */
@@ -162,5 +171,5 @@ export function useMicLevel(): MicLevel {
   // indicator lit, which on a phone looks exactly like an app spying on you.
   useEffect(() => disable, [disable]);
 
-  return { levelRef, active, error, supported, enable, disable };
+  return { levelRef, streamRef, active, error, supported, enable, disable };
 }

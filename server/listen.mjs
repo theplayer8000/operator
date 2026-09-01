@@ -715,6 +715,80 @@ function wavFromPcm(pcm) {
   return Buffer.concat([header, pcm]);
 }
 
+/**
+ * Transcribe audio recorded somewhere else — specifically, a phone.
+ *
+ * ## Why this exists
+ *
+ * The phone surface reads its own microphone for the level meter, which is
+ * local and instant. But the WORDS were still coming from the microphone
+ * attached to this PC, so the owner could watch his phone's mic move the core
+ * while Whisper listened to a completely different room. His question — "mic
+ * works on phone so why isnt the thing working" — is answered by that gap.
+ *
+ * ## Why not the browser's own speech recognition
+ *
+ * `SpeechRecognition` exists on iOS and would have been a one-line answer. It
+ * sends the audio to APPLE for recognition. That is an external host under
+ * CLAUDE.md's approval rule, it is the owner's voice rather than a prompt, and
+ * he has approved no such thing — so it is not an option, however convenient.
+ *
+ * This keeps the whole path on his hardware: the phone records, posts to his
+ * own server over the tailnet, and the same resident Whisper that the clap
+ * gesture uses does the work.
+ *
+ * @param buffer  the recorded audio, in whatever container the browser chose
+ * @returns the same `{text, confidence}` shape as `captureAndTranscribe`
+ */
+export async function transcribeUpload(buffer) {
+  if (!buffer?.length) throw new Error("no audio");
+
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { rm, writeFile } = await import("node:fs/promises");
+  const { randomUUID } = await import("node:crypto");
+
+  const id = randomUUID().slice(0, 8);
+  const incoming = join(tmpdir(), `operator-upload-${id}`);
+  const wav = join(tmpdir(), `operator-upload-${id}.wav`);
+
+  try {
+    await writeFile(incoming, buffer);
+
+    /*
+      Browsers record WebM/Opus (or MP4/AAC on Safari); Whisper wants 16kHz
+      mono PCM. ffmpeg is already a dependency of this file and reads both
+      without being told which — the container is in the bytes.
+    */
+    const ffmpeg = findFfmpeg();
+    if (!ffmpeg) throw new Error("ffmpeg not found — set OPERATOR_FFMPEG");
+
+    await new Promise((resolve, reject) => {
+      const proc = spawn(
+        ffmpeg,
+        ["-hide_banner", "-loglevel", "error", "-i", incoming, "-ac", "1", "-ar", String(RATE), "-y", wav],
+        { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+      );
+      let err = "";
+      proc.stderr.on("data", (d) => (err += d));
+      proc.on("error", reject);
+      proc.on("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error(err.trim().slice(-200) || `ffmpeg exited ${code}`)),
+      );
+    });
+
+    const out = await transcribeFile(wav);
+    if (out === "NOSPEECH") return { text: "", confidence: 0 };
+    if (out.startsWith("ERR|")) throw new Error(out.slice(4));
+    const [, confidence, ...rest] = out.split("|");
+    return { text: rest.join("|"), confidence: Number(confidence) || 0 };
+  } finally {
+    // Both, always. Audio of the owner speaking must not accumulate in temp.
+    await rm(incoming, { force: true }).catch(() => {});
+    await rm(wav, { force: true }).catch(() => {});
+  }
+}
+
 export function stopListening() {
   stopping = true;
   state.listening = false;
