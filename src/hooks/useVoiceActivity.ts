@@ -34,6 +34,14 @@ import { useEffect, useRef, useState } from "react";
 export interface VoiceActivity {
   /** The microphone is open on the server. */
   listening: boolean;
+  /**
+   * Which microphone the server is on, as its driver names it.
+   *
+   * The API has always returned this and nothing read it. It matters now the
+   * source is selectable: "PC" alone does not tell you whether that is the
+   * headset that keeps disconnecting or the Realtek that hears nothing.
+   */
+  device: string | null;
   /** Loudest recent sample, 0–1. */
   level: number;
   /** The bar a clap has to beat, so a UI can show where the line is. */
@@ -51,6 +59,7 @@ const POLL_MS = 250;
 export function useVoiceActivity(enabled = true): VoiceActivity {
   const [activity, setActivity] = useState<VoiceActivity>({
     listening: false,
+    device: null,
     level: 0,
     threshold: 0,
     speaking: false,

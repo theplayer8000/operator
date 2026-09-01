@@ -5,6 +5,7 @@ import OperatorChat from "@/components/map/OperatorChat";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
+import MicSource, { type MicChoice } from "@/components/map/MicSource";
 import { drawCore } from "@/components/map/operatorCore";
 
 /**
@@ -62,7 +63,16 @@ export default function OperatorMobile() {
     something overheard, not as a transcript competing with the core for
     attention.
   */
+  const [micChoice, setMicChoice] = useState<MicChoice>("device");
   const transcript = usePhoneTranscript(mic, mic.active);
+  /*
+    The newest thing heard, handed to the chat so it lands somewhere he can see
+    and act on rather than only being displayed. `.at()` is avoided because the
+    build targets a lib without it.
+  */
+  const lastHeard = transcript.lines.length
+    ? transcript.lines[transcript.lines.length - 1]
+    : null;
 
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
@@ -209,31 +219,7 @@ export default function OperatorMobile() {
 
       {/* Status, top-left. Only ever says something true. */}
       <div className="relative flex items-center justify-between px-5 pt-5">
-        <span className="font-mono text-[11px] text-ink-600 flex items-center gap-2">
-          {mic.active ? (
-            <>
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-xp"
-                style={{ boxShadow: "0 0 8px #E8B04D" }}
-              />
-              THIS MIC
-            </>
-          ) : voice.listening ? (
-            <>
-              <span
-                className="w-1.5 h-1.5 rounded-full transition-all duration-150"
-                style={{
-                  background: voice.speaking ? "#8D7FE0" : "#E8B04D",
-                  opacity: voice.speaking ? 1 : 0.3 + heard * 0.7,
-                  transform: `scale(${voice.speaking ? 1.5 : 1 + heard * 0.8})`,
-                }}
-              />
-              {voice.speaking ? "SPEAKING" : hearing ? "HEARING" : "LISTENING"}
-            </>
-          ) : (
-            <span className="text-ink-700">OPERATOR</span>
-          )}
-        </span>
+        <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} />
         <div className="flex items-center gap-2">
           {/*
             Opening the microphone needs a user gesture, so it is a button and
@@ -241,19 +227,6 @@ export default function OperatorMobile() {
             is not a secure context — a dead button teaches you the feature is
             broken, where its absence plus the message below is the truth.
           */}
-          {mic.supported && (
-            <button
-              onClick={() => (mic.active ? mic.disable() : void mic.enable())}
-              aria-label={mic.active ? "Stop using this phone's microphone" : "Use this phone's microphone"}
-              className={`font-mono text-[11px] border rounded-badge px-3 min-h-[44px] transition-colors ${
-                mic.active
-                  ? "border-xp/50 text-xp"
-                  : "border-base-600 text-ink-600 hover:text-ink-100"
-              }`}
-            >
-              {mic.active ? "MIC ON" : "MIC"}
-            </button>
-          )}
           <button
             onClick={() => navigate("/dashboard")}
             className="font-mono text-[11px] text-ink-600 border border-base-600 rounded-badge px-3 min-h-[44px] min-w-[44px]"
@@ -319,7 +292,7 @@ export default function OperatorMobile() {
         behaviour, so the two cannot drift apart.
       */}
       <div data-chat>
-        <OperatorChat className="relative mx-3 mb-4" />
+        <OperatorChat className="relative mx-3 mb-4" heard={lastHeard} />
       </div>
     </div>
   );

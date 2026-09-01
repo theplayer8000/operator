@@ -4,6 +4,7 @@ import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
+import MicSource, { type MicChoice } from "@/components/map/MicSource";
 import type { MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET } from "@/components/map/operatorCore";
 import OperatorChat from "@/components/map/OperatorChat";
@@ -89,7 +90,11 @@ export default function MissionMap() {
     actually plugged into the machine someone is sitting at.
   */
   const mic = useMicLevel();
+  const [micChoice, setMicChoice] = useState<MicChoice>("device");
   const transcript = usePhoneTranscript(mic, mic.active);
+  const lastHeard = transcript.lines.length
+    ? transcript.lines[transcript.lines.length - 1]
+    : null;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bodiesRef = useRef<Body[]>([]);
@@ -670,22 +675,7 @@ export default function MissionMap() {
             read as "B to reset" — which is a fair description of a control
             nobody can see.
           */}
-          {/*
-            Opening a microphone needs a user gesture, so it is a button and not
-            something that happens on load. Hidden entirely on an insecure
-            origin — a dead button teaches you the feature is broken, where its
-            absence is simply the truth.
-          */}
-          {mic.supported && (
-            <button
-              onClick={() => (mic.active ? mic.disable() : void mic.enable())}
-              className={`pointer-events-auto font-mono text-[11px] border rounded-badge px-3 py-1.5 min-h-[36px] transition-colors ${
-                mic.active ? "border-xp/50 text-xp" : "border-base-600 text-ink-500 hover:text-ink-100"
-              }`}
-            >
-              {mic.active ? "MIC ON" : "MIC"}
-            </button>
-          )}
+          <MicSource mic={mic} voice={voice} choice={micChoice} onChoose={setMicChoice} className="pointer-events-auto" />
           <button
             onClick={fitView}
             className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
@@ -749,7 +739,7 @@ export default function MissionMap() {
         draggable everywhere the chat is not.
       */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
-        <OperatorChat className="w-full max-w-2xl pointer-events-auto" />
+        <OperatorChat className="w-full max-w-2xl pointer-events-auto" heard={lastHeard} />
       </div>
 
       <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden xl:block">

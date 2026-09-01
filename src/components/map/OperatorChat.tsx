@@ -41,7 +41,25 @@ import { useSpeech } from "@/hooks/useSpeech";
  * makes it fit under a map on a phone.
  */
 
-export default function OperatorChat({ className = "" }: { className?: string }) {
+export default function OperatorChat({
+  className = "",
+  heard,
+}: {
+  className?: string;
+  /**
+   * The last thing the microphone made out, if anything.
+   *
+   * Put into the input rather than sent. The owner's complaint was that voice
+   * "heard it but didnt give me a feedback ... nor does it like sync or
+   * connect" — so the words have to arrive somewhere he can see and act on.
+   *
+   * NOT auto-sent, deliberately. Every sentence becoming a job is how twenty
+   * phantom ones happened on 2026-08-31, and a misheard word would spend money
+   * with no chance to catch it. Filling the box makes the loop visible and
+   * leaves the decision one tap away.
+   */
+  heard?: string | null;
+}) {
   const jobs = useJobs();
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -114,6 +132,21 @@ export default function OperatorChat({ className = "" }: { className?: string })
     }
     spokenTo.current = messages.length - 1;
   }, [messages, speech]);
+
+  /*
+    Fill the box when something new is heard, and open the thread so it is
+    visible. Tracked by value rather than by a counter: the same sentence said
+    twice is two intentions, but the SAME string arriving again from a
+    re-render is not, and only one of those should re-fill a box he may have
+    started editing.
+  */
+  const lastHeard = useRef<string | null>(null);
+  useEffect(() => {
+    if (!heard || heard === lastHeard.current) return;
+    lastHeard.current = heard;
+    setDraft((prev) => (prev.trim() ? `${prev.trim()} ${heard}` : heard));
+    setExpanded(true);
+  }, [heard]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
