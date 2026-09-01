@@ -91,12 +91,21 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       (t) => MediaRecorder.isTypeSupported?.(t),
     );
 
-    let peakThisSegment = 0;
     let levelTimer = 0;
 
     const runSegment = () => {
       if (stoppedRef.current) return;
-      peakThisSegment = 0;
+
+      /*
+        Per-segment, NOT shared across segments.
+
+        It was one variable in the enclosing scope, and `onstop` starts the
+        next segment before checking the finished one's peak — so the check
+        read a value that had just been reset to zero, and every segment was
+        reported "quiet" however loudly he spoke. Closing over it per segment
+        is what makes the measurement belong to the recording it describes.
+      */
+      let peak = 0;
 
       let recorder: MediaRecorder;
       try {
@@ -127,11 +136,11 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
           setStatus(`recorded ${blob.size}B — too small to send`);
           return;
         }
-        if (peakThisSegment < SILENCE_PEAK) {
-          setStatus(`quiet (peak ${peakThisSegment.toFixed(3)} < ${SILENCE_PEAK})`);
+        if (peak < SILENCE_PEAK) {
+          setStatus(`quiet (peak ${peak.toFixed(3)} < ${SILENCE_PEAK})`);
           return;
         }
-        setStatus(`sending ${(blob.size / 1024).toFixed(0)}KB, peak ${peakThisSegment.toFixed(2)}`);
+        setStatus(`sending ${(blob.size / 1024).toFixed(0)}KB, peak ${peak.toFixed(2)}`);
 
         setWorking(true);
         try {
@@ -161,13 +170,16 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       recorder.start();
       // Sample the live level while this segment records, so silence can be
       // discarded without decoding the audio.
-      levelTimer = window.setInterval(() => {
+      const myTimer = window.setInterval(() => {
         const v = mic.levelRef.current;
-        if (v > peakThisSegment) peakThisSegment = v;
-      }, 100);
+        if (v > peak) peak = v;
+      }, 60);
+      levelTimer = myTimer;
 
       window.setTimeout(() => {
-        window.clearInterval(levelTimer);
+        // Clear THIS segment's timer, not whatever the shared variable points
+        // at by now — the next segment may already own it.
+        window.clearInterval(myTimer);
         if (recorder.state !== "inactive") recorder.stop();
       }, SEGMENT_MS);
     };
