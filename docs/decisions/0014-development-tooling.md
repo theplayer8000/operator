@@ -120,6 +120,55 @@ pipelining rather than barriers. `control-plane-design.md` §3 proposes
 multi-worker jobs whose `handoff` currently carries prose and a status.
 Schema-checking that is the difference between orchestration and hoping.
 
+### Amended 2026-09-01 — Everything Claude Code (ECC), selectively
+
+The owner asked for ECC (`github.com/affaan-m/ECC`, v2.2.1, MIT, 245K stars).
+It is 286 skills, 68 agents and 94 commands across four harnesses. **Five
+skills taken, project-scoped; the rest catalogued and not installed.** See
+[`ecc-catalogue.md`](../ecc-catalogue.md).
+
+**Taken:** `security-scan`, `security-review`, `react-patterns`,
+`react-performance`, `frontend-a11y` — 84KB of markdown, no executables, copied
+into `.claude/skills/` rather than run through their installer.
+
+**Why not the full install, when the owner leaned that way.** Four reasons, and
+the first is the one that is easy to miss:
+
+1. **`~/.claude/` is shared with the Claude Code running INSIDE Operator.** A
+   user-scope install changes the harness of the agent whose behaviour is
+   currently the experiment — the intent layer went live the same day and its
+   evidence comes from watching that agent work. An odd result would then have
+   two candidate causes.
+2. **286 skill descriptions sit in context every turn.** The listing is budgeted
+   at about 1% of the window and truncates past it. `CLAUDE.md` is 54KB and its
+   value is being read carefully; this competes directly.
+3. **The Memory Vault is on the wrong side of the provider boundary** — the
+   exact thing this ADR already forbids. It stores memories in `~/.ecc/memory/`,
+   readable only by Claude Code, while `server/memory.mjs` already does it
+   worker-agnostically in the store.
+4. **The hook runtime is third-party Node scripts** on SessionStart, PostToolUse
+   and Stop, in an environment [`threat-model.md`](../threat-model.md) states
+   has no sandbox and runs as the owner. Refused; `--enable-hooks` is opt-in and
+   was not passed.
+
+**What was verified rather than assumed.** `mcp-configs/mcp-servers.json`
+defines 35 servers, a dozen remote. `scripts/install-apply.js` contains **no MCP
+handling at all** — installing contacts nothing and configures nothing. Each of
+those 35 remains an external host needing its own named approval under
+`CLAUDE.md`'s rule; being catalogued approves none of them.
+
+**`security-scan` paid for itself in one run.** It found 76 accumulated allow
+rules and no deny list in `.claude/settings.local.json` — the grant-per-command
+pattern this project's own permission decision **rejected** for producing "69
+single-use rules that never expire". It had silently returned. Now 9 allow / 17
+deny, mirroring `server/jobs.mjs`'s `DENIED_TOOLS` so both agents refuse the
+same things. Grade B (81) → A (96).
+
+**Its blind spot, recorded so it is not mistaken for coverage.** It scans
+`.claude/` — Claude Code's config — and never reads Operator's own
+`ALLOWED_TOOLS`. It would not have caught the mangled-newline rules found in
+`server/jobs.mjs` the same day.
+
 ## Consequences
 
 **Good.** Three tools adopted at zero dependency cost — all read-only or

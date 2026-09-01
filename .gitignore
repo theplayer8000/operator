@@ -20,3 +20,17 @@ tsconfig.tsbuildinfo
 
 # Python bytecode from the transcriber helper
 __pycache__/
+
+# Claude Code local state.
+#
+# `settings.local.json` is THIS MACHINE's accumulated permission grants — a
+# record of what was approved at this desk, not a decision about the project.
+# Committing it would publish one machine's allow list to every checkout and
+# make one person's security posture look like a shared rule. Note that the
+# `*.local` rule above does NOT cover it: that matches files ending in
+# `.local`, and this ends in `.local.json`.
+#
+# `.claude/skills/` IS committed. Those are chosen, reviewed components every
+# session on this repo should get — see docs/ecc-catalogue.md.
+.claude/settings.local.json
+.claude/*.bak
