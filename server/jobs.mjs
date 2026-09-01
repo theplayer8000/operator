@@ -403,6 +403,24 @@ const ALLOWED_TOOLS = (
     */
     "Bash(node scripts/operator-action.mjs:*)",
     /*
+      The same command as the repo tells it to write it.
+
+      Measured 2026-09-01: asked the time, the worker ran
+      `"C:\Program Files\nodejs\node.exe" scripts/operator-action.mjs now`,
+      was asked for permission, tried the fully-qualified script path, and was
+      asked AGAIN. Two prompts for the one command this list exists to
+      pre-approve.
+
+      Nothing was wrong with what it ran. CLAUDE.md tells it that plain `node`
+      is shadowed by a broken binary one directory above the repo and to use
+      the real path — so our own guidance produced a command our own allow-list
+      did not match. These entries close that gap rather than asking the model
+      to spell it the one way the pattern expects, which it has no way to know.
+    */
+    'Bash("C:\Program Files\nodejs\node.exe" scripts/operator-action.mjs:*)',
+    'Bash("C:\Program Files\nodejs\node.exe" "D:\Projects\Operator\scripts\operator-action.mjs":*)',
+    'Bash("C:\Program Files\nodejs\node.exe" "D:\Projects\Operator-agent\scripts\operator-action.mjs":*)',
+    /*
       Rendering a page to a PNG so the model can look at what it built
       (server/render.mjs). Pre-allowed because the alternative is asking a
       person "does this look right?", which is the round trip the whole thing

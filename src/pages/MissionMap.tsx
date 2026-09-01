@@ -568,6 +568,24 @@ export default function MissionMap() {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    /*
+      Self-heal a stuck gesture.
+
+      If a pointerup is ever missed — capture lost, the button released over
+      another window, the tab losing focus mid-drag — `panning` or `dragging`
+      stays set and the map then slides around under a cursor with no button
+      held. That is the "was working a moment then kinda broke" the owner hit,
+      and it never recovers on its own because nothing else clears the flag.
+
+      `e.buttons` is the truth about what is currently held, so it is checked
+      every move rather than trusting that the release event arrived.
+    */
+    if (e.buttons === 0 && (pointer.current.dragging || pointer.current.panning)) {
+      pointer.current.dragging = null;
+      pointer.current.panning = false;
+      pointer.current.down = false;
+    }
+
     const dx = e.clientX - pointer.current.lastX;
     const dy = e.clientY - pointer.current.lastY;
     pointer.current.lastX = e.clientX;
@@ -679,6 +697,25 @@ export default function MissionMap() {
       panY: -((minY + maxY) / 2) * zoom - 40,
     };
   };
+
+  /*
+    A release that happens outside the window never reaches the canvas at all,
+    so the gesture has to be ended here too. Alt-tabbing mid-drag was leaving
+    the map pinned to a pointer that had long since let go.
+  */
+  useEffect(() => {
+    const release = () => {
+      pointer.current.dragging = null;
+      pointer.current.panning = false;
+      pointer.current.down = false;
+    };
+    window.addEventListener("blur", release);
+    window.addEventListener("pointerup", release);
+    return () => {
+      window.removeEventListener("blur", release);
+      window.removeEventListener("pointerup", release);
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
