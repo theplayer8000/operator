@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
+import { useMicLevel } from "@/hooks/useMicLevel";
+import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import type { MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET } from "@/components/map/operatorCore";
 import OperatorChat from "@/components/map/OperatorChat";
@@ -76,6 +78,18 @@ export default function MissionMap() {
   const { active } = useMissionBoard();
   const navigate = useNavigate();
   const voice = useVoiceActivity();
+  /*
+    This machine's own microphone, and what it hears.
+
+    Same hooks as the phone surface, deliberately: the owner asked for the
+    transcript "on pc screen aswell", and two implementations of the same thing
+    drift. It matters more here than it looks — the server-side listener is
+    pointed at whichever device OPERATOR_LISTEN names, which has spent most of
+    its life disconnected. A microphone the browser opens is one that is
+    actually plugged into the machine someone is sitting at.
+  */
+  const mic = useMicLevel();
+  const transcript = usePhoneTranscript(mic, mic.active);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bodiesRef = useRef<Body[]>([]);
@@ -92,6 +106,8 @@ export default function MissionMap() {
   */
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  const micRef = useRef(mic);
+  micRef.current = mic;
 
   /*
     Is Operator actually working?
@@ -232,8 +248,15 @@ export default function MissionMap() {
       const eds = edgesRef.current;
       const byId = new Map(bodies.map((b) => [b.id, b]));
       const v = voiceRef.current;
-      const heard = v.listening ? Math.min(1, v.level / Math.max(0.004, v.threshold)) : 0;
-      const hearing = heard > 0.35;
+      const m = micRef.current;
+      // The browser's own microphone wins when it is open: it is local, at
+      // frame rate, and attached to the machine someone is actually at.
+      const heard = m.active
+        ? m.levelRef.current
+        : v.listening
+          ? Math.min(1, v.level / Math.max(0.004, v.threshold))
+          : 0;
+      const hearing = m.active ? heard > 0.12 : heard > 0.35;
       const lift = v.speaking ? 1 : hearing ? heard : 0;
       const accent = v.speaking ? VIOLET : GOLD;
 
@@ -647,6 +670,22 @@ export default function MissionMap() {
             read as "B to reset" — which is a fair description of a control
             nobody can see.
           */}
+          {/*
+            Opening a microphone needs a user gesture, so it is a button and not
+            something that happens on load. Hidden entirely on an insecure
+            origin — a dead button teaches you the feature is broken, where its
+            absence is simply the truth.
+          */}
+          {mic.supported && (
+            <button
+              onClick={() => (mic.active ? mic.disable() : void mic.enable())}
+              className={`pointer-events-auto font-mono text-[11px] border rounded-badge px-3 py-1.5 min-h-[36px] transition-colors ${
+                mic.active ? "border-xp/50 text-xp" : "border-base-600 text-ink-500 hover:text-ink-100"
+              }`}
+            >
+              {mic.active ? "MIC ON" : "MIC"}
+            </button>
+          )}
           <button
             onClick={fitView}
             className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
@@ -661,6 +700,33 @@ export default function MissionMap() {
           </button>
         </div>
       </div>
+
+      {/*
+        What it heard, under the core. Same component of the same feature as the
+        phone, so the two cannot diverge — and placed above the chat rather than
+        near it, because this is the map listening, not a message being composed.
+      */}
+      {mic.active && (
+        <div className="absolute left-0 right-0 top-[58%] flex justify-center px-8 pointer-events-none select-none">
+          <div className="max-w-xl text-center space-y-1">
+            {transcript.lines.map((line, i) => {
+              const age = transcript.lines.length - 1 - i;
+              return (
+                <p
+                  key={`${i}-${line.slice(0, 12)}`}
+                  className="text-sm leading-snug transition-opacity duration-500"
+                  style={{ color: "rgba(196,205,222,1)", opacity: Math.max(0.12, 0.5 - age * 0.09) }}
+                >
+                  {line}
+                </p>
+              );
+            })}
+            <p className="font-mono text-[10px] text-ink-700/70">
+              {transcript.working ? "transcribing…" : transcript.status}
+            </p>
+          </div>
+        </div>
+      )}
 
       {hovered && (
         <div className="absolute bottom-6 left-6 right-6 sm:right-auto sm:max-w-md card-base p-4 pointer-events-none animate-fade-up">
