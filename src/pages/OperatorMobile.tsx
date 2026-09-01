@@ -291,16 +291,24 @@ export default function OperatorMobile() {
               );
             })}
             {/*
-              What the last segment did, always visible while the mic is on.
+              The diagnostic, shown only when it is earning its place.
 
-              "it's detecting nilch" was not debuggable from another machine:
-              a discarded silent segment, a zero-byte recording, a refused
-              upload and a genuine transcript of nothing all look identical
-              from the outside. One faint line turns that into a fact.
+              It exists because "it's detecting nilch" was not debuggable from
+              another machine — a discarded silent segment, a zero-byte
+              recording, a refused upload and a genuine transcript of nothing
+              all look identical from the outside, and one faint line found a
+              real bug in a single round.
+
+              But once words are arriving it is noise: "heard it (31KB)" under
+              every sentence is a status report nobody asked for. So it stays
+              hidden while things are working and reappears the moment they
+              are not, which is the only time it says anything useful.
             */}
-            <p className="font-mono text-[10px] text-ink-700/70">
-              {transcript.working ? "transcribing…" : transcript.status}
-            </p>
+            {(transcript.lines.length === 0 || !transcript.status.startsWith("heard it")) && (
+              <p className="font-mono text-[10px] text-ink-700/70">
+                {transcript.working ? "transcribing…" : transcript.status}
+              </p>
+            )}
           </div>
         </div>
       )}
