@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { MicLevel } from "./useMicLevel";
 
 /**
- * What this phone is hearing, in words.
+ * What this device is hearing, in words.
  *
  * The owner turned the microphone on, watched the core move with his voice,
  * and asked the obvious question: *"mic works on phone so why isnt the thing
  * working"*. Because the level was local and the WORDS were not — Whisper was
  * listening to the microphone attached to the PC, in a different room. This
- * closes that gap: the phone records itself and posts the audio to Operator's
+ * closes that gap: the device records itself and posts the audio to Operator's
  * own server.
  *
  * ## Not the browser's speech recognition
@@ -16,31 +16,51 @@ import type { MicLevel } from "./useMicLevel";
  * `SpeechRecognition` exists and would have been one line. On iOS it sends the
  * audio to **Apple** — an external host under CLAUDE.md's approval rule, and
  * his voice rather than a prompt. He has approved no such thing. The whole
- * path here stays on hardware he owns: phone → his server over the tailnet →
+ * path here stays on hardware he owns: device → his server over the tailnet →
  * the resident Whisper the clap gesture already uses.
+ *
+ * ## It sends when you stop talking, not on a timer
+ *
+ * The first version cut every four seconds regardless, which chopped sentences
+ * in half and uploaded silence when nobody spoke. His design, and it is the
+ * right one: *"every sentence after like i stop talking for more than 2 secs
+ * it sends"*. A segment ends when speech has been heard AND the room has been
+ * quiet for two seconds — the same rule `server/listen.mjs` uses for the clap
+ * capture, arrived at separately for the same reason.
+ *
+ * ## Typing is not talking
+ *
+ * He reported the phone picking up his keyboard and "messing it about". A peak
+ * threshold cannot separate those: a keystroke is as loud as a syllable. What
+ * separates them is DURATION — speech sustains across tenths of a second,
+ * typing is a spike and gone. So a segment must be voiced for a minimum
+ * FRACTION of its length before it is worth uploading, which is the same
+ * measurement `captureAndTranscribe` calls `voicedPct`.
  *
  * ## Segments, not a stream
  *
- * Audio is recorded in fixed slices and each is posted whole. A `MediaRecorder`
- * timeslice would be cheaper, but only the FIRST chunk of a WebM stream carries
- * the container header — every later chunk on its own is undecodable. Whole
- * segments are slightly wasteful and always readable.
- *
- * Silence is never uploaded. It costs a round trip and CPU, and feeding Whisper
- * silence is precisely what produced twenty phantom jobs on 2026-08-31.
+ * Each segment is recorded and posted whole. A `MediaRecorder` timeslice would
+ * be cheaper, but only the FIRST chunk of a WebM stream carries the container
+ * header — every later chunk on its own is undecodable.
  */
 
-/** How much audio per segment. Long enough for a sentence, short enough to feel live. */
-const SEGMENT_MS = 4000;
+/** Quiet for this long, after speech, ends the sentence. The owner's number. */
+const SILENCE_MS = 2000;
+/** Nothing runs longer than this, however long someone talks. */
+const MAX_SEGMENT_MS = 20_000;
+/** Below this the level is room tone, not a voice. */
+const SPEECH_PEAK = 0.02;
 /**
- * Below this peak the segment is treated as silence and never sent.
+ * Fraction of the recording that must be above the bar.
  *
- * 0.02, not the 0.06 first guessed. A phone applies aggressive auto-gain and
- * noise suppression, which flattens peaks — the bar has to sit above room tone
- * and below normal speech, and guessing it high means the feature does nothing
- * and says nothing, which is exactly how it first behaved.
+ * This is the typing filter. A keystroke peaks as high as a syllable but lasts
+ * a fraction as long, so loudness alone cannot tell them apart — sustained
+ * energy can. Eight percent of a window is roughly a short word; a burst of
+ * typing does not come close.
  */
-const SILENCE_PEAK = 0.02;
+const MIN_VOICED = 0.08;
+/** How often the level is sampled. Fine enough to measure a syllable. */
+const TICK_MS = 50;
 
 export interface PhoneTranscript {
   /** Most recent lines heard, newest last. Capped. */
@@ -55,7 +75,7 @@ export interface PhoneTranscript {
    * Exists because "it's detecting nilch" is not debuggable from another
    * machine: silence-discarded, a zero-byte recording, a rejected upload and a
    * transcript of nothing all look identical from the outside. This turns that
-   * into one readable line.
+   * into one readable line, and it found a real bug within a single round.
    */
   status: string;
   clear: () => void;
@@ -65,9 +85,8 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
   const [lines, setLines] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("starting…");
+  const [status, setStatus] = useState("waiting for you to speak");
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const stoppedRef = useRef(false);
 
   useEffect(() => {
@@ -91,21 +110,10 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       (t) => MediaRecorder.isTypeSupported?.(t),
     );
 
-    let levelTimer = 0;
+    let timer = 0;
 
     const runSegment = () => {
       if (stoppedRef.current) return;
-
-      /*
-        Per-segment, NOT shared across segments.
-
-        It was one variable in the enclosing scope, and `onstop` starts the
-        next segment before checking the finished one's peak — so the check
-        read a value that had just been reset to zero, and every segment was
-        reported "quiet" however loudly he spoke. Closing over it per segment
-        is what makes the measurement belong to the recording it describes.
-      */
-      let peak = 0;
 
       let recorder: MediaRecorder;
       try {
@@ -115,7 +123,18 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
         setStatus("MediaRecorder refused this stream");
         return;
       }
-      recorderRef.current = recorder;
+
+      /*
+        Per-segment, NOT shared. These lived in the enclosing scope once, and
+        because `onstop` starts the next segment before evaluating the finished
+        one, the checks read values that had just been reset — every segment
+        reported "quiet" however loudly he spoke, and nothing was ever sent.
+      */
+      let ticks = 0;
+      let voicedTicks = 0;
+      let heardSpeech = false;
+      let quietFor = 0;
+      const startedAt = Date.now();
       const parts: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
@@ -124,24 +143,29 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
 
       recorder.onstop = async () => {
         const blob = new Blob(parts, { type: recorder.mimeType || "audio/webm" });
-        // Queue the next segment immediately, so a slow upload does not create
-        // a gap in which he can say something that is never heard.
+        const voiced = ticks ? voicedTicks / ticks : 0;
+
+        // Start listening again immediately, so a slow upload never leaves a
+        // gap he can speak into.
         if (!stoppedRef.current) runSegment();
 
-        /*
-          Say why a segment was dropped rather than dropping it quietly. Both
-          of these are normal and both look like a broken feature.
-        */
+        if (!heardSpeech) {
+          setStatus("waiting for you to speak");
+          return;
+        }
         if (blob.size < 800) {
           setStatus(`recorded ${blob.size}B — too small to send`);
           return;
         }
-        if (peak < SILENCE_PEAK) {
-          setStatus(`quiet (peak ${peak.toFixed(3)} < ${SILENCE_PEAK})`);
+        if (voiced < MIN_VOICED) {
+          // Almost always typing, a door, a knock — loud but not sustained.
+          setStatus(
+            `ignored a noise (${(voiced * 100).toFixed(0)}% voiced, needs ${MIN_VOICED * 100}%)`,
+          );
           return;
         }
-        setStatus(`sending ${(blob.size / 1024).toFixed(0)}KB, peak ${peak.toFixed(2)}`);
 
+        setStatus(`sending ${(blob.size / 1024).toFixed(0)}KB, ${(voiced * 100).toFixed(0)}% voiced`);
         setWorking(true);
         try {
           const res = await fetch("/api/listen/transcribe", {
@@ -154,7 +178,7 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
           const text = String(body?.text ?? "").trim();
           if (text) {
             setError(null);
-            setStatus(`heard it (${(blob.size / 1024).toFixed(0)}KB)`);
+            setStatus("heard it");
             // Capped: this is a glance under the core, not a document.
             setLines((prev) => [...prev, text].slice(-6));
           } else {
@@ -168,30 +192,41 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       };
 
       recorder.start();
-      // Sample the live level while this segment records, so silence can be
-      // discarded without decoding the audio.
-      const myTimer = window.setInterval(() => {
-        const v = mic.levelRef.current;
-        if (v > peak) peak = v;
-      }, 60);
-      levelTimer = myTimer;
 
-      window.setTimeout(() => {
-        // Clear THIS segment's timer, not whatever the shared variable points
-        // at by now — the next segment may already own it.
-        window.clearInterval(myTimer);
-        if (recorder.state !== "inactive") recorder.stop();
-      }, SEGMENT_MS);
+      timer = window.setInterval(() => {
+        const v = mic.levelRef.current;
+        ticks += 1;
+
+        if (v >= SPEECH_PEAK) {
+          voicedTicks += 1;
+          heardSpeech = true;
+          quietFor = 0;
+        } else if (heardSpeech) {
+          quietFor += TICK_MS;
+        }
+
+        /*
+          End on silence after speech, or at the hard cap.
+
+          Silence BEFORE any speech never ends the segment — it just keeps
+          listening. That is what makes this feel like it is waiting for you
+          rather than sampling on a clock, and it is why the first version
+          chopped sentences in half.
+        */
+        const done =
+          (heardSpeech && quietFor >= SILENCE_MS) || Date.now() - startedAt >= MAX_SEGMENT_MS;
+        if (done) {
+          window.clearInterval(timer);
+          if (recorder.state !== "inactive") recorder.stop();
+        }
+      }, TICK_MS);
     };
 
     runSegment();
 
     return () => {
       stoppedRef.current = true;
-      window.clearInterval(levelTimer);
-      const r = recorderRef.current;
-      if (r && r.state !== "inactive") r.stop();
-      recorderRef.current = null;
+      window.clearInterval(timer);
     };
   }, [enabled, mic.active, mic.streamRef, mic.levelRef]);
 

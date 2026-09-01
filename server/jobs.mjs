@@ -817,7 +817,7 @@ function setStatus(job, status, detail = null) {
         void notify(
           `Operator job ${status}`,
           `${job.title || job.id}${detail ? ` — ${detail}` : ""}`.slice(0, 300),
-          { priority: "default", tags: [status === "blocked" ? "no_entry" : "warning"] },
+          { priority: "high", tags: [status === "blocked" ? "no_entry" : "warning"] },
         );
       }
       job.task.verification = {
@@ -1139,7 +1139,8 @@ function ask(job, req) {
     void notify(
       "Operator needs you",
       `${req.tool} — ${rule}`.slice(0, 300),
-      { priority: "high", tags: ["question"], click: process.env.OPERATOR_APP_URL || "" },
+      // Urgent, not high: the turn is SUSPENDED and dies in thirty minutes.
+      { priority: "urgent", tags: ["question"], click: process.env.OPERATOR_APP_URL || "" },
     );
 
     emit(job, "permission_request", {

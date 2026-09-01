@@ -1975,7 +1975,7 @@ export async function runAction(name, params = {}) {
     */
     try {
       const { title, message } = summarise(name, params, result, before);
-      void notify(title, message, { priority: "low", tags: ["pencil2"] });
+      void notify(title, message, { priority: "high", tags: ["pencil2"] });
     } catch (err) {
       /*
         Building the sentence must never fail the action that already

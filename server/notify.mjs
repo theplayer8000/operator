@@ -65,7 +65,18 @@ export const configured = Boolean(URL_BASE && TOPIC);
  *
  * @param title   short, read on a lock screen
  * @param message the body
- * @param opts    priority "min"|"low"|"default"|"high"|"urgent", tags[], click URL
+ * @param opts    priority, tags[], click URL
+ *
+ * ## Priority is not cosmetic, and the default is wrong for this app
+ *
+ * ntfy maps them 1-5: min, low, default, high, urgent. **Only 4 and 5 make the
+ * phone actually ping** — 1 to 3 arrive silently and are found later, which the
+ * owner discovered by testing and I had not.
+ *
+ * That makes "default" the wrong default here. Operator only sends a
+ * notification when something happened that he did not do, so silent delivery
+ * defeats the entire purpose: everything is at least `high`, and a suspended
+ * turn waiting on an answer is `urgent`.
  * @returns true if it was accepted, false if unconfigured or it failed
  */
 export async function notify(title, message, opts = {}) {
