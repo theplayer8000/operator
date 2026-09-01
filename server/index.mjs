@@ -921,7 +921,7 @@ server.listen(PORT, HOST, () => {
       use the keyboard anyway. That is why the gesture is allowed to arm at all;
       the window is why it is safe to let it.
     */
-    setEnabled(true, { device: "a clap at the machine" }, CLAP_ARM_MS);
+    setEnabled(true, { device: "a clap at the machine" }, CLAP_ARM_MS, jobs.busy);
 
     void runAction("focus_operator").catch((err) => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);

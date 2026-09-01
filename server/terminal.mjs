@@ -110,7 +110,7 @@ let disarmTimer = null;
  * that is a deliberate act by a named device and revoking it behind his back
  * would be its own kind of wrong.
  */
-export function setEnabled(next, identity, forMs = 0) {
+export function setEnabled(next, identity, forMs = 0, busy = null) {
   enabled = next === true;
 
   // Any change cancels a pending auto-disarm. Disarming by hand and then being
@@ -128,11 +128,40 @@ export function setEnabled(next, identity, forMs = 0) {
   );
 
   if (enabled && forMs > 0) {
-    disarmTimer = setTimeout(() => {
+    /*
+      The window must never strand work already in flight.
+
+      Every route under /api/jobs is gated on the terminal being armed —
+      including ANSWERING a permission question. So a naive timer produces
+      exactly the failure the notifications exist to prevent: a long turn
+      starts, twenty minutes pass, the terminal disarms, the turn then suspends
+      on a permission question, his phone buzzes, he taps it, and he gets a 403
+      while the turn quietly dies at its thirty-minute timeout.
+
+      So the timer ASKS before disarming. If something is running it waits and
+      asks again rather than cutting the session off mid-thought. The clock
+      still runs — this defers the disarm, it does not cancel it — so an idle
+      machine still closes the window on its own.
+    */
+    const check = () => {
+      if (typeof busy === "function") {
+        let working = false;
+        try {
+          working = busy() === true;
+        } catch {
+          /* A broken predicate must not pin the terminal open forever. */
+        }
+        if (working) {
+          disarmTimer = setTimeout(check, 60_000);
+          disarmTimer.unref?.();
+          return;
+        }
+      }
       disarmTimer = null;
       enabled = false;
       console.log("[operator] terminal disarmed automatically — the window expired");
-    }, forMs);
+    };
+    disarmTimer = setTimeout(check, forMs);
     // Do not hold the process open for this alone.
     disarmTimer.unref?.();
   }

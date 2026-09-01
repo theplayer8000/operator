@@ -2003,6 +2003,24 @@ export function detail(id, since = 0) {
  * cannot queue work into someone else's session. When nothing is running, any
  * authorised device may send.
  */
+/**
+ * Is Operator in the middle of something?
+ *
+ * Running turns, queued ones, and — importantly — any turn suspended on a
+ * permission question. A suspended turn is the case that matters most: it is
+ * not consuming anything, so a naive "is anything running" check would call it
+ * idle, and the terminal's auto-disarm would then cut off the one thing that
+ * can un-suspend it.
+ */
+export function busy() {
+  if (running.size > 0 || waiting.length > 0) return true;
+  for (const job of jobs.values()) {
+    if (job.awaitingPermission > 0) return true;
+    if (job.pending?.length) return true;
+  }
+  return false;
+}
+
 export function holder() {
   /*
     Nobody holds the runner while there is capacity.
