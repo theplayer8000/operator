@@ -90,15 +90,59 @@ export function isEnabled() {
   return enabled;
 }
 
-/** Arm or disarm. Caller must already have passed `deviceMayManage`. */
-export function setEnabled(next, identity) {
+/*
+  A pending auto-disarm, when the terminal was armed by something that should
+  not leave it armed forever.
+*/
+let disarmTimer = null;
+
+/**
+ * Arm or disarm.
+ *
+ * `forMs` disarms again automatically after that long. It exists for the clap
+ * gesture and the reasoning is specific: arming is arbitrary code execution,
+ * and the clap detector demonstrably false-fires — it logged fifteen claps in
+ * an evening that nobody made. Permanent arming from an accidental sound means
+ * the terminal can sit armed for days unnoticed, and "disarmed by default" is
+ * exactly what stops a stray job or a lost phone running commands.
+ *
+ * A person at the desk arming it from the Dev page passes no window, because
+ * that is a deliberate act by a named device and revoking it behind his back
+ * would be its own kind of wrong.
+ */
+export function setEnabled(next, identity, forMs = 0) {
   enabled = next === true;
+
+  // Any change cancels a pending auto-disarm. Disarming by hand and then being
+  // disarmed again later is harmless; re-arming by hand and THEN being disarmed
+  // by a timer he has forgotten about is not.
+  if (disarmTimer) {
+    clearTimeout(disarmTimer);
+    disarmTimer = null;
+  }
+
   console.log(
     `[operator] terminal ${enabled ? "ARMED" : "disarmed"} by ${identity?.device ?? "unknown"}${
       identity?.user ? ` (${identity.user})` : ""
-    }`
+    }${enabled && forMs ? ` — auto-disarms in ${Math.round(forMs / 60000)}m` : ""}`
   );
+
+  if (enabled && forMs > 0) {
+    disarmTimer = setTimeout(() => {
+      disarmTimer = null;
+      enabled = false;
+      console.log("[operator] terminal disarmed automatically — the window expired");
+    }, forMs);
+    // Do not hold the process open for this alone.
+    disarmTimer.unref?.();
+  }
+
   return enabled;
+}
+
+/** Whether the current armed state will expire on its own. */
+export function armedTemporarily() {
+  return disarmTimer !== null;
 }
 
 /**

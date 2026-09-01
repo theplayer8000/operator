@@ -59,6 +59,15 @@ import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
 import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
 import { matchIntent } from "./intent.mjs";
+
+/**
+ * How long a clap leaves the terminal armed.
+ *
+ * Long enough to walk over and use it, short enough that an accidental trigger
+ * is not a standing invitation. Environment-only, like every other security
+ * dial here, so a worker cannot widen its own window.
+ */
+const CLAP_ARM_MS = Math.max(0, Number(process.env.OPERATOR_CLAP_ARM_MINUTES ?? 20) || 20) * 60_000;
 import { synthesize, available as ttsAvailable, state as ttsState } from "./tts.mjs";
 
 const gzip = promisify(gzipCb);
@@ -893,6 +902,27 @@ server.listen(PORT, HOST, () => {
       `media_play_pause` stays as its own action, because being able to say
       "pause that" is independently useful. It is just not automatic.
     */
+    /*
+      Arm the terminal, for a while.
+
+      His ask: the clap should arm it too, so summoning Operator and being able
+      to use it are one gesture rather than two — and eventually his voice does
+      this instead of a clap.
+
+      Bounded rather than permanent, and the reason is measured rather than
+      cautious: this detector false-fires. It logged fifteen claps in an evening
+      nobody made, on a microphone that was working. Arming is arbitrary code
+      execution, so a stray door slam leaving the terminal armed for days
+      defeats the point of it being disarmed by default — which exists to stop a
+      lost phone or a runaway job running commands, not to stop the person
+      standing in the room.
+
+      A clap is also proof of physical presence, and anyone in the room could
+      use the keyboard anyway. That is why the gesture is allowed to arm at all;
+      the window is why it is safe to let it.
+    */
+    setEnabled(true, { device: "a clap at the machine" }, CLAP_ARM_MS);
+
     void runAction("focus_operator").catch((err) => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
     });
