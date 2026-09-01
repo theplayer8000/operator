@@ -25,7 +25,7 @@
 // comment on withState().
 
 import { randomUUID } from "node:crypto";
-import { notify } from "./notify.mjs";
+import { notify, configured as notifyConfigured } from "./notify.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -1881,35 +1881,67 @@ const SILENT_ACTIONS = new Set([
 ]);
 
 /**
- * A short human sentence for a phone's lock screen.
+ * What to put on a lock screen, as `{title, message}`.
  *
- * Names, never ids. The first version fell back to `params.id` and produced
- * "Mission set progress - 3d3781cb-6ecc-4737-8d1a-870713af97ef", which tells
- * you something happened and nothing about what. A UUID is not a notification.
- * Missions are looked up by id in the store for exactly this reason.
+ * The title says WHAT KIND of change and the message says WHICH THING and how
+ * much it moved. The first version had them the other way round — title
+ * "Operator changed something", message "Mission set progress" — which was
+ * ambiguous twice over: it never named the mission, and one of his missions is
+ * itself called "Operator", so the notification appeared to be about the app.
+ *
+ * Names, never ids. An earlier version fell back to `params.id` and produced
+ * "3d3781cb-6ecc-4737-8d1a-870713af97ef". A UUID is not a notification.
+ *
+ * Before-and-after where there is one. "progress 56% -> 62%" tells you whether
+ * to care; "progress 62%" makes you go and look.
  */
-async function describeChange(name, params, result) {
-  const verb = name.replace(/^(gym|mission|missions|calendar|routine)_/, "").replace(/_/g, " ");
+function summarise(name, params, result, before) {
+  const verb = name.replace(/^(gym|missions|mission|calendar|routine)_/, "").replace(/_/g, " ");
 
   if (name.startsWith("mission")) {
-    const id = result?.id ?? params?.id;
-    const missions = await readState("missions.records");
-    const found = Array.isArray(missions) ? missions.find((m) => m?.id === id) : null;
-    const label = found?.name ?? params?.name ?? "a mission";
-    // The new value, when there is an obviously interesting one.
-    const detail =
-      result?.progress !== undefined
-        ? ` (${result.progress}%)`
-        : result?.status
-          ? ` (${String(result.status).replace(/_/g, " ")})`
-          : "";
-    return `${label} — ${verb}${detail}`;
+    const label = before?.name ?? params?.name ?? "a mission";
+    if (result?.progress !== undefined) {
+      const was = before?.progress;
+      const move = was !== undefined && was !== result.progress ? `${was}% → ${result.progress}%` : `${result.progress}%`;
+      return { title: "Mission progress", message: `${label} — ${move}` };
+    }
+    if (result?.status) {
+      const now = String(result.status).replace(/_/g, " ");
+      const was = before?.status ? String(before.status).replace(/_/g, " ") : null;
+      return { title: "Mission status", message: `${label} — ${was && was !== now ? `${was} → ${now}` : now}` };
+    }
+    if (name === "mission_create") return { title: "Mission created", message: params?.name ?? label };
+    if (name === "mission_archive") return { title: "Mission archived", message: label };
+    if (name === "mission_delete") return { title: "Mission deleted", message: label };
+    return { title: `Mission ${verb}`, message: label };
   }
 
-  if (name.startsWith("gym_")) return `Gym — ${verb}${params?.date ? ` on ${params.date}` : ""}`;
-  if (name.startsWith("calendar_")) return `Calendar — ${verb}${params?.title ? `: ${params.title}` : ""}`;
-  if (name.startsWith("routine_")) return `Routine — ${verb}${params?.date ? ` on ${params.date}` : ""}`;
-  return verb;
+  if (name.startsWith("gym_")) {
+    const when = params?.date ? ` on ${params.date}` : " today";
+    const what = params?.name ?? params?.exercise ?? "";
+    return { title: `Gym — ${verb}`, message: `${what ? `${what}` : "Session"}${when}` };
+  }
+
+  if (name.startsWith("calendar_")) {
+    const what = params?.title ?? params?.name ?? "an event";
+    const when = params?.date ? ` — ${params.date}` : "";
+    return { title: `Calendar — ${verb}`, message: `${what}${when}` };
+  }
+
+  if (name.startsWith("routine_")) {
+    const what = params?.label ?? params?.name ?? "a step";
+    const when = params?.date ? ` on ${params.date}` : " today";
+    return { title: `Routine — ${verb}`, message: `${what}${when}` };
+  }
+
+  return { title: "Operator", message: verb };
+}
+
+/** The record an action is about to change, so the notification can say "from". */
+async function snapshot(name, params) {
+  if (!name.startsWith("mission") || !params?.id) return null;
+  const missions = await readState("missions.records");
+  return Array.isArray(missions) ? (missions.find((m) => m?.id === params.id) ?? null) : null;
 }
 
 export async function runAction(name, params = {}) {
@@ -1917,6 +1949,15 @@ export async function runAction(name, params = {}) {
   if (!action) {
     throw new ActionError(`no such action "${name}". Known actions: ${Object.keys(ACTIONS).join(", ")}`);
   }
+  /*
+    Read the "before" BEFORE running the handler, or there is nothing to
+    compare against — the whole point of "56% -> 62%" is that it happens in
+    that order. Only for mission actions, and only when the notifier is even
+    configured, so an unconfigured Operator does not pay for a store read on
+    every single write.
+  */
+  const before = notifyConfigured && !SILENT_ACTIONS.has(name) ? await snapshot(name, params) : null;
+
   const result = await action.handler(params ?? {});
 
   /*
@@ -1932,11 +1973,17 @@ export async function runAction(name, params = {}) {
       throws AFTER doing its work is the worst possible outcome: the change
       landed and the caller is told it did not.
     */
-    void describeChange(name, params, result)
-      .then((message) =>
-        notify("Operator changed something", message, { priority: "low", tags: ["pencil2"] }),
-      )
-      .catch((err) => console.warn(`[operator] notify skipped: ${err?.message ?? err}`));
+    try {
+      const { title, message } = summarise(name, params, result, before);
+      void notify(title, message, { priority: "low", tags: ["pencil2"] });
+    } catch (err) {
+      /*
+        Building the sentence must never fail the action that already
+        succeeded. A throw AFTER the work landed is the worst outcome: the
+        change happened and the caller is told it did not.
+      */
+      console.warn(`[operator] notify skipped: ${err?.message ?? err}`);
+    }
   }
 
   return result;
