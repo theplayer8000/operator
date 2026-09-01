@@ -1,0 +1,22 @@
+[package]
+name = "operator-shell"
+version = "0.1.0"
+description = "A native window around Operator"
+edition = "2021"
+rust-version = "1.77"
+
+# Kept deliberately small. This crate is a container, not a place features go —
+# see src-tauri/README.md and ADR 0015. Anything Operator should be able to DO
+# belongs in server/actions.mjs where every worker can reach it.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+
+[profile.release]
+# A shell has no hot path; optimise for a small binary instead.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
