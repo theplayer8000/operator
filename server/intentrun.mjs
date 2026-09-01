@@ -44,6 +44,31 @@ import { matchIntent } from "./intent.mjs";
 import { runAction } from "./actions.mjs";
 
 /*
+  Local dates, never `toISOString().slice(0,10)`.
+
+  That is UTC, and it is OPS-009 in the issue register: after midnight UTC but
+  before midnight here, it silently reports tomorrow. Speaking the wrong day
+  back is exactly the kind of confident wrong answer a read must not give.
+*/
+const today = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+/** "2026-09-03" → "Thursday", or a date if it is further off than a week. */
+const spokenDate = (key) => {
+  if (!key) return "that day";
+  // Noon, so a timezone offset cannot push it onto the day either side.
+  const when = new Date(`${key}T12:00:00`);
+  const days = Math.round((when - new Date(`${today()}T12:00:00`)) / 86_400_000);
+  if (days === 1) return "tomorrow";
+  if (days === -1) return "yesterday";
+  if (Math.abs(days) <= 6) return when.toLocaleDateString("en-GB", { weekday: "long" });
+  return when.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+};
+
+/*
   Actions this will never run, whatever a rule says.
 
   `intent.mjs` does not emit these, so this is a second lock on the same door.
@@ -434,6 +459,40 @@ function spokenResult(intent, result, { labels, sweep, groupLabel }) {
     : it;
 
   if (a === "now") return String(result?.spoken ?? result?.time ?? "");
+
+  /*
+    A read has to be ANSWERED, not confirmed.
+
+    Everything else here reports that something changed, and "Done." is a fine
+    answer to that. A question is different: "Done." to "what's on gym today"
+    is the shape of a reply with none of the content, and it would read as the
+    feature being broken.
+
+    Kept short on purpose — this is spoken, and a list of eight exercises read
+    aloud is longer than looking at the page. The session's name and how much
+    is left is what he actually asked.
+  */
+  if (a === "gym_day") {
+    const day = result ?? {};
+    /*
+      The word starts the sentence, so it is capitalised and used bare —
+      "Tomorrow is Legs" rather than "On tomorrow is Legs", which is what
+      prefixing produced.
+    */
+    const said = day.date === today() ? "today" : spokenDate(day.date);
+    const when = said.charAt(0).toUpperCase() + said.slice(1);
+    if (day.restDay) return `${when} is a rest day.`;
+    if (day.skipped) return `${when}'s session is marked as skipped.`;
+    const session = day.session;
+    if (!session) return `Nothing scheduled for ${said}.`;
+
+    const all = session.exercises ?? [];
+    const left = all.filter((e) => !e.done).length;
+    const name = session.name ?? "a session";
+    if (!all.length) return `${when} is ${name}, with nothing listed yet.`;
+    if (left === 0) return `${when} is ${name} — all ${all.length} done.`;
+    return `${when} is ${name} — ${left} of ${all.length} left.`;
+  }
   if (a === "gym_toggle_exercise" || a === "routine_toggle_task") {
     return `${result?.done ? "Ticked off" : "Unticked"} ${many}.`;
   }

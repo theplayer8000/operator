@@ -844,6 +844,67 @@ function normalise(raw) {
  * `RESOLVERS`. A resolver that finds nothing must abandon the intent, never
  * fall back to running the action with what it has.
  */
+/*
+  ## Asking what today's session is — a READ, and the first rule written from
+  ## real evidence rather than invention
+
+  Every other phrase in this file's test suite was made up. This one was not:
+  `scripts/intent-misses.mjs` reported, from actual transcripts, that the most
+  common thing falling through was *"What's on my gym plan tomorrow?"* and
+  *"What's on gym today?"*. Three of twenty-three misses, and the largest real
+  cluster.
+
+  ## Why this is allowed to be a question when nothing else is
+
+  `matchIntent` rejects questions outright — `MUST_NOT` even names "a question
+  about the gym" — and that guard is right, because a question must never become
+  a WRITE. "Should I do push day tomorrow?" is not permission to tick it off.
+
+  The guard is about writes. `matchClock` already sits above it for exactly this
+  reason: "what time is it?" is a question and `now` only reads. This is the
+  same shape and takes the same position, and it may only ever emit `gym_day`.
+  A read that gets it wrong says the wrong thing, which costs a correction; a
+  write that gets it wrong changes his training log.
+
+  So: placed before the question guard, emitting a read and nothing else, and
+  the must-not list below gains the phrasings that are still writes.
+*/
+const GYM_QUESTION = [
+  /\bwhat(s| is| are)?\b.{0,20}\bgym\b/,
+  /\bwhat(s| is| are)?\b.{0,20}\b(session|workout|training)\b/,
+  /\bwhat am i (doing|training|hitting)\b/,
+  /\bwhats? on\b.{0,20}\b(gym|session|workout|training)\b/,
+  /\bwhats\b.{0,15}\b(gym|session|workout|training)\b/,
+];
+
+/*
+  Phrasings that mention the gym but are not asking what is on it. Checked
+  first, because several of them contain the words the patterns above look for.
+*/
+const NOT_A_GYM_QUESTION = [
+  // A claim about having trained — that is matchGymDone's, and it writes.
+  /\b(i|ive|i have|just)\b.{0,12}\b(did|done|finished|smashed|completed)\b/,
+  // Ticking something off.
+  /\b(tick|check|mark|cross)\b.{0,10}\b(off|done)\b/,
+  // About the PAGE or the code, not the session.
+  /\b(gym|workout)\b.{0,12}\b(page|screen|tab|button|component)\b/,
+];
+
+function matchGymQuestion(text) {
+  if (NOT_A_GYM_QUESTION.some((re) => re.test(text))) return null;
+  if (!GYM_QUESTION.some((re) => re.test(text))) return null;
+
+  const date = dateIn(text);
+  if (!date) return null;
+
+  return {
+    action: "gym_day",
+    params: { date },
+    needs: null,
+    why: `reading the gym session for ${date} — a question, so nothing is written`,
+  };
+}
+
 export function matchIntent(transcript) {
   const asked = /\?/.test(String(transcript ?? ""));
   const text = normalise(transcript);
@@ -852,9 +913,16 @@ export function matchIntent(transcript) {
   if (MULTI_CLAUSE.some((re) => re.test(text))) return null;
   if (SOUNDS_LIKE_CODE.some((re) => re.test(text))) return null;
 
-  // The clock first: it is the one intent where a question mark is expected.
+  /*
+    Reads first, because they are the intents where a question mark is EXPECTED.
+    Both of these only read; neither can reach a write. Everything below the
+    guard that follows can.
+  */
   const clock = matchClock(text);
   if (clock) return clock;
+
+  const gymQuestion = matchGymQuestion(text);
+  if (gymQuestion) return gymQuestion;
 
   if (asked || ASKING.some((re) => re.test(text))) return null;
   if (HYPOTHETICAL.some((re) => re.test(text))) return null;
@@ -884,6 +952,20 @@ export function matchIntent(transcript) {
 // leave this quietly emitting an action nothing can run.
 
 const MUST_MATCH = [
+  /*
+    Reads. These are QUESTIONS, which everything below deliberately refuses —
+    see matchGymQuestion for why that guard is about writes rather than about
+    question marks. The action is asserted exactly, so a change that turned
+    one of these into a toggle fails here and not in his gym log.
+
+    The first two are real: scripts/intent-misses.mjs found them in actual
+    transcripts, which makes them the only phrases in this file that were not
+    invented.
+  */
+  ["What's on my gym plan tomorrow?", "gym_day"],
+  ["What's on gym today?", "gym_day"],
+  ["whats my gym session look like for today", "gym_day"],
+  ["what am i training today", "gym_day"],
   ["what time is it?", "now"],
   ["whats the time", "now"],
   ["what day is it", "now"],
@@ -926,12 +1008,20 @@ const MUST_MATCH = [
 ];
 
 const MUST_NOT = [
+  /*
+    Still nothing, even though they mention the gym. Whether he SHOULD train,
+    or how a past session went, is conversation — answering it needs a worker,
+    and matching it here would give a confident wrong answer from a rule that
+    cannot reason.
+  */
+  "should i do push day tomorrow",
+  "how did my gym session go",
+  "is the gym page broken",
   "",
   "   ",
   "fix the gym page",
   "how was my gym session",
   "did i do push day",
-  "whats my gym session look like for today",
   "im going to do push day later",
   "should i skip today",
   "add a mission for the server build",

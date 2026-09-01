@@ -240,14 +240,50 @@ if (typeof document !== "undefined") {
   return, so a background tab would be paying battery to learn something it is
   about to be told anyway. This matters on a phone in a pocket.
 */
-const REVISION_POLL_MS = 4000;
+/*
+  Two speeds, not one.
+
+  4s is the right resting rate — cheap enough to leave running, slow enough not
+  to matter on a phone. But it is also the reason a spoken change feels laggy
+  rather than live: the owner watched a mission move and said he *"wanted it
+  smoother"*, and a fixed 4s is exactly as slow when something is actively
+  happening as when nothing has happened all afternoon.
+
+  So the loop speeds up for a few seconds after it sees a change. Talking to
+  Operator produces a burst of writes — an acknowledgement, then the action,
+  then the reply — and during that burst it follows closely. When the burst
+  stops it settles back rather than polling fast forever.
+
+  This is not a compromise between the two rates. It is the observation that the
+  moment you care about latency is the moment something just changed.
+*/
+const RESTING_MS = 4000;
+const ACTIVE_MS = 800;
+/** How long a change keeps the loop awake. Long enough to span a whole turn. */
+const ACTIVE_FOR_MS = 15_000;
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   let lastSeen: string | null = null;
   let checking = false;
+  let quickUntil = 0;
+  let timer = 0;
+
+  const schedule = () => {
+    window.clearTimeout(timer);
+    const wait = Date.now() < quickUntil ? ACTIVE_MS : RESTING_MS;
+    timer = window.setTimeout(() => void check(), wait);
+  };
 
   const check = async () => {
-    if (checking || document.visibilityState !== "visible") return;
+    /*
+      Reschedule from a `finally` rather than running on a fixed interval, so a
+      slow response cannot stack requests behind each other — the same reasoning
+      as the in-flight guard on `refresh()` and the job poller before it.
+    */
+    if (checking || document.visibilityState !== "visible") {
+      schedule();
+      return;
+    }
     checking = true;
     try {
       const res = await fetch("/api/health", { headers: { accept: "application/json" } });
@@ -265,18 +301,28 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       }
       if (stamp !== lastSeen) {
         lastSeen = stamp;
+        // Something is happening — follow it closely for a while.
+        quickUntil = Date.now() + ACTIVE_FOR_MS;
         void refresh();
       }
     } catch {
       // Offline is already handled by load()'s status; a failed poll is silent.
     } finally {
       checking = false;
+      schedule();
     }
   };
 
-  window.setInterval(check, REVISION_POLL_MS);
-  // Re-check immediately on return, so the stamp is current before the next tick.
-  document.addEventListener("visibilitychange", () => void check());
+  schedule();
+  /*
+    Coming back to the tab is itself a reason to expect a change, so check at
+    once and stay quick for a moment rather than waiting out a resting interval.
+  */
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    quickUntil = Date.now() + ACTIVE_FOR_MS;
+    void check();
+  });
 }
 
 // --- writing --------------------------------------------------------------
