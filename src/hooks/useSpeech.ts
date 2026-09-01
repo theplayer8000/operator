@@ -170,23 +170,27 @@ export function useSpeech(): SpeechState {
     writeStorage(VOICE_KEY, name);
   }, []);
 
-  const stop = useCallback(() => {
-    if (!supported) return;
-    window.speechSynthesis.cancel();
-    currentRef.current = null;
-    setSpeaking(false);
-  }, [supported]);
+  /*
+    The <audio> element playing Kokoro's output.
 
-  const speak = useCallback(
-    (text: string) => {
-      if (!supported || !enabled) return;
-      const clean = speakableText(text);
-      if (!clean) return;
+    A ref rather than state: it is replaced on every sentence and nothing
+    renders from it, so re-rendering the tree to swap an audio element would be
+    work for no picture.
+  */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-      // One thing at a time. Queuing would have it read a reply from two turns
-      // ago over the top of the current one.
-      window.speechSynthesis.cancel();
+  const stopAudio = useCallback(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    el.pause();
+    // Release the object URL, or a long session leaks one blob per sentence.
+    if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
+    audioRef.current = null;
+  }, []);
 
+  /** The browser's own voice. Kept as the fallback — see speak() above. */
+  const speakWithSystemVoice = useCallback(
+    (clean: string) => {
       const utterance = new SpeechSynthesisUtterance(clean);
       const chosen = voiceName ? voices.find((v) => v.name === voiceName) : bestVoice(voices);
       if (chosen) utterance.voice = chosen;
@@ -206,6 +210,76 @@ export function useSpeech(): SpeechState {
       window.speechSynthesis.speak(utterance);
     },
     [supported, enabled, voiceName, voices],
+  );
+
+
+  /**
+   * Speak through Kokoro on the server.
+   *
+   * Fetched as a blob and played from an object URL rather than pointing the
+   * element straight at `/api/speak?text=`. Two reasons: a failed synthesis
+   * comes back as JSON with a 503, and an <audio> element pointed at that
+   * would simply stay silent with no way to fall back; and the text can be
+   * long enough to be awkward in a query string.
+   */
+  const speakLocally = useCallback(
+    async (clean: string) => {
+      const res = await fetch(`/api/speak?text=${encodeURIComponent(clean)}`);
+      if (!res.ok) throw new Error(`speak ${res.status}`);
+      const blob = await res.blob();
+      if (!blob.size) throw new Error("empty audio");
+
+      const el = new Audio(URL.createObjectURL(blob));
+      audioRef.current = el;
+      setSpeaking(true);
+      const done = () => {
+        if (audioRef.current === el) {
+          stopAudio();
+        }
+        setSpeaking(false);
+      };
+      el.onended = done;
+      el.onerror = done;
+      await el.play();
+    },
+    [stopAudio],
+  );
+
+  const stop = useCallback(() => {
+    // Both engines: whichever is talking, "stop" has to mean stop.
+    if (supported) window.speechSynthesis.cancel();
+    stopAudio();
+    currentRef.current = null;
+    setSpeaking(false);
+  }, [supported, stopAudio]);
+
+  const speak = useCallback(
+    (text: string) => {
+      if (!supported || !enabled) return;
+      const clean = speakableText(text);
+      if (!clean) return;
+
+      // One thing at a time. Queuing would have it read a reply from two turns
+      // ago over the top of the current one.
+      window.speechSynthesis.cancel();
+      stopAudio();
+
+      /*
+        Kokoro first, the system voice as the fallback.
+
+        `/api/speak` runs a real TTS model on his own machine — no account, no
+        per-character cost, and nothing leaving the box, which is why ElevenLabs
+        and Deepgram were refused. Measured 2026-09-01: ~1s for an
+        acknowledgement, ~2.1s for a full sentence.
+
+        SpeechSynthesis stays as the fallback rather than being deleted. It is
+        instant, it works when the model is unloaded or the machine is busy, and
+        losing the ability to speak at all because a 310MB ONNX graph would not
+        load is a worse failure than sounding worse for one sentence.
+      */
+      void speakLocally(clean).catch(() => speakWithSystemVoice(clean));
+    },
+    [supported, enabled, speakLocally, speakWithSystemVoice],
   );
 
   return {

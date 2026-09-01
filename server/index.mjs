@@ -59,6 +59,7 @@ import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
 import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
 import { matchIntent } from "./intent.mjs";
+import { synthesize, available as ttsAvailable, state as ttsState } from "./tts.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -629,6 +630,53 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ...heard, wouldMatch: intent });
       } catch (err) {
         return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
+      }
+    }
+
+    /*
+      Speech OUT, from a voice running on this machine.
+
+      The browser's SpeechSynthesis works and is free, but it is a system voice
+      — the best one installed is now picked rather than the OS default, and
+      that was the free half of the fix. This is the other half: Kokoro through
+      ONNX, local, no account, nothing leaving the machine. ElevenLabs and
+      Deepgram were refused for exactly the reason this route exists.
+
+      GET so an <audio> element can point straight at it, which is what lets the
+      browser stream and cache it without the page holding a blob. Tier 2:
+      saying a sentence out loud is not execution.
+
+      Measured 2026-09-01: ~1s for an acknowledgement, ~2.1s for a full
+      sentence, 2.5s to load the model warm. The model is released after an
+      idle period, so an Operator nobody is talking to gives the memory back.
+    */
+    if (pathname === "/api/speak") {
+      const allowed = deviceMayUseCapabilities(identity);
+      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+
+      // Status, so a client can find out whether to use this at all before
+      // committing a sentence to it.
+      if (req.method === "GET" && !url.searchParams.get("text")) {
+        return json(res, 200, { ...ttsAvailable(), state: ttsState });
+      }
+
+      const text =
+        url.searchParams.get("text") ?? (req.method === "POST" ? (await readBody(req))?.text : "");
+      if (!text) return json(res, 400, { error: "no text" });
+
+      try {
+        const spoken = await synthesize(text, { voice: url.searchParams.get("voice") ?? undefined });
+        res.writeHead(200, {
+          "content-type": spoken.mime,
+          "content-length": spoken.audio.length,
+          // Never cached: the same sentence can be asked for with a different
+          // voice, and these are small enough that re-synthesising is cheaper
+          // than reasoning about invalidation.
+          "cache-control": "no-store",
+        });
+        return res.end(spoken.audio);
+      } catch (err) {
+        return json(res, 503, { error: String(err?.message ?? err).slice(0, 300) });
       }
     }
 
