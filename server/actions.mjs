@@ -25,6 +25,7 @@
 // comment on withState().
 
 import { randomUUID } from "node:crypto";
+import { notify } from "./notify.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -1850,10 +1851,93 @@ export function listActions({ groups } = {}) {
  * not a 500: nothing here should ever throw for a reason a caller could not
  * have avoided by reading `listActions()`.
  */
+/*
+  Actions that change nothing the owner would want telling about.
+
+  Everything NOT in here notifies when it succeeds, and the distinction is the
+  point: the capability layer is how a WORKER changes his data. He does not
+  need telling about edits he made himself through the UI — those go through
+  `PUT /api/state` and never reach here — but he does need telling when
+  something moved while he was not looking. That is his own framing: "i'll have
+  you do it... and then of course Operator itself".
+
+  Reads are silent for the obvious reason. The device actions are silent
+  because "Operator brought its own window forward" is not news, and the clap
+  gesture fires `focus_operator` every time — notifying on it would make the
+  phone buzz at every clap.
+*/
+const SILENT_ACTIONS = new Set([
+  "now",
+  "listen_once",
+  "focus_operator",
+  "media_play_pause",
+  "gym_day",
+  "gym_sessions_list",
+  "missions_list",
+  "calendar_range",
+  "routine_day",
+  "jobs_list",
+  "job_events",
+]);
+
+/**
+ * A short human sentence for a phone's lock screen.
+ *
+ * Names, never ids. The first version fell back to `params.id` and produced
+ * "Mission set progress - 3d3781cb-6ecc-4737-8d1a-870713af97ef", which tells
+ * you something happened and nothing about what. A UUID is not a notification.
+ * Missions are looked up by id in the store for exactly this reason.
+ */
+async function describeChange(name, params, result) {
+  const verb = name.replace(/^(gym|mission|missions|calendar|routine)_/, "").replace(/_/g, " ");
+
+  if (name.startsWith("mission")) {
+    const id = result?.id ?? params?.id;
+    const missions = await readState("missions.records");
+    const found = Array.isArray(missions) ? missions.find((m) => m?.id === id) : null;
+    const label = found?.name ?? params?.name ?? "a mission";
+    // The new value, when there is an obviously interesting one.
+    const detail =
+      result?.progress !== undefined
+        ? ` (${result.progress}%)`
+        : result?.status
+          ? ` (${String(result.status).replace(/_/g, " ")})`
+          : "";
+    return `${label} — ${verb}${detail}`;
+  }
+
+  if (name.startsWith("gym_")) return `Gym — ${verb}${params?.date ? ` on ${params.date}` : ""}`;
+  if (name.startsWith("calendar_")) return `Calendar — ${verb}${params?.title ? `: ${params.title}` : ""}`;
+  if (name.startsWith("routine_")) return `Routine — ${verb}${params?.date ? ` on ${params.date}` : ""}`;
+  return verb;
+}
+
 export async function runAction(name, params = {}) {
   const action = ACTIONS[name];
   if (!action) {
     throw new ActionError(`no such action "${name}". Known actions: ${Object.keys(ACTIONS).join(", ")}`);
   }
-  return action.handler(params ?? {});
+  const result = await action.handler(params ?? {});
+
+  /*
+    Fire-and-forget, and only after the change actually succeeded — a
+    notification about a write that threw would be a lie. `void` because
+    notify() owns its own timeout and swallows its own failures, and an action
+    must not get slower because a notification server is down.
+  */
+  if (!SILENT_ACTIONS.has(name)) {
+    /*
+      Wrapped, because building the sentence reads the store and a failure
+      there must not fail the action that already succeeded. An action that
+      throws AFTER doing its work is the worst possible outcome: the change
+      landed and the caller is told it did not.
+    */
+    void describeChange(name, params, result)
+      .then((message) =>
+        notify("Operator changed something", message, { priority: "low", tags: ["pencil2"] }),
+      )
+      .catch((err) => console.warn(`[operator] notify skipped: ${err?.message ?? err}`));
+  }
+
+  return result;
 }

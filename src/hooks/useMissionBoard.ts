@@ -19,19 +19,38 @@ export function useMissionBoard() {
     seedMissionRecords
   );
 
-  function logActivity(id: string, label: string) {
+  /**
+   * Record something that happened to a mission.
+   *
+   * `coalesce` replaces the newest entry instead of adding one, when that
+   * entry has the same key and is recent. A slider is an `onChange` per STEP,
+   * so dragging progress from 40 to 65 wrote twenty-five entries — "moved to
+   * 41%", "moved to 42%" — and buried the day's real activity underneath. The
+   * owner's words: "it does it one by one by one and spams the activity log".
+   *
+   * Only the final value is interesting; the journey there is not. Coalescing
+   * at this level rather than in the slider means every caller gets it,
+   * including a worker calling `mission_set_progress` repeatedly.
+   *
+   * Two minutes, because that is longer than a drag and shorter than a
+   * separate decision to move it again.
+   */
+  function logActivity(id: string, label: string, coalesce?: string) {
+    const now = new Date().toISOString();
     setMissions((prev) =>
-      prev.map((m) =>
-        m.id !== id
-          ? m
-          : {
-              ...m,
-              activity: [
-                { id: generateId(), label, timestamp: new Date().toISOString() },
-                ...m.activity,
-              ].slice(0, 30),
-            }
-      )
+      prev.map((m) => {
+        if (m.id !== id) return m;
+        const newest = m.activity[0];
+        const replaceable =
+          coalesce &&
+          newest?.coalesceKey === coalesce &&
+          Date.now() - new Date(newest.timestamp).getTime() < 120_000;
+        const entry = { id: generateId(), label, timestamp: now, ...(coalesce ? { coalesceKey: coalesce } : {}) };
+        return {
+          ...m,
+          activity: [entry, ...(replaceable ? m.activity.slice(1) : m.activity)].slice(0, 30),
+        };
+      })
     );
   }
 
@@ -106,7 +125,7 @@ export function useMissionBoard() {
 
   function setProgress(id: string, progress: number) {
     updateMission(id, { progress });
-    logActivity(id, `Progress moved to ${progress}%`);
+    logActivity(id, `Progress moved to ${progress}%`, "progress");
   }
 
   function toggleDependency(id: string, dependsOnId: string) {

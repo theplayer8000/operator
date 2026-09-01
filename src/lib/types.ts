@@ -392,6 +392,15 @@ export interface MissionActivityEntry {
   id: ID;
   label: string;
   timestamp: string;
+  /**
+   * Marks entries that supersede each other rather than stacking.
+   *
+   * A slider fires `onChange` per step, so dragging progress from 40 to 65
+   * wrote twenty-five entries and buried the day's real activity. Entries
+   * sharing a key within a couple of minutes replace the previous one — only
+   * the final value is interesting. Optional: an entry without it always adds.
+   */
+  coalesceKey?: string;
 }
 
 export interface MissionRecord {
