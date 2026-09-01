@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useJobs } from "@/hooks/useJobs";
 import OperatorChat from "@/components/map/OperatorChat";
@@ -138,9 +138,63 @@ export default function OperatorMobile() {
   const heard = voice.listening ? Math.min(1, voice.level / Math.max(0.004, voice.threshold)) : 0;
   const hearing = heard > 0.35;
 
+  /*
+    Swipe down to dismiss, the way a phone sheet behaves.
+
+    This is the landing page, so "back" has nowhere to go — the browser would
+    leave the app entirely. A downward drag is the gesture every iOS sheet uses
+    for the same job, and it beats aiming at a 44px cross in the corner
+    one-handed.
+
+    Only starts from a touch that is NOT on the chat: dragging the transcript
+    should scroll it, and a page-dismiss gesture that fires while you are
+    reading a reply is worse than no gesture.
+  */
+  const [pull, setPull] = useState(0);
+  const drag = useRef({ y: 0, active: false });
+  const DISMISS_AT = 120;
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if ((e.target as HTMLElement).closest("[data-chat]")) return;
+    drag.current = { y: e.touches[0].clientY, active: true };
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!drag.current.active) return;
+    const dy = e.touches[0].clientY - drag.current.y;
+    // Downward only, and resisted past the threshold so it feels like a sheet
+    // rather than a page that fell off.
+    setPull(dy > 0 ? (dy > DISMISS_AT ? DISMISS_AT + (dy - DISMISS_AT) * 0.3 : dy) : 0);
+  };
+  const onTouchEnd = () => {
+    if (!drag.current.active) return;
+    drag.current.active = false;
+    if (pull >= DISMISS_AT) navigate("/dashboard");
+    setPull(0);
+  };
+
   return (
-    <div className="fixed inset-0 bg-[#04060A] overflow-hidden flex flex-col">
+    <div
+      className="fixed inset-0 bg-[#04060A] overflow-hidden flex flex-col"
+      style={{ transform: pull ? `translateY(${pull}px)` : undefined, transition: pull ? "none" : "transform 200ms" }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+
+      {/*
+        The grabber. Every iOS sheet has one, which is exactly why it is here:
+        it is the one mark that tells you a surface can be pulled down without
+        anyone having to say so. Brightens as you drag, so the gesture confirms
+        itself before you have committed to it.
+      */}
+      <div
+        className="relative mx-auto mt-2 h-1 w-10 rounded-full transition-colors"
+        style={{
+          background: pull > 0 ? "rgba(232,176,77,0.7)" : "rgba(255,255,255,0.14)",
+        }}
+        aria-hidden
+      />
 
       {/* Status, top-left. Only ever says something true. */}
       <div className="relative flex items-center justify-between px-5 pt-5">
@@ -211,7 +265,9 @@ export default function OperatorMobile() {
         The chat is shared with the wall display — same component, same
         behaviour, so the two cannot drift apart.
       */}
-      <OperatorChat className="relative mx-3 mb-4" />
+      <div data-chat>
+        <OperatorChat className="relative mx-3 mb-4" />
+      </div>
     </div>
   );
 }

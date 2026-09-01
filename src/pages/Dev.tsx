@@ -7,8 +7,10 @@ import {
   X,
   CornerLeftUp,
   GitCommitHorizontal,
+  Copy,
+  Check,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useDevBrowser } from "@/hooks/useDevBrowser";
 import ConnectedClients from "@/components/dev/ConnectedClients";
@@ -70,6 +72,53 @@ export default function Dev() {
   useEffect(() => {
     if (wanted) void openFile(wanted);
   }, [wanted, openFile]);
+
+  /*
+    Copy the open file, so reading it here does not mean going to GitHub to
+    take it. The owner asked for exactly that.
+
+    `navigator.clipboard` needs a SECURE context. Reached at
+    https://<machine>.<tailnet>.ts.net it is available; at a bare 100.x address
+    it is not, and the API is simply absent rather than throwing something
+    catchable. So there is a fallback, and the button says which happened
+    rather than going quiet — a copy button that silently does nothing is
+    worse than no copy button.
+  */
+  const [copied, setCopied] = useState<"yes" | "no" | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  async function copyFile() {
+    const text = file?.content ?? "";
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setCopied("yes");
+        return;
+      }
+      /*
+        The old way, which still works without a secure context: a hidden
+        textarea plus execCommand. Deprecated, and the only thing available
+        when the page is not secure.
+      */
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(ok ? "yes" : "no");
+    } catch {
+      setCopied("no");
+    }
+  }
 
   function closeFile() {
     setFile(null);
@@ -214,6 +263,20 @@ export default function Dev() {
                 })}
               </p>
             </div>
+            <button
+              onClick={() => void copyFile()}
+              aria-label={copied === "yes" ? "Copied" : "Copy file contents"}
+              title={copied === "no" ? "Could not copy — open Operator at its https address" : "Copy"}
+              className={`w-11 h-11 shrink-0 flex items-center justify-center transition-colors ${
+                copied === "yes"
+                  ? "text-vital-up"
+                  : copied === "no"
+                    ? "text-vital-down"
+                    : "text-ink-700 hover:text-ink-300"
+              }`}
+            >
+              {copied === "yes" ? <Check size={15} /> : <Copy size={15} />}
+            </button>
             {meta?.webUrl && (
               <a
                 href={`${meta.webUrl}/blob/${meta.branch ?? "main"}/${file.path}`}
