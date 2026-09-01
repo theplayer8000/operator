@@ -293,6 +293,12 @@ server/
   gemini.mjs            — one turn, through Gemini. Same runTurn contract as
                           runner.mjs; raw fetch, no SDK, so the npm rule holds.
                           No filesystem or shell — capability actions only
+  semantic.mjs          — the layer above verify.mjs: does the work match what
+                          was ASKED, not just does it compile. Local model, no
+                          tools, free. Stored as verification.semantic and never
+                          as a status value — a 3B model's guess must not be
+                          able to render itself as a red build. OFF unless
+                          OPERATOR_SEMANTIC_VERIFY=1
   notify.mjs            — one POST to the owner's OWN ntfy server (loopback,
                           tailnet-exposed by tailscale serve) so his phone
                           hears that a turn is waiting on him. Env-only
@@ -469,7 +475,8 @@ get broken most: **44px touch targets**, **never hide a control behind
 
 | Feature | Route(s) | Status |
 |---|---|---|
-| Dashboard | `/` | Built |
+| Operator (the map) | `/`, `/map` | Built — **the landing page since 2026-08-31.** On a big screen the live mission graph: missions orbiting a core, dependencies as strands you can grab and throw, continuous physics. On a phone the **core alone** plus chat — the graph is big-screen only, twice confirmed. A shared chat sits under both (`components/map/OperatorChat.tsx`) which answers permission questions, speaks replies aloud, and receives what the microphone heard. `/map` still resolves so old links work |
+| Dashboard | `/dashboard` | Built — **moved off `/` on 2026-08-31** when the map took the landing page. Keeps everything it had |
 | Daily Routine | `/routine` | Built — seven fixed sections on a rail, plus a Day Schedule timeline. Steps are tickable from the schedule itself (tap a block to open it in place), and a **day stepper scopes the whole page** to one date. Ticks are stored per date (`routine.completions`, schema v3) and the nightly reset is **gone** — a date with no entry is just a date nothing was ticked on. `RoutineTask.done` now only means anything for **one-off** steps; for repeating ones read `useRoutineData.isDoneOn`, never `task.done` |
 | Mission Board | `/missions`, `/missions/:id` | Built |
 | Calendar | `/calendar` | Built — year calendar, 12 month grids, day panel for add/edit/delete, including moving an event's date. Start/finish time pickers, not a duration field. **Weekly recurrence** — one record per series, expanded at read time; a single occurrence can be skipped (and un-skipped) without touching the rule, while delete takes the whole series. **Per-occurrence notes** (`occurrenceNotes`) sit alongside the series note, so "what I missed on this shift" is separate from standing info — the Work page will read these when it exists, not own them. On phone, tapping a day opens the panel as a popup instead of a scroll-to block. Timed events sync read-only onto Daily Routine's Day Schedule. Dashboard's Upcoming Events reads it, and the clock opens it. Internally still `events.records` / `useEvents` / `CalendarEvent` — only the user-facing label and route changed, same as "Mission Board" over `missions.records` |
@@ -484,7 +491,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Forex | `/forex` | Not built — `ComingSoon` placeholder |
 | Work | `/work` | Not built — `ComingSoon` placeholder |
 | Journey | `/journey` | Not built — `ComingSoon` placeholder. Nav entry reserved on request. |
-| Statistics | `/statistics` | Not built — `ComingSoon` placeholder |
+| Statistics | `/statistics` | Built — a read-only aggregator like the Activity Log, owning no storage. Shipping velocity per day from the changelog, mission status split and average progress, and **which missions the most others are waiting on** — `dependsOn` has been stored since the board was built and nothing counted it before. Thin slices (gym, routine) state that they are thin rather than drawing a trend through two points. Uses the map's register, not Mission Board's: this is the proving ground for the reface |
 | Settings | `/settings` | Built — storage status, export/import backup, per-feature clear. Acts on every namespace; owns none |
 | Knowledge Vault | none yet | Not started, no nav entry. Future personal wiki — notes/commands/resources/confidence per topic, linked from missions' "Related Knowledge" tab (currently a free-text field + reserved-section note in `MissionDetail.tsx`). |
 | Decision Log | none yet | Not started, no nav entry. Future decision/date/reasoning/outcome log, linked from missions' "Related Decisions" tab (currently a `ReservedSection` placeholder). |

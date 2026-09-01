@@ -48,7 +48,7 @@ export interface Statistics {
     byStatus: Record<MissionStatus, number>;
     averageProgress: number;
     /** Missions nothing else is waiting on, and which are blocking others. */
-    blocking: { name: string; waiting: number }[];
+    blocking: { id: string; name: string; waiting: number }[];
   };
   gym: {
     daysTrained: number;
@@ -123,7 +123,7 @@ export function useStatistics(): Statistics {
       for (const dep of m.dependsOn ?? []) waitingOn.set(dep, (waitingOn.get(dep) ?? 0) + 1);
     }
     const blocking = [...waitingOn.entries()]
-      .map(([id, waiting]) => ({ name: live.find((m) => m.id === id)?.name ?? "unknown", waiting }))
+      .map(([id, waiting]) => ({ id, name: live.find((m) => m.id === id)?.name ?? "unknown", waiting }))
       .filter((b) => b.name !== "unknown")
       .sort((a, b) => b.waiting - a.waiting)
       .slice(0, 4);

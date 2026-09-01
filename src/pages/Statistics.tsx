@@ -37,14 +37,27 @@ function Figure({
   label,
   hint,
   accent = false,
+  to,
 }: {
   value: string | number;
   label: string;
   hint?: string;
   accent?: boolean;
+  /**
+   * Where this number comes from.
+   *
+   * The owner asked for it "more interfaceable", and the honest reading is
+   * that a statistic is a question — "twelve in progress" immediately raises
+   * "which twelve". A figure that can answer that should be the way through to
+   * the answer rather than a dead end you then navigate to by hand.
+   *
+   * Only where there genuinely is a destination. A link that lands on a page
+   * which cannot show what you clicked is worse than no link.
+   */
+  to?: string;
 }) {
-  return (
-    <div className="card-base p-4 min-w-0">
+  const body = (
+    <>
       <p
         className="font-mono text-2xl sm:text-3xl leading-none tabular-nums"
         style={
@@ -57,7 +70,19 @@ function Figure({
       </p>
       <p className="text-xs text-ink-500 mt-2">{label}</p>
       {hint && <p className="text-[11px] text-ink-700 mt-0.5">{hint}</p>}
-    </div>
+    </>
+  );
+
+  const shell = "card-base p-4 min-w-0 block";
+  return to ? (
+    <Link
+      to={to}
+      className={`${shell} transition-colors hover:border-base-500 hover:bg-base-700/30`}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div className={shell}>{body}</div>
   );
 }
 
@@ -175,8 +200,8 @@ export default function Statistics() {
         </header>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-          <Figure value={s.shipped.total} label="entries logged" accent />
-          <Figure value={s.shipped.last7} label="last 7 days" />
+          <Figure value={s.shipped.total} label="entries logged" accent to="/updates" />
+          <Figure value={s.shipped.last7} label="last 7 days" to="/updates" />
           <Figure value={s.spanDays} label="days of history" />
           <Figure
             value={s.shipped.busiestDay?.count ?? 0}
@@ -208,10 +233,10 @@ export default function Statistics() {
         </header>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <Figure value={s.missions.total} label="active missions" />
-          <Figure value={`${s.missions.averageProgress}%`} label="average progress" accent />
-          <Figure value={s.missions.byStatus.in_progress} label="in progress" />
-          <Figure value={s.missions.byStatus.complete} label="complete" />
+          <Figure value={s.missions.total} label="active missions" to="/missions" />
+          <Figure value={`${s.missions.averageProgress}%`} label="average progress" accent to="/" />
+          <Figure value={s.missions.byStatus.in_progress} label="in progress" to="/missions" />
+          <Figure value={s.missions.byStatus.complete} label="complete" to="/missions" />
         </div>
 
         {/* One bar, proportioned by status. */}
@@ -255,11 +280,16 @@ export default function Statistics() {
             <p className="text-xs text-ink-500 mb-2">Most depended on</p>
             <ul className="space-y-1">
               {s.missions.blocking.map((b) => (
-                <li key={b.name} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-ink-300 truncate">{b.name}</span>
-                  <span className="font-mono text-[11px] text-xp shrink-0">
-                    {b.waiting} waiting
-                  </span>
+                <li key={b.id}>
+                  <Link
+                    to={`/missions/${b.id}`}
+                    className="flex items-center justify-between gap-3 text-sm px-2 -mx-2 py-2 min-h-[44px] rounded-badge hover:bg-base-700/50 transition-colors"
+                  >
+                    <span className="text-ink-300 truncate">{b.name}</span>
+                    <span className="font-mono text-[11px] text-xp shrink-0">
+                      {b.waiting} waiting
+                    </span>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -272,9 +302,9 @@ export default function Statistics() {
         <section className="card-base p-4 sm:p-5 animate-fade-up">
           <h2 className="font-display text-sm text-ink-100 mb-3">Training</h2>
           <div className="grid grid-cols-3 gap-3">
-            <Figure value={s.gym.daysTrained} label="days logged" />
-            <Figure value={s.gym.exercisesLogged} label="exercises" />
-            <Figure value={s.gym.daysSkipped} label="skipped" />
+            <Figure value={s.gym.daysTrained} label="days logged" to="/gym" />
+            <Figure value={s.gym.exercisesLogged} label="exercises" to="/gym" />
+            <Figure value={s.gym.daysSkipped} label="skipped" to="/gym" />
           </div>
           {s.gym.daysTrained < 7 && (
             <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
@@ -287,9 +317,9 @@ export default function Statistics() {
         <section className="card-base p-4 sm:p-5 animate-fade-up">
           <h2 className="font-display text-sm text-ink-100 mb-3">Routine &amp; calendar</h2>
           <div className="grid grid-cols-3 gap-3">
-            <Figure value={s.routine.daysLogged} label="days ticked" />
-            <Figure value={s.routine.stepsTicked} label="steps" />
-            <Figure value={s.calendar.upcoming} label="upcoming" />
+            <Figure value={s.routine.daysLogged} label="days ticked" to="/routine" />
+            <Figure value={s.routine.stepsTicked} label="steps" to="/routine" />
+            <Figure value={s.calendar.upcoming} label="upcoming" to="/calendar" />
           </div>
           {s.calendar.byKind.length > 0 && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-base-600">
