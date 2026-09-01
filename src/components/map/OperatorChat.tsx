@@ -100,6 +100,8 @@ export default function OperatorChat({
     aloud, and `useVoiceActivity` deliberately does not claim to.
   */
   const spokenTo = useRef(-1);
+  /** False until the first render has decided what counts as already-heard. */
+  const caughtUp = useRef(false);
 
   const messages = useMemo(
     () =>
@@ -152,6 +154,23 @@ export default function OperatorChat({
   };
 
   useEffect(() => {
+    /*
+      Catch up silently the first time.
+
+      `spokenTo` starts before the beginning, so a freshly mounted chat with an
+      existing thread read the WHOLE history out loud. The owner hit it by
+      clicking a Statistics tile through to the map: "it took me to operator and
+      replayed out its last prompt ... kind of a bug". It is — arriving
+      somewhere should not make it recite what you already heard.
+
+      Only messages that appear AFTER this component is on screen are new.
+    */
+    if (!caughtUp.current) {
+      caughtUp.current = true;
+      spokenTo.current = messages.length - 1;
+      return;
+    }
+
     if (!speech.enabled) {
       // Keep the marker level with the thread while muted, or unmuting would
       // read out everything that arrived in the meantime.

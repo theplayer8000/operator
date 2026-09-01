@@ -234,7 +234,7 @@ export default function Statistics() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <Figure value={s.missions.total} label="active missions" to="/missions" />
-          <Figure value={`${s.missions.averageProgress}%`} label="average progress" accent to="/" />
+          <Figure value={`${s.missions.averageProgress}%`} label="average progress" accent to="/missions" />
           <Figure value={s.missions.byStatus.in_progress} label="in progress" to="/missions" />
           <Figure value={s.missions.byStatus.complete} label="complete" to="/missions" />
         </div>
