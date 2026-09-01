@@ -28,6 +28,7 @@ file states the rule and the document explains it.
 | [`docs/decisions/0012-claude-agent-sdk.md`](docs/decisions/0012-claude-agent-sdk.md) | Before touching the job runner, or adding anything to `server/`'s dependencies |
 | [`docs/decisions/0013-usage-accounting.md`](docs/decisions/0013-usage-accounting.md) | **Before writing anything that counts tokens, cost, or quota** — including any budget or ceiling. Explains why the reported "$40" is not necessarily money |
 | [`docs/decisions/0014-development-tooling.md`](docs/decisions/0014-development-tooling.md) | Before adopting a Claude Code plugin or skill. Records which are used, which are refused and why — and why a plugin can never be an Operator capability |
+| [`docs/ecc-catalogue.md`](docs/ecc-catalogue.md) | Before reaching for a new skill or agent. 286 skills / 68 agents / 94 commands sit unread at `D:\Projects\ecc`; this says what is there and how to take one **project-scoped, never into `~/.claude/`** |
 | [`docs/handoffs/`](docs/handoffs/) | At the end of every milestone — template and naming convention |
 
 ## What this is
@@ -65,7 +66,8 @@ Approved so far — this list is the whole set:
 | Claude service status | `status.claude.com` | v11, `server/status.mjs` |
 | Anthropic (Claude Code worker) | Anthropic's API, via the Agent SDK | [ADR 0012](docs/decisions/0012-claude-agent-sdk.md), 2026-08-04. Runs on the Pro subscription, no API key |
 | **Google Gemini** | `generativelanguage.googleapis.com` | **2026-08-20**, `server/gemini.mjs`. What leaves the machine: the prompt and whatever job context is attached. Key in `GEMINI_API_KEY`, env only |
-| **ntfy.sh — as a relay only** | `ntfy.sh` | **2026-08-31**, reached by the owner's own ntfy server, not by Operator. What leaves the machine: a **message ID and a hash of the topic** — never the title, never the body. It exists so Apple can wake the iOS app, which then fetches the content back from this box over the tailnet; without it iOS push is polling, which is late and unreliable. The metadata that does cross is *that* a notification happened and *when*. Configured in `%LOCALAPPDATA%\ntfy\server.yml` as `upstream-base-url` |
+| ~~ntfy.sh — as a relay~~ | ~~`ntfy.sh`~~ | **Retired 2026-09-01**, replaced by Web Push below. The local ntfy server and its `upstream-base-url` can be removed |
+| **Web Push** | the browser's push service — `web.push.apple.com` on iOS, Google/Mozilla/Microsoft elsewhere | **2026-09-01**, `server/push.mjs`. What leaves the machine: the subscription endpoint, an **encrypted** payload, and the time. **A push service is unavoidable** — it is how a sleeping OS is woken — so this is a swap, not an elimination, and it was approved on that basis. What changed: RFC 8291 encryption is mandatory and the key is shared only between this server and the browser that subscribed, so the carrier holds ciphertext rather than a promise not to look. Keys in `OPERATOR_VAPID_PUBLIC` / `OPERATOR_VAPID_PRIVATE`, env only |
 
 **Each AI provider needs its own named approval.** The AI Provider Manager was
 approved on 2026-07-30 (ADR 0009); approving the router did **not** approve its
@@ -299,14 +301,20 @@ server/
                           as a status value — a 3B model's guess must not be
                           able to render itself as a red build. OFF unless
                           OPERATOR_SEMANTIC_VERIFY=1
-  notify.mjs            — one POST to the owner's OWN ntfy server (loopback,
-                          tailnet-exposed by tailscale serve) so his phone
-                          hears that a turn is waiting on him. Env-only
-                          destination — a worker has Write everywhere, so a
-                          URL it could edit is an outbound channel with
-                          Operator doing the sending. Never throws, never
+  notify.mjs            — one line onto his phone when a turn needs him. Web
+                          Push since 2026-09-01; the INTERFACE is unchanged,
+                          so every caller was untouched. Never throws, never
                           retries, never queues: a missed notification is
-                          missed, and the event log stays the record
+                          missed, and the event log stays the record. That
+                          matters more now — there is no fallback channel
+  push.mjs              — Web Push against the RFCs with node:crypto only, so
+                          the no-npm rule holds. VAPID (8292) + aes128gcm
+                          (8188) + the 8291 key derivation. The push service
+                          carries ciphertext it cannot read
+  subscriptions.mjs     — which devices asked to be notified. Its OWN file,
+                          not a slice of operator.json: a subscription carries
+                          a per-device secret, and the state API would serve it
+                          to anything that can already read his gym log
   uploads.mjs           — local files attached to a job. Staged outside
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job

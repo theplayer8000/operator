@@ -1,5 +1,23 @@
 # Current work
 
+## Restarting now to load the VAPID keys — 2026-09-01
+
+ntfy is retired; notifications go by **Web Push** (`server/push.mjs`,
+`server/subscriptions.mjs`, `public/sw.js`, `src/hooks/usePush.ts`).
+`notify()`'s signature is unchanged, so no caller was touched.
+
+`OPERATOR_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT` are set at user scope but the
+running server was started before them — `/api/push/key` answers
+`configured:false`. That is the documented restart trap, not a bug in the keys.
+
+**After the restart:** Settings → Notifications → Turn on, from the home-screen
+app on iOS (Safari cannot subscribe, and the prompt needs a real tap).
+
+**A key was printed into a Claude session transcript while building this.** If
+that pair is still in use, regenerate: `node scripts/push-keys.mjs`, re-`setx`,
+restart, and every device re-subscribes.
+
+
 Nothing in flight. Committed on `main`, `dist/` built.
 
 ## Where the voice layer got to, 2026-09-01
@@ -32,16 +50,99 @@ verification and has hallucinated agreement outright. It summarises; a person
 writes the rule. It is also source code, and the capability layer exists so a
 model changes data rather than code.
 
-## The one gap left
+## Intent is LIVE — `server/intentrun.mjs`, 2026-09-01
 
-**Intent is still observe-only.** `server/intent.mjs` logs what it *would* have
-done and runs nothing. That is deliberate — every phrase in its 103 tests was
-invented, and shipping a rule set on invented evidence is the guessed-clap-
-threshold mistake repeated. The digest is how the real evidence arrives. Do not
-switch it live until the misses have been read.
+**Needs a server restart to take effect.** Written, built, tested, not yet
+running.
 
-Three resolvers (`gym_exercise`, `routine_step`, `mission`) are blocked on the
-same evidence.
+The owner asked for observe-only to end. The concern that held it back is not
+answered by switching it on, so it is answered by three guards in
+`intentrun.mjs`: a resolver that finds nothing abandons rather than running the
+action with what it has; ambiguity becomes a spoken question rather than a coin
+toss; and create/delete actions are refused independently of what the rules
+emit. Everything goes through `runAction`, so a spoken tick is indistinguishable
+from a tapped one and notifies his phone the same way.
+
+Tested against the real store, not invented phrases:
+
+- `"set the control plane mission to sixty percent"` → ran, said "The control
+  plane is at 60%."
+- `"tick off my morning routine"` → ticked **5**, skipped the one already done,
+  said "Ticked off 5 morning things." State restored afterwards.
+- `"yeah i did push day"` → abandoned, "no gym session today" (1 Sep is a rest
+  day). The `expect` check means saying it on a leg day abandons too.
+- `"tick off bench press"` → abandoned safely, but see the known mis-route
+  below.
+
+### Two things found while testing, both still true
+
+1. **"tick off bench press" routes to the ROUTINE, not the gym.**
+   `intent.mjs` matches it as `routine_toggle_task`. The guard catches it — no
+   routine step is called that, so it abandons and says so — but the right
+   answer is `gym_toggle_exercise`. A rules fix in `intent.mjs`, not in the
+   runner.
+2. **`needs.match` is where the name lives, not `params`.** The first version of
+   the resolvers read `params.exerciseName`, which is never set — every intent
+   would have silently abandoned. The contract is `{match, each, skipDone,
+   unique, expect}`, and `each: true` means run the action once per candidate.
+
+## Phone was silent — fixed, same restart
+
+iOS grants audio playback **per `<audio>` element**, and only from a user
+gesture. `speakLocally` created `new Audio()` per sentence, so every element was
+untouched and permanently blocked; `play()` rejected into a catch that fell
+through to the system voice, which iOS blocks for the same reason. One shared
+element now, unlocked on the first tap (`unlockSpeech`).
+
+**Also check the speaker icon in the chat is on** — it defaults to off and is
+stored per device, so turning it on at the desk does nothing for the phone.
+
+## Saying "stop" now stops it — 2026-09-01, needs the same restart
+
+He hit the failure this exists for: Whisper heard **"Head off my morning
+routine"** for "tick off", the intent rules correctly declined to match it, so
+it went to a worker — *"it does things im not even asking it to do"* — and there
+was no way to cut it short.
+
+- `matchVoiceCommand` gains **`stop`** (`server/voicecommand.mjs`), checked in
+  `/api/listen/transcribe` **before** arming, before the intent router, before a
+  job is created — every one of those is something "stop" might be preventing.
+- `jobs.stopAll()` cancels everything running or queued, whoever started it, and
+  clears the wait list so `pump()` cannot revive a queued job.
+- **The asymmetry is deliberately REVERSED from arming.** Everything else in
+  that file refuses when unsure; stop fires when unsure. A false stop costs one
+  retry, a missed stop costs money. Bare "stop" counts, capped at 25 characters.
+- `node server/voicecommand.mjs --self-test` — 30 phrases, and the must-NOT list
+  matters as much: "waiting on the build" must not match (the `` after `wait`
+  is what saves it), and "head off my morning routine" must fall through to the
+  router rather than being swallowed here.
+
+### Barge-in: the self-hearing guard would have blocked this
+
+Yesterday's fix discarded any segment recorded while Operator was talking. But
+"stop" is said **precisely while it is talking**, so the case that matters most
+would never have reached the server.
+
+Overlapped audio is now **uploaded with `x-overlapped: 1`** instead of dropped,
+and the server honours **nothing but a stop** from it. The feedback loop stays
+closed — Operator's own sentence still cannot become a request — while the one
+word that has to get through does. The client also calls `speech.stop()`, so it
+stops mid-sentence rather than finishing the paragraph it was interrupted in.
+
+## The pre-allow list was silently broken — fixed
+
+Three of the four full-path `operator-action` rules in `server/jobs.mjs`
+contained **literal newlines** and could never match. Written as plain quoted
+JS strings, so `\P` dropped its backslash and `
+` in `
+odejs` became a line
+break. They were added to fix "two permission prompts for one command", looked
+correct in review, and did nothing.
+
+**A pre-allow rule fails silently** — an entry matching nothing is
+indistinguishable from an entry never added. Verified after fixing: 91 rule
+literals, 0 containing a newline. If you edit that list, print it and read what
+the strings actually contain.
 
 ## Live infrastructure
 
