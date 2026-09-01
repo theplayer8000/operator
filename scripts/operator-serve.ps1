@@ -83,6 +83,13 @@ if ($ntfyToken) { $env:OPERATOR_NTFY_TOKEN = $ntfyToken }
 $appUrl = Read-UserEnv "OPERATOR_APP_URL"
 if ($appUrl) { $env:OPERATOR_APP_URL = $appUrl }
 
+# How many turns may run at once (server/jobs.mjs). Absent means 1, which is
+# how it behaved before concurrency existed. Environment-only because a worker
+# with Write everywhere could otherwise widen its own fan-out, and raising this
+# multiplies spend by N.
+$concurrent = Read-UserEnv "OPERATOR_MAX_CONCURRENT"
+if ($concurrent) { $env:OPERATOR_MAX_CONCURRENT = $concurrent }
+
 # Where espeak-ng lives, for Kokoro's phonemiser (server/tts.mjs).
 # Read explicitly rather than trusting inheritance, for the same reason every
 # other variable here is: Task Scheduler's environment has not been reliable,
@@ -125,6 +132,9 @@ Add-Content -Path $log -Value "==== notifications: $ntfyState ===="
 
 if ($espeakLib) { $espeakState = "present" } else { $espeakState = "MISSING" }
 Add-Content -Path $log -Value "==== espeak-ng: $espeakState ===="
+
+if ($concurrent) { $concState = $concurrent } else { $concState = "1 (default)" }
+Add-Content -Path $log -Value "==== max concurrent turns: $concState ===="
 
 if ($apps) {
     try {

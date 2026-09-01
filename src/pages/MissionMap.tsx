@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
+import { readStorage, writeStorage } from "@/lib/storage";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
@@ -90,12 +91,44 @@ export default function MissionMap() {
     actually plugged into the machine someone is sitting at.
   */
   const mic = useMicLevel();
+
   /*
-    Off by default, and not persisted yet. A preference that spends money
-    should not survive a reload silently — turning it on is a deliberate act
-    each session until it has been lived with.
+    A clap opens the microphone here too.
+
+    The clap already summons the window and records through the SERVER's
+    microphone. But the page listens through its own, and he had to reach over
+    and press MIC — "make the clap activate the mic fgs". The clap count from
+    `/api/listen` rises on every gesture, so watching it is enough.
+
+    One honest limit: browsers require a user gesture to open a microphone the
+    FIRST time. Once permission has been granted for this origin it can be
+    reopened without one, which is the case that matters — but on a fresh
+    browser profile the first clap will still need a tap.
   */
-  const [autoSend, setAutoSend] = useState(false);
+  const lastClaps = useRef(0);
+  useEffect(() => {
+    if (voice.claps === lastClaps.current) return;
+    const first = lastClaps.current === 0;
+    lastClaps.current = voice.claps;
+    // Not on the very first reading, which is just learning the current count
+    // rather than a clap that happened while he was looking at this page.
+    if (first || mic.active || !mic.supported) return;
+    void mic.enable();
+  }, [voice.claps, mic]);
+  /*
+    Remembered across reloads.
+
+    It was deliberately not persisted at first, on the grounds that a
+    preference which spends money should be a fresh decision each session. In
+    use that was just annoying — he turned it on, navigated away, came back and
+    it was off, which reads as the toggle being broken rather than cautious.
+    His call, and he has lived with it: "set it so that it remembers".
+  */
+  const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", false));
+  const setAutoSend = (next: boolean) => {
+    setAutoSendState(next);
+    writeStorage("voice.autoSend", next);
+  };
   const transcript = usePhoneTranscript(mic, mic.active);
   const lastHeard = transcript.lines.length
     ? transcript.lines[transcript.lines.length - 1]

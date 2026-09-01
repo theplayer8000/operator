@@ -301,10 +301,23 @@ const server = createServer(async (req, res) => {
           return json(res, busy ? 409 : 400, { error: err.message });
         }
       }
-      // The tab strip. Summaries only — no events, because this is polled and a
-      // long build's log runs to thousands of entries.
+      /*
+        The tab strip. Summaries only — no events, because this is polled and a
+        long build's log runs to thousands of entries.
+
+        READABLE WITHOUT THE TERMINAL ARMED. Reading what Operator is doing is
+        not execution, and hiding it produced exactly the complaint that named
+        this fix: "its doing stuff but now idk what its doing". He could start
+        work unarmed and then not see it — the display went blank at the moment
+        it mattered most.
+
+        `authorised` still reports whether he may reach an execution worker, so
+        the UI can say what he cannot do rather than pretending he can do
+        nothing.
+      */
+      const mayRead = deviceMayUseCapabilities(identity);
       return json(res, 200, {
-        ...(allowed.ok ? jobs.list() : { jobs: [], running: null }),
+        ...(mayRead.ok ? jobs.list() : { jobs: [], running: null }),
         authorised: allowed.ok,
         canManage: deviceMayManage(identity).ok,
         you: identity?.device ?? null,
@@ -343,7 +356,16 @@ const server = createServer(async (req, res) => {
 
     // /api/jobs/:id, and /api/jobs/:id/<action>
     if (pathname.startsWith("/api/jobs/")) {
-      const allowed = deviceAuthorised(identity);
+      /*
+        Reading a job is tier 2; changing one is tier 3.
+
+        GET here is the event log — what Operator said and did. Seeing that is
+        not execution, and it is the whole answer to "what is it doing". Sending
+        a turn, cancelling, retrying and answering a permission all still need
+        the armed terminal, because each of those makes something happen.
+      */
+      const allowed =
+        req.method === "GET" ? deviceMayUseCapabilities(identity) : deviceAuthorised(identity);
       if (!allowed.ok) {
         return json(res, 403, { error: "not authorised", reason: allowed.reason });
       }

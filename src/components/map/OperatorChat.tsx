@@ -261,16 +261,18 @@ export default function OperatorChat({
     if (liveQuestion) setExpanded(true);
   }, [liveQuestion]);
 
-  if (!jobs.authorised) {
-    return (
-      <div className={className}>
-        <p className="card-base px-4 py-3 text-xs text-ink-500">
-          {jobs.reason ?? "Not authorised."} Arm the terminal on the Dev page to start a job — a
-          turn can run tools, so it counts as execution.
-        </p>
-      </div>
-    );
-  }
+  /*
+    No lock screen any more.
+
+    This used to refuse everything when the terminal was disarmed, and that
+    became a lie the moment the gate moved to the WORKER: talking to Operator
+    needs no arming, only reaching Claude Code does. The owner watched it say
+    "arm the terminal to start a job" immediately after starting one.
+
+    What `authorised: false` now means is narrower — Claude Code is out of
+    reach — so it is said once, quietly, beneath the input rather than in place
+    of it.
+  */
 
   return (
     <div className={className}>
@@ -422,6 +424,12 @@ export default function OperatorChat({
             </button>
           ))}
         </div>
+      )}
+
+      {!jobs.authorised && (
+        <p className="mb-2 text-[11px] text-ink-700 leading-relaxed">
+          Claude Code needs the terminal armed — everything else answers without it.
+        </p>
       )}
 
       <div className="flex items-end gap-2">
