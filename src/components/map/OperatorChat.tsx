@@ -67,6 +67,20 @@ export default function OperatorChat({
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  /*
+    Which worker answers, chosen here rather than by the router.
+
+    "the replys are awful" and "any way we can add in a fast model" — and the
+    diagnosis is routing, not a missing model. A short spoken question matches
+    the JUST_DATA rules and goes to Gemini, which is configured as a
+    capability-actions worker: terse, tool-shaped, and not trying to hold a
+    conversation. Claude Fable 5 has been in the picker all along and is the
+    fast one.
+
+    `null` means auto — keep the router, which is right when he does not care.
+    Naming a worker here is for when he does.
+  */
+  const [worker, setWorker] = useState<string | null>(null);
   const speech = useSpeech();
 
   /*
@@ -106,12 +120,12 @@ export default function OperatorChat({
       setExpanded(true);
       try {
         if (jobs.selectedId) await jobs.send(jobs.selectedId, text);
-        else await jobs.create(text);
+        else await jobs.create(text, undefined, [], worker ?? undefined);
       } catch {
         /* useJobs owns the error surface; it renders below. */
       }
     },
-    [jobs],
+    [jobs, worker],
   );
 
   const send = async () => {
@@ -310,6 +324,40 @@ export default function OperatorChat({
             {jobs.error && <p className="text-xs text-vital-down">{jobs.error}</p>}
             <div ref={bottomRef} />
           </div>
+        </div>
+      )}
+
+      {/*
+        Only when the thread is open. A worker picker permanently above the
+        input would be chrome on a surface whose whole point is being one bar
+        until it has something to say.
+      */}
+      {expanded && jobs.providers.length > 1 && (
+        <div className="flex items-center gap-1.5 mb-2 overflow-x-auto scrollbar-none">
+          <button
+            onClick={() => setWorker(null)}
+            className={`shrink-0 px-2.5 min-h-[32px] rounded-badge text-[11px] font-mono border transition-colors ${
+              worker === null
+                ? "border-xp/50 text-xp"
+                : "border-base-600 text-ink-600 hover:text-ink-300"
+            }`}
+            title="Let the router choose"
+          >
+            auto
+          </button>
+          {jobs.providers.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setWorker(p.id)}
+              className={`shrink-0 px-2.5 min-h-[32px] rounded-badge text-[11px] font-mono border transition-colors ${
+                worker === p.id
+                  ? "border-xp/50 text-xp"
+                  : "border-base-600 text-ink-600 hover:text-ink-300"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       )}
 

@@ -70,6 +70,44 @@ export function speakableText(markdown: string): string {
   );
 }
 
+/**
+ * The best voice on this machine, when nothing has been chosen.
+ *
+ * Setting no voice at all hands it to the platform default, which is reliably
+ * the worst one installed — on Windows that is a decades-old formant
+ * synthesiser sitting next to perfectly good neural voices nobody selected.
+ * The owner's "i need a voice for it" is mostly this: not a missing feature, a
+ * default nobody picked.
+ *
+ * Preference order, best first:
+ *
+ *   1. Windows neural voices, which carry "Natural" in the name
+ *   2. Apple's better tiers, marked "Premium" or "Enhanced"
+ *   3. British English, because he is
+ *   4. Any English voice at all
+ *
+ * A real improvement with no new dependency, and honest about its ceiling: a
+ * genuinely good voice means Piper or similar, which is a binary to ship and
+ * still queued.
+ */
+function bestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  if (voices.length === 0) return null;
+  const english = voices.filter((v) => v.lang?.toLowerCase().startsWith("en"));
+  const pool = english.length ? english : voices;
+
+  const byName = (needle: string) =>
+    pool.find((v) => v.name.toLowerCase().includes(needle.toLowerCase()));
+
+  return (
+    byName("natural") ??
+    byName("premium") ??
+    byName("enhanced") ??
+    pool.find((v) => v.lang?.toLowerCase() === "en-gb") ??
+    pool[0] ??
+    null
+  );
+}
+
 export function useSpeech(): SpeechState {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -150,7 +188,7 @@ export function useSpeech(): SpeechState {
       window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(clean);
-      const chosen = voiceName ? voices.find((v) => v.name === voiceName) : null;
+      const chosen = voiceName ? voices.find((v) => v.name === voiceName) : bestVoice(voices);
       if (chosen) utterance.voice = chosen;
       utterance.rate = 1.05;
 
