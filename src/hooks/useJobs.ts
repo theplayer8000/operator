@@ -98,7 +98,8 @@ export interface JobEvent {
     | "permission_answer"
     | "routed"
     | "status"
-    | "usage";
+    | "usage"
+    | "accepted";
   text?: string;
   raw?: boolean;
   error?: boolean;
@@ -124,6 +125,11 @@ export interface JobEvent {
   /** On `permission_answer`: how the question ended. */
   decision?: "allowed" | "denied" | "timeout" | "cancelled" | "abandoned";
   by?: string | null;
+  /** On `accepted`: what the control plane decided the moment it took the work. */
+  started?: boolean;
+  ahead?: number;
+  concurrent?: number;
+  limit?: number;
   /** On `routed`: which worker the orchestrator picked, and its reasoning. */
   provider?: string;
   label?: string;
@@ -156,6 +162,16 @@ export interface JobProvider {
 interface JobsList {
   jobs: JobSummary[];
   running: string | null;
+  /**
+   * Every job running right now, not just the first.
+   *
+   * `running` is kept as the first of them so nothing that already read it
+   * breaks, but with OPERATOR_MAX_CONCURRENT above 1 it is no longer the whole
+   * truth — a UI showing one spinner while three turns run is lying quietly.
+   */
+  runningIds?: string[];
+  /** The ceiling, so the UI can say "3 of 4" rather than just "running". */
+  maxConcurrent?: number;
   /** Every enabled worker. Only Claude Code until a key makes another possible. */
   providers?: JobProvider[];
   models?: { id: string; label: string }[];
@@ -538,6 +554,8 @@ export function useJobs() {
     allowedTools: list?.allowedTools ?? [],
     runner: list?.runner ?? "sdk",
     runningId: list?.running ?? null,
+    runningIds: list?.runningIds ?? (list?.running ? [list.running] : []),
+    maxConcurrent: list?.maxConcurrent ?? 1,
     authorised: list?.authorised !== false,
     canManage: list?.canManage === true,
     reason: list?.reason,

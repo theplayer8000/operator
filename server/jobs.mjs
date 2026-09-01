@@ -611,8 +611,34 @@ const MIN_RESERVE_USD = 0.5;
 const jobs = new Map();
 /** Ids waiting for the runner, oldest first. One job runs at a time. */
 const waiting = [];
-/** The id currently running, or null. */
-let runningId = null;
+/**
+ * The jobs running right now.
+ *
+ * A Set rather than a single id, as of 2026-09-01. Decided 2026-08-31 in the
+ * owner's words: *"would like turns to run concurrently if possible, but of
+ * course have a scale for it in place."*
+ *
+ * Both halves matter. One-at-a-time was never justified on its merits — it
+ * matched a single person on a phone, and it meant a long build blocked every
+ * question asked while it ran, which is the opposite of what a control plane is
+ * for. And unbounded is how a mistyped loop becomes a bill.
+ */
+const running = new Set();
+
+/**
+ * How many turns may run at once.
+ *
+ * Environment-only, and default 1 so nothing changes until it is deliberately
+ * set. App-editable would let a worker widen its own fan-out, which is the same
+ * reasoning that keeps OPERATOR_TERMINAL_DEVICES and OPERATOR_APPS out of the
+ * store.
+ *
+ * Raising this multiplies spend by N. `store.mjs`'s withState() is race-safe for
+ * a read-modify-write, which is NOT the same as two workers making sensible
+ * decisions about the same mission — deliberate concurrency will find more of
+ * that class of bug than the incidental kind already has.
+ */
+const MAX_CONCURRENT = Math.max(1, Number(process.env.OPERATOR_MAX_CONCURRENT ?? 1) || 1);
 let jobSeq = 0;
 let spentUsd = 0;
 /** The most expensive turn seen, used as the reserve. */
@@ -991,7 +1017,7 @@ function promptWithResources(text, resources) {
 function prune() {
   while (jobs.size > MAX_JOBS) {
     const victim = [...jobs.values()].find(
-      (j) => j.id !== runningId && !waiting.includes(j.id) && j.pending.length === 0
+      (j) => !running.has(j.id) && !waiting.includes(j.id) && j.pending.length === 0
     );
     if (!victim) return;
     jobs.delete(victim.id);
@@ -1242,8 +1268,7 @@ function dropQuestions(jobId, decision) {
  * question rather than a bug.
  */
 function pump() {
-  if (runningId) return;
-  while (waiting.length) {
+  while (waiting.length && running.size < MAX_CONCURRENT) {
     const job = jobs.get(waiting[0]);
     if (!job || job.pending.length === 0) {
       waiting.shift();
@@ -1253,7 +1278,7 @@ function pump() {
     /*
       Claim the runner HERE, synchronously, not inside runTurn.
 
-      runTurn awaits `resolveExecutable` before it sets `runningId`, so the
+      runTurn awaits `resolveExecutable` before it claims a slot, so the
       guard at the top of this function and the assignment were separated by a
       microtask. Two calls into pump() in that window — two devices sending at
       once, or an input() racing the deferred re-pump — both saw a free runner
@@ -1264,7 +1289,7 @@ function pump() {
       Claiming before any await closes it: JavaScript runs this to completion
       before another call can observe it.
     */
-    runningId = job.id;
+    running.add(job.id);
     /*
       An unhandled rejection here is not a lost turn, it is a dead server —
       Node's default is to throw on one, and this is called from a `void` with
@@ -1278,10 +1303,15 @@ function pump() {
       console.error(`[operator] job ${job.id} runner threw:`, detail);
       job.error = detail;
       setStatus(job, "failed", detail);
-      if (runningId === job.id) runningId = null;
+      running.delete(job.id);
       queueMicrotask(pump);
     });
-    return;
+    /*
+      Keep going rather than returning. The single-slot version returned after
+      claiming, because there was nothing left to claim; with a ceiling above
+      one, stopping here would start exactly one job per pump() call and the
+      queue would drain at the speed of whatever happens to call it next.
+    */
   }
 }
 
@@ -1391,7 +1421,7 @@ async function runViaSdk(job, prompt) {
     // a clean turn cannot end with one outstanding. If one is, it is a leaked
     // resolver, and leaving it would hang the next thing that waits on it.
     dropQuestions(job.id, "abandoned");
-    if (runningId === job.id) runningId = null;
+    running.delete(job.id);
   }
 
   job.turns += 1;
@@ -1466,7 +1496,7 @@ async function runTurn(job) {
 
     `pump()` has already shifted this job off `waiting` by the time it calls us,
     and it only runs again when something completes. Returning here without
-    re-pumping leaves the queue stalled: `runningId` was never set, so it is not
+    re-pumping leaves the queue stalled: no slot was ever claimed, so it is not
     a deadlock, but every other queued job sits there until someone happens to
     send another message. One job failing to start must not silently stop the
     rest.
@@ -1478,7 +1508,7 @@ async function runTurn(job) {
   const restartQueue = () => {
     // pump() claims the runner before calling us, so an exit before spawning
     // has to hand it back or nothing ever runs again.
-    if (runningId === job.id) runningId = null;
+    running.delete(job.id);
     queueMicrotask(pump);
   };
 
@@ -1511,7 +1541,7 @@ async function runTurn(job) {
     return;
   }
 
-  // `runningId` was claimed by pump() before this ran — see the note there.
+  // The slot was claimed by pump() before this ran — see the note there.
   job.outstandingTools = 0;
   job.awaitingPermission = 0;
   job.startedAt = job.startedAt ?? new Date().toISOString();
@@ -1683,7 +1713,7 @@ async function runTurn(job) {
       job.outstandingTools = 0;
       // Only if it is still ours. A late exit from an earlier job would
       // otherwise unlock the runner while a different one is mid-turn.
-      if (runningId === job.id) runningId = null;
+      running.delete(job.id);
 
       // A trailing line with no newline still counts.
       const tail = buffer.trim();
@@ -1891,7 +1921,9 @@ function summary(job) {
 export function list() {
   return {
     jobs: [...jobs.values()].map(summary),
-    running: runningId,
+    running: [...running][0] ?? null,
+    runningIds: [...running],
+    maxConcurrent: MAX_CONCURRENT,
     providers: listProviders(),
     models: selectWorker(DEFAULT_PROVIDER).worker.models,
     defaultModel: DEFAULT_MODEL,
@@ -1935,7 +1967,17 @@ export function detail(id, since = 0) {
  * authorised device may send.
  */
 export function holder() {
-  const job = runningId ? jobs.get(runningId) : null;
+  /*
+    Nobody holds the runner while there is capacity.
+
+    This guard exists so one device cannot queue work into another device's
+    session. With a ceiling above one that reason disappears until the ceiling
+    is reached: a second request does not join someone else's turn, it gets a
+    turn of its own. Below the limit, any authorised device may send.
+  */
+  if (running.size < MAX_CONCURRENT) return null;
+  const first = [...running][0];
+  const job = first ? jobs.get(first) : null;
   return job ? { id: job.id, device: job.device } : null;
 }
 
@@ -2005,6 +2047,30 @@ export async function create(prompt, model, identity, resources = [], provider =
   waiting.push(job.id);
   prune();
   pump();
+
+  /*
+    Say what happened to it, immediately.
+
+    The owner's framing, and it is better than the decision log's: a second
+    request should not queue in silence. He should hear "I will handle that
+    while the build runs" or "that will wait behind the build" — an answer from
+    the CONTROL PLANE, arriving now, not the worker's answer arriving in four
+    minutes.
+
+    This is deliberately a fact about scheduling rather than a generated
+    sentence: it says which worker took it and what is ahead of it, and the
+    surface that speaks decides the wording. A model writing "got it" would be
+    a model call on the fast path, which is the thing this whole design avoids.
+  */
+  const ahead = waiting.indexOf(job.id);
+  emit(job, "accepted", {
+    started: running.has(job.id),
+    provider: job.provider,
+    ahead: ahead < 0 ? 0 : ahead,
+    concurrent: running.size,
+    limit: MAX_CONCURRENT,
+  });
+
   return summary(job);
 }
 
@@ -2127,7 +2193,7 @@ export function clear(identity) {
   }
   jobs.clear();
   waiting.length = 0;
-  runningId = null;
+  running.clear();
   rm(JOBS_FILE, { force: true }).catch(() => {});
   console.log(`[operator] all jobs cleared by ${identity?.device ?? "unknown"}`);
   return list();

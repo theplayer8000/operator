@@ -109,6 +109,7 @@ export default function OperatorChat({
         (e) =>
           e.type === "prompt" ||
           e.type === "text" ||
+          e.type === "accepted" ||
           e.type === "permission_request" ||
           e.type === "permission_answer",
       ),
@@ -186,6 +187,17 @@ export default function OperatorChat({
 
       Only messages that appear AFTER this component is on screen are new.
     */
+    /*
+      Speak the acknowledgement, not just the answer.
+
+      A long turn used to be four minutes of silence — "did it even hear me".
+      The server emits an `accepted` event the instant it decides what to do
+      with a request, so Operator can say what it is doing before it has done
+      it. The wording lives here rather than on the server because the server
+      emits a FACT (started or queued, which worker, what is ahead) and a fact
+      is not a sentence. Generating one with a model would be a model call on
+      the fast path, which is the thing this design exists to avoid.
+    */
     if (!caughtUp.current) {
       caughtUp.current = true;
       spokenTo.current = messages.length - 1;
@@ -200,6 +212,17 @@ export default function OperatorChat({
     }
     for (let i = spokenTo.current + 1; i < messages.length; i++) {
       const e = messages[i];
+      if (e.type === "accepted") {
+        const worker = e.provider === "claude-code" ? "Claude" : e.provider === "gemini" ? "Gemini" : "the local model";
+        speech.speak(
+          e.started
+            ? `Got it. ${worker} is on it.`
+            : e.ahead && e.ahead > 0
+              ? `Got it. That will wait behind ${e.ahead === 1 ? "one job" : `${e.ahead} jobs`}.`
+              : "Got it. Starting shortly.",
+        );
+        continue;
+      }
       if (e.type === "text" && !e.error && e.text?.trim()) speech.speak(e.text);
     }
     spokenTo.current = messages.length - 1;
@@ -298,7 +321,7 @@ export default function OperatorChat({
                 >
                   {e.text}
                 </p>
-              ) : e.type === "permission_answer" ? (
+              ) : e.type === "accepted" ? null : e.type === "permission_answer" ? (
                 <p key={i} className="font-mono text-[11px] text-ink-600">
                   {e.decision === "allowed" ? "allowed" : e.decision} {e.by ? `by ${e.by}` : ""}
                 </p>
