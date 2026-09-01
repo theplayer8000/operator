@@ -96,16 +96,38 @@ function Figure({
  * axes, legends and tooltips to earn its weight.
  */
 function ShippedChart({ days }: { days: DayCount[] }) {
-  const [hover, setHover] = useState<DayCount | null>(null);
+  /*
+    Selection, not hover.
 
-  const { max, width, height, barW } = useMemo(() => {
+    This was `onMouseEnter`, so on a phone — which is where he actually reads
+    this — the chart was gold bars with nothing to measure them against and no
+    way to ask what any of them meant. His words: *"on the graphs its not rlly
+    info giving"*. `hover:` hiding the only readout is the rule this page
+    already had and broke.
+
+    `onPointerDown` covers mouse and touch with one handler, and the readout
+    below defaults to the most recent day rather than sitting empty, so there
+    is always a number on screen without touching anything.
+  */
+  const [picked, setPicked] = useState<DayCount | null>(null);
+
+  const { max, mean, width, height, barW, busiest } = useMemo(() => {
     const w = 700;
     const h = 120;
+    const counts = days.map((d) => d.count);
+    const total = counts.reduce((a, b) => a + b, 0);
     return {
-      max: Math.max(1, ...days.map((d) => d.count)),
+      max: Math.max(1, ...counts),
+      // The average across every day in range, INCLUDING the empty ones — an
+      // average over only the days he shipped would flatter the number.
+      mean: days.length ? total / days.length : 0,
       width: w,
       height: h,
       barW: days.length ? w / days.length : w,
+      busiest: days.reduce<DayCount | null>(
+        (best, d) => (!best || d.count > best.count ? d : best),
+        null,
+      ),
     };
   }, [days]);
 
@@ -113,11 +135,21 @@ function ShippedChart({ days }: { days: DayCount[] }) {
     return <p className="text-sm text-ink-700">Nothing logged yet.</p>;
   }
 
+  const shown = picked ?? days[days.length - 1];
+  const scale = (n: number) => (n / max) * (height - 8);
+  const meanY = height - scale(mean);
+
+  const label = (d: DayCount) =>
+    new Date(`${d.date}T12:00:00`).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+    });
+
   return (
     <div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-auto"
+        className="w-full h-auto touch-none"
         preserveAspectRatio="none"
         role="img"
         aria-label={`Updates shipped per day across ${days.length} days`}
@@ -128,8 +160,29 @@ function ShippedChart({ days }: { days: DayCount[] }) {
             <stop offset="100%" stopColor="#E8B04D" stopOpacity="0.35" />
           </linearGradient>
         </defs>
+
+        {/*
+          The average, as the line everything else is read against.
+
+          A bar chart with no reference is a shape, not information: 34 is only
+          meaningful next to "and the usual day is 3.6". This is the single
+          cheapest thing that turns the picture into a comparison.
+        */}
+        <line
+          x1={0}
+          x2={width}
+          y1={meanY}
+          y2={meanY}
+          stroke="#8D7FE0"
+          strokeOpacity={0.5}
+          strokeWidth={1}
+          strokeDasharray="4 4"
+          vectorEffect="non-scaling-stroke"
+        />
+
         {days.map((d, i) => {
-          const h = d.count === 0 ? 1.5 : Math.max(3, (d.count / max) * (height - 8));
+          const h = d.count === 0 ? 1.5 : Math.max(3, scale(d.count));
+          const isShown = d.date === shown.date;
           return (
             <rect
               key={d.date}
@@ -144,21 +197,55 @@ function ShippedChart({ days }: { days: DayCount[] }) {
                 chart ending, and "he did not work that day" is information.
               */
               fill={d.count === 0 ? "#2A303C" : "url(#stat-bar)"}
-              onMouseEnter={() => setHover(d)}
-              onMouseLeave={() => setHover(null)}
+              stroke={isShown ? "#F4F4F5" : "none"}
+              strokeWidth={isShown ? 1 : 0}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={() => setPicked(d)}
+              onMouseEnter={() => setPicked(d)}
             />
           );
         })}
+
+        {/*
+          A wider invisible strip per day so a fingertip can hit a one-pixel
+          bar. 44px is the touch rule; at this width each day is a few pixels,
+          so the target has to be separate from the mark.
+        */}
+        {days.map((d, i) => (
+          <rect
+            key={`hit-${d.date}`}
+            x={i * barW}
+            y={0}
+            width={barW}
+            height={height}
+            fill="transparent"
+            onPointerDown={() => setPicked(d)}
+            onMouseEnter={() => setPicked(d)}
+          />
+        ))}
       </svg>
 
-      <p className="font-mono text-[11px] text-ink-700 mt-2 h-4">
-        {hover
-          ? `${new Date(`${hover.date}T12:00:00`).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "short",
-            })} — ${hover.count} ${hover.count === 1 ? "entry" : "entries"}`
-          : `${days[0]?.date} → ${days[days.length - 1]?.date}`}
-      </p>
+      {/*
+        Always a number here, never an empty line waiting to be hovered. The
+        range is kept, but as the smaller half — the day he is looking at is
+        what he came for.
+      */}
+      <div className="flex items-baseline justify-between gap-3 mt-2 min-h-[1.25rem]">
+        <p className="font-mono text-[11px] text-ink-500">
+          <span className="text-ink-100">{label(shown)}</span>
+          {" — "}
+          {shown.count} {shown.count === 1 ? "entry" : "entries"}
+          {busiest && shown.date !== busiest.date && mean > 0 && (
+            <span className="text-ink-700">
+              {"  ·  avg "}
+              {mean.toFixed(1)}
+            </span>
+          )}
+        </p>
+        <p className="font-mono text-[11px] text-ink-700 shrink-0">
+          {days[0]?.date} → {days[days.length - 1]?.date}
+        </p>
+      </div>
     </div>
   );
 }

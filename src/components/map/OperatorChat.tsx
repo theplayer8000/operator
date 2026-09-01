@@ -100,8 +100,20 @@ export default function OperatorChat({
     aloud, and `useVoiceActivity` deliberately does not claim to.
   */
   const spokenTo = useRef(-1);
-  /** False until the first render has decided what counts as already-heard. */
-  const caughtUp = useRef(false);
+  /**
+   * Which thread `spokenTo` is measured against, or null before anything loads.
+   *
+   * This was a boolean — "have we caught up yet" — and it was wrong in a way
+   * that only showed on a real page load. The effect's FIRST run happens while
+   * `jobs.events` is still empty, so it marked itself caught-up against an
+   * empty list. When the history then arrived, every event in it was "new" and
+   * got read aloud: opening the page replayed the last answer and announced
+   * "Got it, Claude is on it" for a job accepted hours earlier.
+   *
+   * Keying on the job id fixes both that and switching tabs, because the marker
+   * is only trusted while it refers to the thread currently on screen.
+   */
+  const spokenForJob = useRef<string | null>(null);
 
   const messages = useMemo(
     () =>
@@ -198,8 +210,13 @@ export default function OperatorChat({
       is not a sentence. Generating one with a model would be a model call on
       the fast path, which is the thing this design exists to avoid.
     */
-    if (!caughtUp.current) {
-      caughtUp.current = true;
+    /*
+      A different thread — including the first one to load — is history, not
+      news. Jump the marker to the end and say nothing.
+    */
+    const jobId = jobs.selected?.id ?? null;
+    if (spokenForJob.current !== jobId) {
+      spokenForJob.current = jobId;
       spokenTo.current = messages.length - 1;
       return;
     }
@@ -226,7 +243,7 @@ export default function OperatorChat({
       if (e.type === "text" && !e.error && e.text?.trim()) speech.speak(e.text);
     }
     spokenTo.current = messages.length - 1;
-  }, [messages, speech]);
+  }, [messages, speech, jobs.selected?.id]);
 
   /*
     Fill the box when something new is heard, and open the thread so it is

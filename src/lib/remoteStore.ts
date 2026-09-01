@@ -210,6 +210,75 @@ if (typeof document !== "undefined") {
   window.addEventListener("pageshow", onResume);
 }
 
+/*
+  Notice changes made somewhere else, while you are looking at the page.
+
+  The events above cover coming BACK to a tab. They do not cover the case that
+  now matters most: speaking to Operator changes the data server-side while the
+  map is open and focused, so nothing fires and the screen keeps showing the old
+  number until you navigate away and return. The owner hit this the first time a
+  spoken command worked — *"i thought we was going to have live updates"*.
+
+  ## Poll a stamp, not the data
+
+  `/api/health` reports the store's `updatedAt`. That is a few dozen bytes and
+  no disk access, against a full `/api/state` that is the entire dataset. So the
+  loop asks "did anything change" cheaply and only pays for the data when the
+  answer is yes.
+
+  ## Polling rather than a socket, deliberately
+
+  Same reasoning as the job model in `docs/ai-workspace-design.md`: iOS
+  suspends a backgrounded tab and a WebSocket comes back dead in ways that are
+  awkward to detect, whereas a poll that missed its turn simply runs late. A
+  dropped poll is invisible; a dropped socket is a page that has silently
+  stopped updating.
+
+  ## Only while visible
+
+  A hidden tab polls nothing — `visibilitychange` above already refreshes on
+  return, so a background tab would be paying battery to learn something it is
+  about to be told anyway. This matters on a phone in a pocket.
+*/
+const REVISION_POLL_MS = 4000;
+
+if (typeof document !== "undefined" && typeof window !== "undefined") {
+  let lastSeen: string | null = null;
+  let checking = false;
+
+  const check = async () => {
+    if (checking || document.visibilityState !== "visible") return;
+    checking = true;
+    try {
+      const res = await fetch("/api/health", { headers: { accept: "application/json" } });
+      if (!res.ok) return;
+      const body = (await res.json()) as { updatedAt?: string | null };
+      const stamp = body?.updatedAt ?? null;
+      /*
+        The first reading only learns where the store is. Treating it as a
+        change would mean a full refetch on every page load, on top of the one
+        `load()` already did.
+      */
+      if (lastSeen === null) {
+        lastSeen = stamp;
+        return;
+      }
+      if (stamp !== lastSeen) {
+        lastSeen = stamp;
+        void refresh();
+      }
+    } catch {
+      // Offline is already handled by load()'s status; a failed poll is silent.
+    } finally {
+      checking = false;
+    }
+  };
+
+  window.setInterval(check, REVISION_POLL_MS);
+  // Re-check immediately on return, so the stamp is current before the next tick.
+  document.addEventListener("visibilitychange", () => void check());
+}
+
 // --- writing --------------------------------------------------------------
 
 async function flushPending() {

@@ -10,6 +10,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
+import { usePush } from "@/hooks/usePush";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 
 const STATUS_META = {
@@ -39,6 +40,7 @@ export default function Settings() {
     clearEverything,
   } = useSettings();
 
+  const push = usePush();
   const fileInput = useRef<HTMLInputElement>(null);
   const meta = STATUS_META[status];
 
@@ -110,6 +112,63 @@ export default function Settings() {
       </section>
 
       {/* --- Backup --- */}
+      {/*
+        Notifications, as a card rather than a prompt on load.
+
+        iOS refuses `Notification.requestPermission()` outside a real tap, and
+        only from the HOME-SCREEN app rather than a Safari tab — so this has to
+        be a button he presses, and the copy has to be able to say which of
+        those two rules is currently in the way.
+      */}
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="mb-1">
+          <h2 className="font-display text-sm font-medium text-ink-300">Notifications</h2>
+        </header>
+        <p className="text-xs text-ink-700 mb-4 leading-relaxed">
+          Operator tells this device when a turn needs an answer, or when something changed that
+          you did not do. Delivered by your phone's push service, which carries an{" "}
+          <span className="text-ink-500">encrypted</span> payload — it can see that a notification
+          happened, never what it said.
+        </p>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <span
+            className={`inline-flex items-center gap-2 text-xs font-mono ${
+              push.state === "on" ? "text-vital-up" : "text-ink-600"
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                push.state === "on" ? "bg-vital-up" : "bg-base-500"
+              }`}
+            />
+            {push.state === "on" ? "on for this device" : "off for this device"}
+          </span>
+
+          {push.state === "on" ? (
+            <button
+              onClick={() => void push.unsubscribe()}
+              disabled={push.busy}
+              className="px-3 min-h-[44px] rounded-badge border border-base-600 text-sm text-ink-300 hover:bg-base-700/60 transition-colors disabled:opacity-50"
+            >
+              {push.busy ? "Working..." : "Turn off"}
+            </button>
+          ) : (
+            <button
+              onClick={() => void push.subscribe()}
+              disabled={push.busy || push.state === "unsupported" || push.state === "not-installed"}
+              className="px-3 min-h-[44px] rounded-badge bg-xp/90 text-base-950 text-sm font-medium hover:bg-xp transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {push.busy ? "Working..." : "Turn on"}
+            </button>
+          )}
+        </div>
+
+        {push.detail && (
+          <p className="text-xs text-ink-600 mt-3 leading-relaxed">{push.detail}</p>
+        )}
+      </section>
+
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
         <header className="mb-1">
           <h2 className="font-display text-sm font-medium text-ink-300">Backup</h2>

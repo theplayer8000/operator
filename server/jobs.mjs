@@ -260,7 +260,7 @@ const PROFILE_ARMED = process.env.OPERATOR_JOB_PROFILE === "1";
 */
 const USE_CLI = process.env.OPERATOR_JOB_RUNNER === "cli";
 
-const DENIED_TOOLS = (
+export const DENIED_TOOLS = (
   process.env.OPERATOR_JOB_DENY ??
   [
     "Bash(git push:*)",
@@ -372,7 +372,7 @@ export function workerEnv(extra = {}) {
   return env;
 }
 
-const ALLOWED_TOOLS = (
+export const ALLOWED_TOOLS = (
   process.env.OPERATOR_JOB_ALLOW ??
   [
     // Reading and searching. Never destructive, and constant enough that
@@ -418,9 +418,28 @@ const ALLOWED_TOOLS = (
       did not match. These entries close that gap rather than asking the model
       to spell it the one way the pattern expects, which it has no way to know.
     */
-    'Bash("C:\Program Files\nodejs\node.exe" scripts/operator-action.mjs:*)',
-    'Bash("C:\Program Files\nodejs\node.exe" "D:\Projects\Operator\scripts\operator-action.mjs":*)',
-    'Bash("C:\Program Files\nodejs\node.exe" "D:\Projects\Operator-agent\scripts\operator-action.mjs":*)',
+    /*
+      **The backslashes are escaped here, and that is the entire point.**
+
+      These three were written as plain quoted strings, so JavaScript consumed
+      the escapes before the matcher ever saw them: `\P` silently drops its
+      backslash, and `\n` in `\nodejs` becomes a NEWLINE. What actually reached
+      the SDK was a rule containing two line breaks, which cannot match any
+      command.
+
+      Measured from his phone, 2026-09-01: every capability call still asked
+      permission — as if these lines were absent. They were written to fix
+      exactly that symptom, looked correct in the diff, and did nothing.
+
+      A pre-allow rule fails SILENTLY: an entry matching nothing is
+      indistinguishable from an entry never added. If you touch this list,
+      print it and read what the strings actually contain.
+    */
+    'Bash("C:\\Program Files\\nodejs\\node.exe" scripts/operator-action.mjs:*)',
+    'Bash("C:\\Program Files\\nodejs\\node.exe" "D:\\Projects\\Operator\\scripts\\operator-action.mjs":*)',
+    'Bash("C:\\Program Files\\nodejs\\node.exe" "D:\\Projects\\Operator-agent\\scripts\\operator-action.mjs":*)',
+    // Forward slashes as well — the model writes Windows paths both ways.
+    'Bash("C:/Program Files/nodejs/node.exe" scripts/operator-action.mjs:*)',
     /*
       Rendering a page to a PNG so the model can look at what it built
       (server/render.mjs). Pre-allowed because the alternative is asking a
@@ -2220,6 +2239,52 @@ export async function input(id, body, identity) {
   if (job.status !== "running") setStatus(job, "queued");
   pump();
   return summary(job);
+}
+
+/**
+ * Stop everything that is running or queued, whoever started it.
+ *
+ * The voice "stop" goes here rather than to `input(id, {type:"cancel"})`,
+ * because when he says it he does not know or care which job is running — he
+ * has heard something start that he did not ask for. Asking him to name it
+ * defeats the point.
+ *
+ * **No identity check, same reasoning as `input`'s cancel.** Sending INTO
+ * someone else's job is refused; stopping one is not. A runaway has to be
+ * killable from whatever device is in your hand.
+ *
+ * @returns {{stopped: number, ids: string[]}}
+ */
+export function stopAll(why = "stopped by voice") {
+  const ids = [];
+  for (const job of jobs.values()) {
+    const live = job.proc || job.abort || job.status === "running" || job.status === "queued";
+    if (!live) continue;
+
+    // Drop the queue too. Killing the turn that is running would otherwise let
+    // the next queued one start the moment the process exits — "stop" that
+    // launches the next thing is not stop.
+    job.pending.length = 0;
+    if (job.proc || job.abort) {
+      // Status BEFORE halt: the SDK path reads `job.status` as the turn unwinds
+      // to tell a cancellation from a failure, and the abort can land first.
+      setStatus(job, "cancelled", why);
+      halt(job);
+    } else {
+      setStatus(job, "cancelled", why);
+    }
+    dropQuestions(job.id, "cancelled");
+    ids.push(job.id);
+  }
+
+  /*
+    Clear the wait list as well, or a job that was queued but never started
+    stays in it and pump() revives it on the next turn anyone sends.
+  */
+  waiting.length = 0;
+
+  if (ids.length) console.log(`[operator] ${why} — cancelled ${ids.length} job(s)`);
+  return { stopped: ids.length, ids };
 }
 
 /** Requeue the last failed/cancelled live attempt. Never retries automatically. */

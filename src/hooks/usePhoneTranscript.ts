@@ -72,6 +72,25 @@ const SPEECH_PEAK = 0.02;
 const MIN_VOICED = 0.08;
 /** How often the level is sampled. Fine enough to measure a syllable. */
 const TICK_MS = 50;
+/**
+ * Keep treating the room as Operator's for this long after it stops talking.
+ *
+ * The flag drops the instant playback ends, but the ROOM does not: a speaker
+ * across the desk keeps reverberating, and the last syllable arrives at the
+ * microphone after the audio element has already fired `ended`. Without a tail
+ * the closing word of Operator's own sentence starts a fresh segment and gets
+ * transcribed as his.
+ *
+ * This matters here specifically because echo cancellation cannot help. It
+ * works by referencing the playback stream, and the owner plays through
+ * SPEAKERS while listening on a BLUETOOTH HEADSET — two devices, no shared
+ * clock, nothing for the canceller to subtract. `echoCancellation: true` is
+ * set and is simply inert in that arrangement.
+ *
+ * 400ms: long enough for a small room's decay, short enough that answering
+ * immediately still works.
+ */
+const SPEECH_TAIL_MS = 400;
 
 export interface PhoneTranscript {
   /** Most recent lines heard, newest last. Capped. */
@@ -80,6 +99,14 @@ export interface PhoneTranscript {
   working: boolean;
   /** Last failure, if the upload or transcription broke. */
   error: string | null;
+  /**
+   * The most recent thing heard, and whether the server already acted on it.
+   *
+   * `handled` is the flag the page needs before forwarding a sentence to a
+   * worker: an intent that ran has already changed the data, and sending it on
+   * as well would ask Claude to do it a second time at Claude's price.
+   */
+  last: { text: string; handled: boolean; say: string; stopped: boolean } | null;
   /**
    * What the last segment actually did.
    *
@@ -114,6 +141,16 @@ export function usePhoneTranscript(
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("waiting for you to speak");
+  const [last, setLast] = useState<
+    { text: string; handled: boolean; say: string; stopped: boolean } | null
+  >(null);
+  /*
+    Through a ref so the recording effect never restarts when a sentence
+    lands — tearing down the MediaRecorder to publish a result would drop the
+    next thing he says.
+  */
+  const setHandledRef = useRef(setLast);
+  setHandledRef.current = setLast;
 
   const stoppedRef = useRef(false);
   /*
@@ -121,7 +158,14 @@ export function usePhoneTranscript(
     the segment in flight needs to KNOW he spoke, not be torn down for it.
   */
   const speakingRef = useRef(speaking);
+  /** When Operator last stopped talking, for the tail above. */
+  const spokeUntil = useRef(0);
+  if (speakingRef.current && !speaking) spokeUntil.current = Date.now();
   speakingRef.current = speaking;
+
+  /** Operator is talking, or was recently enough that the room still is. */
+  const roomIsOperators = () =>
+    speakingRef.current || Date.now() - spokeUntil.current < SPEECH_TAIL_MS;
 
   useEffect(() => {
     const stream = mic.streamRef.current;
@@ -190,10 +234,19 @@ export function usePhoneTranscript(
         // gap he can speak into.
         if (!stoppedRef.current) runSegment();
 
-        if (overlappedSpeech) {
-          setStatus("ignored — Operator was talking");
-          return;
-        }
+        /*
+          NOT discarded outright when Operator was talking.
+
+          The self-hearing guard was right about the feedback loop and wrong
+          about the one case that matters most: interrupting. "Stop" is said
+          precisely WHILE it is talking, so discarding overlapped audio
+          client-side meant the barge-in could never arrive.
+
+          It is uploaded with a flag instead, and the server honours nothing
+          from an overlapped segment except a stop. The loop stays closed —
+          Operator's own sentence cannot become a request — while the one word
+          that has to get through, gets through.
+        */
         if (!heardSpeech) {
           setStatus("waiting for you to speak");
           return;
@@ -215,7 +268,12 @@ export function usePhoneTranscript(
         try {
           const res = await fetch("/api/listen/transcribe", {
             method: "POST",
-            headers: { "content-type": blob.type || "application/octet-stream" },
+            headers: {
+              "content-type": blob.type || "application/octet-stream",
+              // Tells the server this may contain Operator's own voice, so
+              // nothing but a stop command may come out of it.
+              ...(overlappedSpeech ? { "x-overlapped": "1" } : {}),
+            },
             body: blob,
           });
           const body = await res.json();
@@ -223,9 +281,26 @@ export function usePhoneTranscript(
           const text = String(body?.text ?? "").trim();
           if (text) {
             setError(null);
-            setStatus("heard it");
+            /*
+              The server may have already DONE it.
+
+              `server/intent.mjs` turns a spoken sentence into a capability
+              action with no model in the loop, so "tick off bench press" is
+              handled in microseconds server-side and never becomes a job.
+              `handled` says so, and it must be honoured even when the intent
+              only got as far as a question ("did you mean X or Y?") — sending
+              that on to a worker would treat his answer as a fresh request.
+            */
+            const handled = Boolean(body?.handled);
+            setStatus(handled ? String(body?.say ?? "done") : "heard it");
             // Capped: this is a glance under the core, not a document.
             setLines((prev) => [...prev, text].slice(-6));
+            setHandledRef.current({
+              text,
+              handled,
+              say: String(body?.say ?? ""),
+              stopped: Boolean(body?.command?.stop),
+            });
           } else {
             setStatus("sent, but no speech found in it");
           }
@@ -239,7 +314,7 @@ export function usePhoneTranscript(
       recorder.start();
 
       timer = window.setInterval(() => {
-        if (speakingRef.current) overlappedSpeech = true;
+        if (roomIsOperators()) overlappedSpeech = true;
         const v = mic.levelRef.current;
         ticks += 1;
 
@@ -276,5 +351,5 @@ export function usePhoneTranscript(
     };
   }, [enabled, mic.active, mic.streamRef, mic.levelRef]);
 
-  return { lines, working, error, status, clear: () => setLines([]) };
+  return { lines, working, error, status, last, clear: () => setLines([]) };
 }

@@ -1,64 +1,55 @@
-// Push a notification to the owner's phone, through his own ntfy server.
+// One line onto his phone when something happened that he did not do.
 //
-// ## What this is for
+// ## What changed on 2026-09-01, and what did not
 //
-// One thing, really: **a turn has stopped and is waiting on him.** A permission
-// question suspends the running turn and times out after thirty minutes, and
-// until now the only way to discover one was to open the app and look. He is
-// usually not looking — that is the entire point of a system that works while
-// he is at work.
+// This was a POST to the owner's OWN ntfy server on loopback, which relayed
+// through `ntfy.sh` so Apple could wake the iOS app. It is now **Web Push**,
+// direct from this process to the browser's push service.
 //
-// ## Where it sends, and what leaves the machine
+// **The interface is deliberately identical.** `notify(title, message, opts)`,
+// never throws, never retries, never queues. Every caller — `actions.mjs`,
+// `jobs.mjs`, the intent digest — is unchanged, because the decision that
+// changed was *how a notification reaches him*, not *when Operator sends one*.
 //
-// `OPERATOR_NTFY_URL` is his own ntfy server, on this box, listening on
-// loopback and exposed to the tailnet by `tailscale serve` — the same shape as
-// Operator's own API. The notification body never leaves hardware he owns.
+// ### Why the switch, stated honestly
 //
-// **ntfy.sh is involved, and he approved it by name on 2026-08-31** (see the
-// approvals table in CLAUDE.md). His server forwards a *poll request* upstream
-// — a message ID and a hash of the topic, not the title and not the body — so
-// Apple can wake the iOS app, which then fetches the actual content back from
-// this machine. Without it iOS push is polling, which is late and unreliable.
-// What crosses is metadata: that a notification happened, and when.
+// The owner's reason was reducing what leaves the machine, and the first answer
+// he got was that this does not do that: a push service is unavoidable, because
+// it is how a sleeping OS is woken. `ntfy.sh` is replaced by Apple, not by
+// nobody.
 //
-// ## Environment only
+// What it does buy, and why he chose it anyway:
 //
-// `OPERATOR_NTFY_URL`, `OPERATOR_NTFY_TOPIC`, `OPERATOR_NTFY_TOKEN`. Not in
-// `data/operator.json`, not app-editable, for a reason stronger than
-// consistency with `OPERATOR_APPS`: a worker has `Write` everywhere, so a
-// destination stored on disk is one a running agent could repoint at any host
-// it liked — turning this into a general outbound channel with Operator's own
-// code doing the sending. Only the desk can set where this points.
+//   - **Strictly less content.** RFC 8291 encryption is mandatory and the key is
+//     shared only between this server and the browser that subscribed. Apple
+//     carries ciphertext. ntfy.sh saw a message id and a topic hash — comparable
+//     metadata, but this is provably unreadable rather than merely trusted.
+//   - **One fewer service to run.** No local ntfy, no `server.yml`, no
+//     `upstream-base-url`, no second app on the phone.
+//   - **It says Operator.** Notifications arrive under Operator's own name and
+//     icon rather than ntfy's, because the manifest supplies them.
 //
-// ## Degrade to silence
+// ### Degrade to silence — unchanged, and it matters more now
 //
-// Never throws, never retries, never queues. A missed notification is a missed
-// notification; the event log and the Orchestrator remain the record. Building
-// a retry buffer would be inventing a delivery guarantee this does not have,
-// and CLAUDE.md's "degrade to silence" rule applied outbound.
+// A missed notification stays missed. No retry buffer, no queue. `CLAUDE.md`'s
+// rule applied outbound, and the event log remains the record.
+//
+// It matters more because there is no fallback channel any more. If push fails
+// he simply does not hear about it, which is the trade he accepted knowingly.
+//
+// No dependencies.
 
-/*
-  Strip a byte-order mark as well as whitespace.
+import { sendTo, configured as pushConfigured, publicKey } from "./push.mjs";
+import { list as listSubscriptions, remove as forgetSubscription } from "./subscriptions.mjs";
 
-  Not theoretical: PowerShell 5.1's `Set-Content -Encoding utf8` writes a BOM,
-  so a value round-tripped through a file arrives as "﻿operator-..." and
-  the POST 404s against a topic that looks identical in every log. This cost a
-  debugging round here and another one in the transcriber on the same day.
-*/
-const env = (name) =>
-  (process.env[name] ?? "").replace(/^﻿/, "").trim();
+/** Whether a notification can be sent at all. Read by callers before bothering. */
+export const configured = pushConfigured;
 
-const URL_BASE = env("OPERATOR_NTFY_URL").replace(/\/+$/, "");
-const TOPIC = env("OPERATOR_NTFY_TOPIC");
-const TOKEN = env("OPERATOR_NTFY_TOKEN");
+/** Re-exported so the API can hand it to a browser that wants to subscribe. */
+export { publicKey };
 
-/** Long enough for a loopback POST, short enough never to hold up a turn. */
-const TIMEOUT_MS = 3000;
-
-/** Logged once, so `serve.log` records where notifications actually go. */
+/** Logged once, so serve.log records that push is live and to how many devices. */
 let announced = false;
-
-export const configured = Boolean(URL_BASE && TOPIC);
 
 /**
  * Send one notification. Fire-and-forget: `void notify(...)`.
@@ -67,66 +58,75 @@ export const configured = Boolean(URL_BASE && TOPIC);
  * @param message the body
  * @param opts    priority, tags[], click URL
  *
- * ## Priority is not cosmetic, and the default is wrong for this app
+ * ## Priority survived the switch, with different mechanics
  *
- * ntfy maps them 1-5: min, low, default, high, urgent. **Only 4 and 5 make the
- * phone actually ping** — 1 to 3 arrive silently and are found later, which the
- * owner discovered by testing and I had not.
+ * ntfy mapped priority 1-5 and **only 4 and 5 made the phone ping** — something
+ * the owner discovered by testing and I had not. Web Push has no such scale; it
+ * has `Urgency`, which governs whether the push service may hold a message back
+ * while the device is idle rather than how loudly it arrives.
  *
- * That makes "default" the wrong default here. Operator only sends a
- * notification when something happened that he did not do, so silent delivery
- * defeats the entire purpose: everything is at least `high`, and a suspended
- * turn waiting on an answer is `urgent`.
- * @returns true if it was accepted, false if unconfigured or it failed
+ * The names are kept because every caller already passes them and they still
+ * express the right intent. `high` and `urgent` both map to immediate delivery;
+ * anything lower is allowed to wait for the device to wake on its own.
+ *
+ * @returns true if at least one device accepted it
  */
 export async function notify(title, message, opts = {}) {
   if (!configured) return false;
 
-  if (!announced) {
-    announced = true;
-    try {
-      console.log(`[operator] notifications → ${new URL(URL_BASE).host}`);
-    } catch {
-      console.log(`[operator] notifications → ${URL_BASE}`);
+  const devices = await listSubscriptions();
+  if (devices.length === 0) {
+    if (!announced) {
+      announced = true;
+      console.log("[operator] push is configured but no device has subscribed yet");
     }
-  }
-
-  const headers = { "content-type": "text/plain; charset=utf-8" };
-  /*
-    Header values must be latin-1 — a smart quote or an em-dash in a job title
-    throws inside fetch before the request is made, which would turn a
-    notification into an unhandled rejection in the middle of a turn.
-  */
-  const ascii = (s) =>
-    String(s ?? "")
-      .replace(/[‘’]/g, "'")
-      .replace(/[“”]/g, '"')
-      .replace(/[–—]/g, "-")
-      .replace(/[^\x20-\x7E]/g, "")
-      .slice(0, 200);
-
-  if (title) headers.Title = ascii(title);
-  if (opts.priority) headers.Priority = String(opts.priority);
-  if (opts.tags?.length) headers.Tags = opts.tags.map(ascii).join(",");
-  if (opts.click) headers.Click = ascii(opts.click);
-  if (TOKEN) headers.Authorization = `Bearer ${TOKEN}`;
-
-  try {
-    const res = await fetch(`${URL_BASE}/${TOPIC}`, {
-      method: "POST",
-      headers,
-      body: String(message ?? "").slice(0, 4000),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      console.warn(`[operator] notify: ntfy returned ${res.status}`);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    // Warned once per failure but never thrown. A dead ntfy must not be able to
-    // affect a turn that was otherwise fine.
-    console.warn(`[operator] notify failed: ${err?.message ?? err}`);
     return false;
   }
+
+  if (!announced) {
+    announced = true;
+    console.log(`[operator] notifications → Web Push, ${devices.length} device(s)`);
+  }
+
+  /*
+    The payload the service worker will render. JSON rather than headers,
+    because unlike ntfy this is a body the browser decrypts and hands to our own
+    code — there is no protocol reading these fields, only `sw.js`.
+
+    No ASCII-folding here. That existed because ntfy put the title in an HTTP
+    HEADER, where a smart quote or an em-dash threw inside fetch before the
+    request was made. This is an encrypted body: UTF-8 throughout, so a mission
+    called "Don't — seriously" arrives intact.
+  */
+  const payload = JSON.stringify({
+    title: String(title ?? "Operator").slice(0, 200),
+    body: String(message ?? "").slice(0, 1000),
+    tag: opts.tags?.[0] ?? undefined,
+    url: opts.click ?? "/",
+    urgent: opts.priority === "urgent" || opts.priority === "max",
+  });
+
+  const urgency = opts.priority === "low" || opts.priority === "min" ? "low" : "high";
+
+  const results = await Promise.all(
+    devices.map(async (device) => {
+      const result = await sendTo(device, payload, { urgency });
+      /*
+        Forget a subscription the push service says is retired.
+
+        Without this a deleted app leaves an endpoint that fails on every
+        notification forever — and because failures are silent by design, the
+        only symptom would be Operator getting slower for no visible reason.
+      */
+      if (result.gone) {
+        console.log(`[operator] push: forgetting a dead subscription (${result.status ?? "invalid"})`);
+        await forgetSubscription(device.endpoint).catch(() => {});
+      } else if (!result.ok) {
+        console.warn(`[operator] push failed (${result.status ?? "-"}): ${result.error ?? ""}`);
+      }
+      return result.ok;
+    }),
+  );
+
+  return results.some(Boolean);
 }

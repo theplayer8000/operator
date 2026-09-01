@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Mic, Check, Loader2, ChevronDown } from "lucide-react";
 import type { MicLevel } from "@/hooks/useMicLevel";
+import { unlockSpeech } from "@/hooks/useSpeech";
 
 /**
  * Which microphone this page listens through.
@@ -90,6 +91,14 @@ export default function MicSource({
               icon={mic.connecting ? "busy" : "mic"}
               label={mic.active ? "Microphone on" : "Turn on the microphone"}
               onClick={() => {
+                /*
+                  Spend this tap on the right to speak later, BEFORE the await
+                  inside enable(). iOS grants audio playback per gesture and
+                  per element, and an await ends the gesture — so unlocking
+                  after `enable()` resolves would be too late, which is exactly
+                  why the phone was silent while the desk was fine.
+                */
+                unlockSpeech();
                 void mic.enable();
                 setOpen(false);
               }}
@@ -102,6 +111,7 @@ export default function MicSource({
                   icon={mic.active && mic.deviceLabel === d.label ? "check" : "mic"}
                   label={d.label ? shortName(d.label) : "Unnamed input"}
                   onClick={() => {
+                    unlockSpeech();
                     void mic.enable(d.deviceId);
                     setOpen(false);
                   }}

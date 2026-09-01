@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useJobs } from "@/hooks/useJobs";
 import OperatorChat from "@/components/map/OperatorChat";
+import { useSpeech } from "@/hooks/useSpeech";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { readStorage, writeStorage } from "@/lib/storage";
 import { useMicLevel } from "@/hooks/useMicLevel";
@@ -39,6 +40,15 @@ import { drawCore } from "@/components/map/operatorCore";
 export default function OperatorMobile() {
   const navigate = useNavigate();
   const voice = useVoiceActivity();
+  /*
+    The page speaks too, not only the chat.
+
+    A confirmation of something the SERVER did never passes through the chat —
+    no job, no reply, nothing for the chat to read out. `useSpeech` is a hook
+    over module-level state, so a second caller shares the same element, the
+    same enabled flag and the same one-at-a-time rule as the chat's.
+  */
+  const speech = useSpeech();
   const jobs = useJobs();
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -69,14 +79,27 @@ export default function OperatorMobile() {
     reopened without one, which is the case that matters — but on a fresh
     browser profile the first clap will still need a tap.
   */
-  const lastClaps = useRef(0);
+  /*
+    `null`, NOT 0 — and that distinction is the whole bug this had.
+
+    `state.claps` on the server is a running total that RESETS TO ZERO when the
+    server restarts. Using 0 as "I have not read a count yet" therefore made the
+    two states indistinguishable: after every restart the first real clap
+    arrived as `claps: 2`, was read as the initial sync, and was swallowed. It
+    then worked on the second clap, which is exactly the sort of intermittency
+    that reads as "the clap detector is flaky" when the detector was fine.
+  */
+  const lastClaps = useRef<number | null>(null);
   useEffect(() => {
     if (voice.claps === lastClaps.current) return;
-    const first = lastClaps.current === 0;
+    const firstReading = lastClaps.current === null;
     lastClaps.current = voice.claps;
-    // Not on the very first reading, which is just learning the current count
-    // rather than a clap that happened while he was looking at this page.
-    if (first || mic.active || !mic.supported) return;
+    /*
+      Skip only the genuine first reading — learning where the counter already
+      is, rather than reacting to claps that happened before this page loaded.
+    */
+    if (firstReading || mic.active || !mic.supported) return;
+    console.log(`[operator] clap heard (${voice.claps}) — opening the microphone`);
     void mic.enable();
   }, [voice.claps, mic]);
   /*
@@ -110,6 +133,36 @@ export default function OperatorMobile() {
     and act on rather than only being displayed. `.at()` is avoided because the
     build targets a lib without it.
   */
+  /*
+    A sentence the server already acted on must not also go to the chat.
+
+    `server/intent.mjs` handles "tick off bench press" in microseconds with no
+    model involved. Passing it to the chat as well would send it to a worker,
+    which would do the same write a second time — at Claude's price, and
+    possibly UNDOING it, since every tick action is a toggle.
+
+    The confirmation is spoken instead, so he hears WHICH thing changed and can
+    catch a wrong match while it is one tap to reverse.
+  */
+  const spokenFor = useRef<string | null>(null);
+  useEffect(() => {
+    const heard = transcript.last;
+    if (!heard || heard.text === spokenFor.current) return;
+    spokenFor.current = heard.text;
+    /*
+      Stop means stop talking, too.
+
+      He says it while Operator is mid-sentence — that is the whole reason the
+      overlapped audio is uploaded at all. Cancelling the jobs and then
+      finishing the paragraph he interrupted would read as ignoring him.
+    */
+    if (heard.stopped) {
+      speech.stop();
+      return;
+    }
+    if (heard.handled && heard.say) speech.speak(heard.say);
+  }, [transcript.last, speech]);
+
   const lastHeard = transcript.lines.length
     ? transcript.lines[transcript.lines.length - 1]
     : null;
@@ -332,7 +385,7 @@ export default function OperatorMobile() {
         behaviour, so the two cannot drift apart.
       */}
       <div data-chat>
-        <OperatorChat className="relative mx-3 mb-4" heard={lastHeard} autoSend={autoSend} />
+        <OperatorChat className="relative mx-3 mb-4" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
       </div>
     </div>
   );

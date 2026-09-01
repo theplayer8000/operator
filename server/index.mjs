@@ -56,9 +56,16 @@ import {
   deleteState,
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
+/*
+  Web Push replaced ntfy on 2026-09-01. `notify.mjs` keeps the same interface,
+  so nothing else in server/ changed — only who carries the message.
+*/
+import { configured as pushConfigured, publicKey as vapidPublicKey } from "./push.mjs";
+import { add as addSubscription, remove as removeSubscription } from "./subscriptions.mjs";
 import { initProviders } from "./providers.mjs";
 import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
 import { matchIntent } from "./intent.mjs";
+import { runIntent } from "./intentrun.mjs";
 import { matchVoiceCommand, VOICE_ARM_MS } from "./voicecommand.mjs";
 
 import { synthesize, available as ttsAvailable, state as ttsState } from "./tts.mjs";
@@ -597,6 +604,45 @@ const server = createServer(async (req, res) => {
       That changes if Piper lands and speech moves server-side, at which point
       this is where it belongs.
     */
+    /*
+      Web Push registration.
+
+      Three routes and no more: what key to subscribe with, here is my device,
+      forget my device. Deliberately narrow — this is a registration surface,
+      not a way to ask Operator to notify something.
+
+      Gated like everything under /api/ by the check in front of the router, so
+      only an identified caller can register a device to be notified. That
+      matters: an unauthenticated POST here would let anything on the network
+      attach its own phone to his notifications.
+    */
+    if (pathname === "/api/push/key") {
+      return json(res, 200, { configured: pushConfigured, publicKey: vapidPublicKey || null });
+    }
+
+    if (pathname === "/api/push/subscribe" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const result = await addSubscription(
+          body?.subscription,
+          identity?.device ?? "a device",
+        );
+        console.log(`[operator] push: ${identity?.device ?? "a device"} subscribed`);
+        return json(res, 200, result);
+      } catch (err) {
+        return json(res, 400, { error: String(err?.message ?? err).slice(0, 200) });
+      }
+    }
+
+    if (pathname === "/api/push/unsubscribe" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        return json(res, 200, await removeSubscription(String(body?.endpoint ?? "")));
+      } catch (err) {
+        return json(res, 400, { error: String(err?.message ?? err).slice(0, 200) });
+      }
+    }
+
     if (pathname === "/api/listen") {
       return json(res, 200, {
         listening: listenState.listening,
@@ -677,6 +723,48 @@ const server = createServer(async (req, res) => {
           not much use if he then has to walk to the machine to arm it.
         */
         const spoken = heard?.text ? matchVoiceCommand(heard.text) : null;
+
+        /*
+          Stop first, before anything else can happen with this sentence.
+
+          It is checked ahead of arming, ahead of the intent router and ahead of
+          creating a job, because every one of those is a thing "stop" might be
+          trying to prevent. It also needs no authorisation beyond reaching this
+          route: stopping is the one action that cannot make things worse, and a
+          runaway has to be killable from whichever device is in his hand.
+        */
+        if (spoken === "stop") {
+          const { stopped } = jobs.stopAll("stopped by voice");
+          console.log(`[operator] voice STOP — cancelled ${stopped} job(s)`);
+          return json(res, 200, {
+            ...heard,
+            command: { done: true, stop: true, stopped },
+            handled: true,
+            /*
+              Silent when there was nothing to stop. Saying "nothing was
+              running" over the top of him is the app arguing with him about
+              whether he needed to interrupt it.
+            */
+            say: stopped ? `Stopped.` : null,
+          });
+        }
+
+        /*
+          An overlapped segment may contain OPERATOR'S OWN VOICE, so nothing
+          but the stop above is allowed out of it.
+
+          The client uploads these deliberately rather than discarding them —
+          "stop" is said while it is talking, which is exactly when the
+          self-hearing guard would have thrown the audio away. Everything else
+          is dropped here, so the feedback loop stays closed.
+        */
+        if (req.headers["x-overlapped"] === "1") {
+          console.log(
+            `[operator] overlapped, not a stop — discarded ${JSON.stringify(String(heard?.text ?? "").slice(0, 80))}`,
+          );
+          return json(res, 200, { text: "", discarded: "spoken over Operator" });
+        }
+
         let armed = null;
         if (spoken) {
           const mayArm = deviceMayManage(identity);
@@ -692,12 +780,23 @@ const server = createServer(async (req, res) => {
         }
 
         let intent = null;
+        let acted = null;
         try {
           intent = heard?.text ? matchIntent(heard.text) : null;
           if (intent) {
+            /*
+              Run it, and hand the result back for the page to speak.
+
+              Unlike the clap path this one HAS a browser at the other end, so
+              a spoken confirmation is possible and is the thing that makes a
+              wrong match audible while it is still cheap to undo. `acted.say`
+              is what gets read out; `acted.ran` is what tells the client not
+              to send the sentence on to a worker as well.
+            */
+            acted = await runIntent(heard.text);
             console.log(
-              `[operator] intent (WOULD run, not running): ${intent.action}` +
-                `${intent.needs ? ` via ${intent.needs.find}` : ""} — ${intent.why}`,
+              `[operator] intent ${acted.ran ? "RAN" : "stopped"}: ${intent.action}` +
+                `${intent.needs ? ` via ${intent.needs.find}` : ""} — ${acted.ran ? intent.why : acted.reason}`,
             );
           } else if (heard?.text) {
             /*
@@ -720,7 +819,20 @@ const server = createServer(async (req, res) => {
           console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
         }
 
-        return json(res, 200, { ...heard, wouldMatch: intent, command: armed });
+        return json(res, 200, {
+          ...heard,
+          wouldMatch: intent,
+          command: armed,
+          /*
+            `handled` means the client must NOT also send this to a worker.
+            True when the action ran, and ALSO true when it matched and stopped
+            — an ambiguous "did you mean X or Y?" that then gets forwarded to
+            Claude would have his answer treated as a fresh request.
+          */
+          intentAction: acted?.ran ? intent?.action ?? null : null,
+          handled: Boolean(acted && (acted.ran || acted.say)),
+          say: acted?.say ?? null,
+        });
       } catch (err) {
         return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
       }
@@ -780,7 +892,26 @@ const server = createServer(async (req, res) => {
     }
 
     if (pathname === "/api/health") {
-      return json(res, 200, { ok: true, schemaVersion: SCHEMA_VERSION, dataFile: DATA_FILE });
+      /*
+        `updatedAt` is here so an open page can notice a change it did not make.
+
+        The store already stamped it on every write; nothing read it. Without
+        it the client only refreshed on focus, so speaking "set the control
+        plane to sixty-two percent" changed the data instantly and the map kept
+        showing 60% until you navigated away and back.
+
+        Deliberately hung off the EXISTING health route rather than a new one:
+        it is already the cheapest endpoint, it does not touch disk (the store
+        is in memory), and one poll answering both "is the server there" and
+        "has anything changed" is one poll rather than two.
+      */
+      const store = await load();
+      return json(res, 200, {
+        ok: true,
+        schemaVersion: SCHEMA_VERSION,
+        dataFile: DATA_FILE,
+        updatedAt: store.updatedAt ?? null,
+      });
     }
 
     if (pathname === "/api/state" && req.method === "GET") {
@@ -1005,7 +1136,7 @@ server.listen(PORT, HOST, () => {
       console.warn(`[operator] clap summon failed: ${err?.message ?? err}`);
     });
     void runAction("listen_once", { seconds: 6 })
-      .then((heardResult) => {
+      .then(async (heardResult) => {
         const text = String(heardResult?.heard ?? "").trim();
         if (!text) {
           console.log(
@@ -1072,19 +1203,42 @@ server.listen(PORT, HOST, () => {
 
           Wrapped, because a router that throws must not cost him the sentence.
         */
-        try {
-          const guess = matchIntent(text);
-          if (guess) {
-            console.log(
-              `[operator] intent (WOULD run, not running): ${guess.action}` +
-                `${guess.needs ? ` via ${guess.needs.find}` : ""} — ${guess.why}`,
-            );
-          } else {
-            console.log("[operator] intent: no match, going to a worker");
-          }
-        } catch (err) {
-          console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
+        const outcome = await runIntent(text);
+        if (outcome.ran) {
+          /*
+            Handled here, and NO job is created.
+
+            That is the entire point: "tick off bench press" cost a worker turn
+            and several seconds to do something the capability layer does in
+            microseconds. A rule match is not a cheaper way to reach Claude, it
+            is not reaching Claude at all.
+          */
+          /*
+            No spoken reply on THIS path, deliberately.
+
+            This is the clap gesture: the microphone is attached to the server,
+            and the server has no speaker of its own — `tts.mjs` synthesises
+            audio and hands it to a browser to play. Confirmation instead comes
+            from the notification `runAction` already sends on every write, so
+            his phone says "Ticked off Bench Press" a second later.
+
+            The browser path below DOES speak, because there is a page there to
+            play it.
+          */
+          console.log(`[operator] intent: ${outcome.say}`);
+          return;
         }
+        if (outcome.say) {
+          /*
+            It matched but could not finish — ambiguous, or the thing named is
+            not on today's board. Say so and stop. Falling through to a worker
+            would be worse than useless: he would be asked a question, answer
+            it, and have his answer treated as a fresh request.
+          */
+          console.log(`[operator] intent: stopped — ${outcome.say}`);
+          return;
+        }
+        console.log(`[operator] intent: no match — going to a worker (${outcome.reason})`);
 
         /*
           Straight into a job, so the transcript is answered rather than

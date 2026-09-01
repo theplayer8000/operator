@@ -131,6 +131,77 @@ export function isOperatorSpeaking() {
     : false);
 }
 
+/*
+  ## Why iOS was silent, and why this is not a ref inside the hook
+
+  Operator spoke fine at the desk and said nothing at all on the phone. Not a
+  server problem, not Kokoro: iOS refuses to play audio that was not started by
+  a user gesture, and it tracks that permission **per <audio> element**. The
+  code created `new Audio(blob)` for every sentence, so every element was a
+  brand-new one that had never been touched — permanently blocked, silently,
+  with `play()` rejecting into a catch that fell through to the system voice,
+  which iOS blocks for the same reason. Two engines, one cause, no error on
+  screen.
+
+  So there is ONE element for the life of the page. It is played once during a
+  real tap — of a fraction of a second of silence — and from then on it is an
+  element the user has activated, so changing `src` and calling `play()` again
+  is allowed however long afterwards.
+
+  Module scope rather than a ref because the unlocking tap and the speaking are
+  in different components: the tap that turns the microphone on is what pays
+  for the whole page's ability to speak.
+*/
+let sharedAudio: HTMLAudioElement | null = null;
+let unlocked = false;
+
+/** The one element, made on first use. */
+function audioElement(): HTMLAudioElement {
+  if (!sharedAudio) {
+    sharedAudio = new Audio();
+    // Speech, not music: keep playing when the phone's screen locks.
+    sharedAudio.preload = "auto";
+  }
+  return sharedAudio;
+}
+
+/**
+ * Buy the right to speak later, using a gesture happening now.
+ *
+ * MUST be called synchronously inside a real user event — an `await` before it
+ * ends the gesture as far as the browser is concerned, and it goes back to
+ * being blocked. Safe to call repeatedly; it does nothing after the first.
+ *
+ * A tenth of a second of silent WAV, inline, because a fetch would be async and
+ * therefore too late.
+ */
+export function unlockSpeech() {
+  if (unlocked || typeof window === "undefined") return;
+  unlocked = true;
+
+  const el = audioElement();
+  el.src =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  void el.play().catch(() => {
+    // Blocked anyway — nothing to do but let the next real sentence try.
+    unlocked = false;
+  });
+
+  /*
+    The fallback voice needs its own gesture, and it is a separate permission.
+    An empty utterance is the documented way to spend one without a noise.
+  */
+  if ("speechSynthesis" in window) {
+    try {
+      const silent = new SpeechSynthesisUtterance("");
+      silent.volume = 0;
+      window.speechSynthesis.speak(silent);
+    } catch {
+      /* older WebKit throws on an empty utterance; the audio path still works */
+    }
+  }
+}
+
 export function useSpeech(): SpeechState {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -168,10 +239,30 @@ export function useSpeech(): SpeechState {
 
   useEffect(() => {
     /*
+      Any tap, anywhere, buys the right to speak.
+
+      The microphone button unlocks explicitly, but the first thing he touches
+      is not always that — it might be the chat, or a mission. This makes the
+      unlock a property of using the page at all rather than of remembering to
+      press the right control first, and it costs one listener that removes
+      itself.
+
+      `pointerdown` rather than `click`: it fires earlier, and on iOS a scroll
+      that never becomes a click still counts as the gesture.
+    */
+    const onFirstTouch = () => unlockSpeech();
+    window.addEventListener("pointerdown", onFirstTouch, { once: true });
+    window.addEventListener("touchend", onFirstTouch, { once: true });
+    window.addEventListener("keydown", onFirstTouch, { once: true });
+
+    /*
       Cancel on unmount, or navigating away leaves Operator talking to an empty
       room with no control on screen to stop it.
     */
     return () => {
+      window.removeEventListener("pointerdown", onFirstTouch);
+      window.removeEventListener("touchend", onFirstTouch);
+      window.removeEventListener("keydown", onFirstTouch);
       if (supported) window.speechSynthesis.cancel();
     };
   }, [supported]);
@@ -200,20 +291,20 @@ export function useSpeech(): SpeechState {
     renders from it, so re-rendering the tree to swap an audio element would be
     work for no picture.
   */
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playingRef = useRef(false);
 
   const stopAudio = useCallback(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    el.pause();
+    if (!sharedAudio) return;
+    sharedAudio.pause();
     // Release the object URL, or a long session leaks one blob per sentence.
-    if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
-    audioRef.current = null;
+    if (sharedAudio.src.startsWith("blob:")) URL.revokeObjectURL(sharedAudio.src);
+    playingRef.current = false;
   }, []);
 
   /** The browser's own voice. Kept as the fallback — see speak() above. */
   const speakWithSystemVoice = useCallback(
     (clean: string) => {
+      if (!supported) return;
       const utterance = new SpeechSynthesisUtterance(clean);
       const chosen = voiceName ? voices.find((v) => v.name === voiceName) : bestVoice(voices);
       if (chosen) utterance.voice = chosen;
@@ -255,20 +346,34 @@ export function useSpeech(): SpeechState {
       const blob = await res.blob();
       if (!blob.size) throw new Error("empty audio");
 
-      const el = new Audio(URL.createObjectURL(blob));
-      audioRef.current = el;
+      /*
+        The one shared element, not a new one. See `unlockSpeech` above — on
+        iOS a fresh element has never been touched by the user and is blocked
+        forever, which is exactly why the phone was silent.
+      */
+      const el = audioElement();
+      if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
+      el.src = URL.createObjectURL(blob);
+
       operatorSpeaking = true;
+      playingRef.current = true;
       setSpeaking(true);
       const done = () => {
-        if (audioRef.current === el) {
-          stopAudio();
-        }
         operatorSpeaking = false;
+        playingRef.current = false;
         setSpeaking(false);
       };
       el.onended = done;
       el.onerror = done;
-      await el.play();
+
+      try {
+        await el.play();
+      } catch (err) {
+        // Rejected play leaves the flags set, and then the transcriber thinks
+        // Operator is talking forever and discards everything he says.
+        done();
+        throw err;
+      }
     },
     [stopAudio],
   );
@@ -284,13 +389,19 @@ export function useSpeech(): SpeechState {
 
   const speak = useCallback(
     (text: string) => {
-      if (!supported || !enabled) return;
+      /*
+        `supported` means speechSynthesis exists, and that is the FALLBACK.
+        Gating on it would silence Kokoro too on any browser without the
+        built-in engine, which is backwards — the good voice does not depend on
+        the browser having a bad one.
+      */
+      if (!enabled) return;
       const clean = speakableText(text);
       if (!clean) return;
 
       // One thing at a time. Queuing would have it read a reply from two turns
       // ago over the top of the current one.
-      window.speechSynthesis.cancel();
+      if (supported) window.speechSynthesis.cancel();
       stopAudio();
 
       /*
