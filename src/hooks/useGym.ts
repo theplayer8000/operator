@@ -116,6 +116,17 @@ export function useGym() {
   return {
     sessions,
     setSessions,
+    /*
+      The whole record, read-only, for aggregators.
+
+      Statistics needs totals across every day and this hook only exposed
+      per-day accessors, which would have forced it to read `gym.completions`
+      directly — the thing CLAUDE.md's one-hook-per-namespace rule exists to
+      prevent, and how a second copy of the truth starts. Exposing what it
+      already owns is cheaper than a second reader.
+    */
+    completions,
+    skipped,
     todayKey,
     sessionOn,
     doneOn,

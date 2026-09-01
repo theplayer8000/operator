@@ -135,8 +135,9 @@ const SECTIONS: Section[] = [
     to: "/statistics",
     label: "Statistics",
     icon: BarChart3,
-    status: "planned",
-    blurb: "Aggregate view across every feature.",
+    status: "built",
+    blurb:
+      "Everything counted from what the features already hold — shipping velocity, mission progress, what is blocking what. Stores nothing of its own.",
   },
   {
     to: "/updates",

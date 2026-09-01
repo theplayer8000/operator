@@ -16,6 +16,7 @@ import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
 import MissionMap from "@/pages/MissionMap";
+import Statistics from "@/pages/Statistics";
 import OperatorMobile from "@/pages/OperatorMobile";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
@@ -72,7 +73,7 @@ export default function App() {
         <Route path="/forex" element={<ComingSoon title="Forex Journal" />} />
         <Route path="/work" element={<ComingSoon title="Work" />} />
         <Route path="/journey" element={<ComingSoon title="Journey" />} />
-        <Route path="/statistics" element={<ComingSoon title="Statistics" />} />
+        <Route path="/statistics" element={<Statistics />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/updates" element={<Updates />} />
 
