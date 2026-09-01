@@ -83,6 +83,12 @@ if ($ntfyToken) { $env:OPERATOR_NTFY_TOKEN = $ntfyToken }
 $appUrl = Read-UserEnv "OPERATOR_APP_URL"
 if ($appUrl) { $env:OPERATOR_APP_URL = $appUrl }
 
+# Which monitor the clap summons Operator onto (server/actions.mjs). Absent
+# means screen 2. Clamped in the action, so unplugging a monitor falls back to
+# the first rather than failing.
+$focusScreen = Read-UserEnv "OPERATOR_FOCUS_SCREEN"
+if ($focusScreen) { $env:OPERATOR_FOCUS_SCREEN = $focusScreen }
+
 # How many turns may run at once (server/jobs.mjs). Absent means 1, which is
 # how it behaved before concurrency existed. Environment-only because a worker
 # with Write everywhere could otherwise widen its own fan-out, and raising this
@@ -135,6 +141,9 @@ Add-Content -Path $log -Value "==== espeak-ng: $espeakState ===="
 
 if ($concurrent) { $concState = $concurrent } else { $concState = "1 (default)" }
 Add-Content -Path $log -Value "==== max concurrent turns: $concState ===="
+
+if ($focusScreen) { $screenState = $focusScreen } else { $screenState = "2 (default)" }
+Add-Content -Path $log -Value "==== summon to screen: $screenState ===="
 
 if ($apps) {
     try {
