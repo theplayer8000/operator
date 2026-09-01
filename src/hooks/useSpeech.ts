@@ -108,6 +108,29 @@ function bestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null 
   );
 }
 
+/*
+  Whether Operator is talking, readable from anywhere.
+
+  Module scope rather than React state on purpose. Speech out happens inside
+  one hook instance, but the thing that needs to know is the TRANSCRIBER on a
+  different branch of the tree — a microphone in the same room as a speaker
+  hears the speaker, and the first miss the digest turned up was Operator's own
+  sentence transcribed as though the owner had said it.
+
+  `useVoiceActivity` used to answer this by reading `speechSynthesis.speaking`,
+  which was right until Kokoro arrived: Kokoro plays through an <audio> element
+  and speechSynthesis knows nothing about it, so the common path was invisible
+  exactly when it mattered.
+*/
+let operatorSpeaking = false;
+
+/** True while Operator is talking, through EITHER voice. */
+export function isOperatorSpeaking() {
+  return operatorSpeaking || (typeof window !== "undefined" && "speechSynthesis" in window
+    ? window.speechSynthesis.speaking
+    : false);
+}
+
 export function useSpeech(): SpeechState {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
 
@@ -198,14 +221,17 @@ export function useSpeech(): SpeechState {
 
       utterance.onend = () => {
         currentRef.current = null;
+        operatorSpeaking = false;
         setSpeaking(false);
       };
       utterance.onerror = () => {
         currentRef.current = null;
+        operatorSpeaking = false;
         setSpeaking(false);
       };
 
       currentRef.current = utterance;
+      operatorSpeaking = true;
       setSpeaking(true);
       window.speechSynthesis.speak(utterance);
     },
@@ -231,11 +257,13 @@ export function useSpeech(): SpeechState {
 
       const el = new Audio(URL.createObjectURL(blob));
       audioRef.current = el;
+      operatorSpeaking = true;
       setSpeaking(true);
       const done = () => {
         if (audioRef.current === el) {
           stopAudio();
         }
+        operatorSpeaking = false;
         setSpeaking(false);
       };
       el.onended = done;
@@ -250,6 +278,7 @@ export function useSpeech(): SpeechState {
     if (supported) window.speechSynthesis.cancel();
     stopAudio();
     currentRef.current = null;
+    operatorSpeaking = false;
     setSpeaking(false);
   }, [supported, stopAudio]);
 

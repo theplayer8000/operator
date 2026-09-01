@@ -129,7 +129,9 @@ export default function MissionMap() {
     setAutoSendState(next);
     writeStorage("voice.autoSend", next);
   };
-  const transcript = usePhoneTranscript(mic, mic.active);
+  // `voice.speaking` is read from speechSynthesis and the audio element, so it
+  // covers Kokoro and the fallback voice alike.
+  const transcript = usePhoneTranscript(mic, mic.active, voice.speaking);
   const lastHeard = transcript.lines.length
     ? transcript.lines[transcript.lines.length - 1]
     : null;

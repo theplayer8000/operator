@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isOperatorSpeaking } from "./useSpeech";
 
 /**
  * What the room sounds like, for anything that wants to react to a voice.
@@ -87,10 +88,16 @@ export function useVoiceActivity(enabled = true): VoiceActivity {
       would silently couple "Operator can talk" to "Operator can hear", which
       are unrelated and fail independently.
     */
-    const speakingNow = () =>
-      typeof window !== "undefined" && "speechSynthesis" in window
-        ? window.speechSynthesis.speaking
-        : false;
+    /*
+      Both voices, not just the browser's.
+
+      This read `speechSynthesis.speaking` alone, which was complete until
+      Kokoro arrived — Kokoro plays through an <audio> element that
+      speechSynthesis knows nothing about, so the map stopped showing the
+      speaking state and, worse, the transcriber stopped knowing to ignore
+      Operator's own voice.
+    */
+    const speakingNow = () => isOperatorSpeaking();
 
     const tick = async () => {
       if (stopped) return;

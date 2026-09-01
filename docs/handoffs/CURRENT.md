@@ -1,90 +1,71 @@
 # Current work
 
-Nothing in flight. Everything is committed on `main`, tree clean, `dist/` built.
+Nothing in flight. Committed on `main`, `dist/` built.
 
-This note is mostly about **why the voice layer is not finished**, because the
-parts are all working individually and it still does not feel like the thing.
+## Where the voice layer got to, 2026-09-01
 
-## What the voice layer actually does today
+The four gaps this note listed a day ago are now three-quarters closed. What
+changed today:
 
-Working, measured, on both the phone and the desk:
+- **Operator no longer hears itself.** Kokoro spoke through the speakers, the
+  microphone recorded it, Whisper transcribed it as though he had said it. Left
+  alone that is a feedback loop — it answers, hears itself, answers again. A
+  segment that Operator talked over is now discarded whole rather than trimmed,
+  because half his sentence and half Operator's is still confidently sent
+  somewhere.
+- **The speaking signal covers both voices.** `useVoiceActivity` read
+  `speechSynthesis.speaking`, which was complete until Kokoro arrived — Kokoro
+  plays through an `<audio>` element that `speechSynthesis` knows nothing about,
+  so the guard above would have been dead on the common path. There is now one
+  module-scoped signal in `useSpeech.ts` that both voices set.
+- **`scripts/intent-misses.mjs`** reads `serve.log`, groups what fell through by
+  word overlap, and (`--notify`) sends a short digest to his phone. Scheduled
+  every four hours as **`OperatorIntentDigest`**. Silent when nothing missed.
 
-- The browser opens a **named** microphone (a picker, not the OS default — that
-  was picking his Bluetooth headset over the Realtek beside it).
-- Level is read locally at frame rate, so the core reacts with no network in
-  the loop. A server poll can only ever be a quarter-second late.
-- A segment ends **2s after he stops talking**, not on a timer.
-- Typing is rejected by **voiced fraction**, not loudness — a keystroke peaks
-  as loud as a syllable but lasts a fraction as long.
-- Audio posts to his own server; the resident Whisper transcribes in **~282ms
-  warm**. Nothing leaves the machine.
-- The words land in the chat, or send straight through if `Send as I speak`
-  is on.
+## Why the model does not write the intent rules
 
-## Why it still is not "JARVIS"
+He asked whether qwen could watch the misses and update the router. The
+grouping half is what got built. The writing half was refused on purpose:
+`intent.mjs` decides whether speech **modifies his data**, a bad pattern is a
+false positive is an unwanted write, and qwen2.5:3b scores 2/3 on semantic
+verification and has hallucinated agreement outright. It summarises; a person
+writes the rule. It is also source code, and the capability layer exists so a
+model changes data rather than code.
 
-Four gaps, and none of them is transcription:
+## The one gap left
 
-1. **It hears, then hands you text.** Saying "I did push day" should tick the
-   gym off. `gym_toggle_exercise` already exists — what is missing is the model
-   reliably turning a spoken sentence into an ACTION rather than a reply.
-   *Mission: "Voice that does things, not just hears".*
-2. **It does not know who he is.** Every store key is feature data; there is no
-   slice about him. Claude Code resumes a *thread*, but a new tab is a stranger.
-   Confirmed against a "build your own JARVIS" video whose step 5 is the same
-   gap. **Local only** — Honcho and similar are hosted, and personal context is
-   the most sensitive thing here. *Mission: "Persistent memory".*
-3. **It cannot answer back when busy.** A second request queues silently. His
-   idea, and it is better than the decision log's: Operator saying "that will
-   wait behind the build" or "I will give that to Gemini, it is a lookup".
-   *Mission: "Concurrency, and Operator answering back".*
-4. **The voice is a system voice.** Best-available is now picked rather than the
-   OS default (which was the worst one installed), but that is the free half.
-   *Mission: "A real voice — Kokoro".*
+**Intent is still observe-only.** `server/intent.mjs` logs what it *would* have
+done and runs nothing. That is deliberate — every phrase in its 103 tests was
+invented, and shipping a rule set on invented evidence is the guessed-clap-
+threshold mistake repeated. The digest is how the real evidence arrives. Do not
+switch it live until the misses have been read.
 
-## What OpenLive changed, 2026-09-01
-
-`github.com/katipally/openlive` — a local-first voice+vision layer. **Not to be
-adopted**: it is an Electron desktop app, and Operator is a tailnet web app that
-has to work from a phone. But two of its choices are better than what is here,
-and both missions were rewritten to take them:
-
-- **Kokoro instead of Piper** for TTS. Local, on-device, 28 voices, and better
-  regarded. Supertonic is its heavier 44.1kHz sibling.
-- **A Smart-Turn end-of-turn model** instead of the 2s silence timeout, which is
-  the crude version — it cannot tell a mid-sentence pause from being finished.
-
-It also independently confirms the pipeline already built here: VAD → Whisper →
-model → local TTS, with only the transcript leaving.
-
-**Deliberately refused**, and the reasoning should survive: Deepgram and
-ElevenLabs are hosted, so his voice would go to a company — the same reason iOS
-`SpeechRecognition` was refused. **Gemini Live** is tempting and fast, but the
-2026-08-20 approval covers prompts and job context; streaming continuous
-microphone audio is a different class and needs naming as such. **AirLLM** was
-looked at and rejected on merit: it makes big models *possible* on 4GB by
-streaming layers off disk, and explicitly not *fast* — it publishes no
-end-to-end latency at all. The problem here is answer speed, not model size.
-
-## The hardware position
-
-Measured on the machine, not argued:
-
-- **0.45 GB free of 15.7** at one point, with four MuMu instances running. A
-  cold Whisper load took **68 seconds** under that pressure and **282ms** warm.
-  32GB of DDR4 (~£50) is the best-value fix and keeps the emulators.
-- **4GB VRAM** caps the local model at 3B, which is why semantic verification
-  scores 2/3. A 12-16GB card is what makes local AI capable rather than merely
-  resident — and it belongs in his own box, not a friend's homelab, because a
-  remote Ollama is an external host under his own rule.
+Three resolvers (`gym_exercise`, `routine_step`, `mission`) are blocked on the
+same evidence.
 
 ## Live infrastructure
 
 - ntfy from `%LOCALAPPDATA%\ntfy`, loopback `:8090`, tailnet `:8095`. All
   notifications are **priority 4+** — anything lower arrives silently.
 - `OPERATOR_LISTEN` is `Microphone (Realtek USB Audio)`.
-- `OPERATOR_SEMANTIC_VERIFY=1`.
-- Scheduled task is **`OperatorServe`**.
+- `OPERATOR_SEMANTIC_VERIFY=1`. `OPERATOR_MAX_CONCURRENT=3`.
+- Scheduled tasks: **`OperatorServe`**, `OperatorViteMain`, `OperatorViteAgent`,
+  `OperatorSdkProbe`, **`OperatorIntentDigest`**.
+- Every task launches through `scripts/hidden.vbs` so no console window sits on
+  the desktop. **`hidden.vbs` takes ONE argument** — a command line with its own
+  quotes cannot survive being nested inside the task's quoted argument, and
+  registering it that way leaves the task hung in "running" forever. Point it at
+  a `.cmd` file, as `scripts/intent-digest.cmd` does.
+
+## The hardware position
+
+- **0.45 GB free of 15.7** at one point, with four MuMu instances running. A
+  cold Whisper load took **68 seconds** under that pressure and **282ms** warm.
+  32GB of DDR4 (~£50) is the best-value fix and keeps the emulators.
+- **4GB VRAM** caps the local model at 3B, which is why semantic verification
+  scores 2/3 and why qwen is not trusted to write rules. A 12-16GB card is what
+  makes local AI capable rather than merely resident — and it belongs in his own
+  box, because a remote Ollama is an external host under his own rule.
 
 ## The restart trap, still true
 
@@ -96,6 +77,5 @@ signal that the `.ps1` ran and read the registry.
 
 ## Next
 
-His order: **concurrency + spoken acknowledgement**, then memory. I would argue
-memory first — concurrency makes it faster, memory makes it his — but that is
-his call.
+Read the first few digests. Then the usage ceiling (ADR 0013) — one job at a
+time bounded spend by wall-clock, and three do not.

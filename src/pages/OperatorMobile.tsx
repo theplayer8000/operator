@@ -102,7 +102,9 @@ export default function OperatorMobile() {
     setAutoSendState(next);
     writeStorage("voice.autoSend", next);
   };
-  const transcript = usePhoneTranscript(mic, mic.active);
+  // `voice.speaking` is read from speechSynthesis and the audio element, so it
+  // covers Kokoro and the fallback voice alike.
+  const transcript = usePhoneTranscript(mic, mic.active, voice.speaking);
   /*
     The newest thing heard, handed to the chat so it lands somewhere he can see
     and act on rather than only being displayed. `.at()` is avoided because the

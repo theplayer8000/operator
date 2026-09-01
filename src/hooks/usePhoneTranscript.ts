@@ -92,13 +92,36 @@ export interface PhoneTranscript {
   clear: () => void;
 }
 
-export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTranscript {
+export function usePhoneTranscript(
+  mic: MicLevel,
+  enabled: boolean,
+  /**
+   * True while Operator is talking.
+   *
+   * A microphone in the same room as a speaker hears the speaker. The very
+   * first miss the digest turned up was Operator's own sentence — "Sorry, say
+   * that again please, I didn't quite hear you." — recorded, uploaded and
+   * transcribed as though he had said it. Left alone that is a feedback loop:
+   * it answers, hears itself, and answers again.
+   *
+   * `server/listen.mjs` has had `muteBriefly` for this since the clap detector
+   * was triggering on Operator's own voice through the speakers. The browser
+   * microphone had no equivalent.
+   */
+  speaking = false,
+): PhoneTranscript {
   const [lines, setLines] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("waiting for you to speak");
 
   const stoppedRef = useRef(false);
+  /*
+    Read through a ref so a change while recording does not restart the loop —
+    the segment in flight needs to KNOW he spoke, not be torn down for it.
+  */
+  const speakingRef = useRef(speaking);
+  speakingRef.current = speaking;
 
   useEffect(() => {
     const stream = mic.streamRef.current;
@@ -145,6 +168,13 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       let voicedTicks = 0;
       let heardSpeech = false;
       let quietFor = 0;
+      /*
+        Set if Operator spoke at any point during this recording. The whole
+        segment is discarded rather than trimmed — a sentence half his and half
+        Operator's is worse than no sentence, because the half that survives is
+        still confidently sent somewhere.
+      */
+      let overlappedSpeech = false;
       const startedAt = Date.now();
       const parts: Blob[] = [];
 
@@ -160,6 +190,10 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
         // gap he can speak into.
         if (!stoppedRef.current) runSegment();
 
+        if (overlappedSpeech) {
+          setStatus("ignored — Operator was talking");
+          return;
+        }
         if (!heardSpeech) {
           setStatus("waiting for you to speak");
           return;
@@ -205,6 +239,7 @@ export function usePhoneTranscript(mic: MicLevel, enabled: boolean): PhoneTransc
       recorder.start();
 
       timer = window.setInterval(() => {
+        if (speakingRef.current) overlappedSpeech = true;
         const v = mic.levelRef.current;
         ticks += 1;
 
