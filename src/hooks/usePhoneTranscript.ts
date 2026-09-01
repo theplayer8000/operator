@@ -44,8 +44,19 @@ import type { MicLevel } from "./useMicLevel";
  * header — every later chunk on its own is undecodable.
  */
 
-/** Quiet for this long, after speech, ends the sentence. The owner's number. */
-const SILENCE_MS = 2000;
+/**
+ * Quiet for this long, after speech, ends the sentence.
+ *
+ * 1200ms, down from the 2000 he originally asked for. Measured 2026-09-01: the
+ * round trip from silence to text on screen is this wait plus 287ms of upload
+ * and transcription — so the perceived "it says transcribing then takes a
+ * while" was almost entirely this constant, not the model.
+ *
+ * Not lower than this. Below about a second it starts cutting on the pause
+ * between clauses, and half a sentence transcribed confidently is worse than
+ * waiting: the wrong half gets sent somewhere.
+ */
+const SILENCE_MS = 1200;
 /** Nothing runs longer than this, however long someone talks. */
 const MAX_SEGMENT_MS = 20_000;
 /** Below this the level is room tone, not a voice. */

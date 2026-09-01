@@ -103,6 +103,11 @@ export function useMicLevel(): MicLevel {
   const [deviceLabel, setDeviceLabel] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  /*
+    A stable handle on `enable`, so the track's "ended" listener can call it
+    without the callback capturing an older version of itself.
+  */
+  const enableRef = useRef<((deviceId?: string) => Promise<void>) | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -168,6 +173,32 @@ export function useMicLevel(): MicLevel {
         },
       });
       streamRef.current = stream;
+
+      /*
+        Bluetooth headsets drop their microphone when audio plays.
+
+        A headset runs either HFP (microphone works, playback is poor) or A2DP
+        (playback is good, there is no microphone). Windows switches profile
+        when something plays — so Operator SPEAKING kills the very microphone
+        that was listening to him, and the owner sees "it keeps on turning the
+        mic off" with no obvious cause.
+
+        The track ends rather than erroring, so nothing throws and nothing
+        reports a failure; it simply goes quiet forever. Watching for that and
+        reopening is the only way back, and it is why this cannot just be left
+        to the user noticing.
+      */
+      const track = stream.getAudioTracks()[0];
+      track?.addEventListener("ended", () => {
+        // Only if this is still the live stream — a deliberate disable() also
+        // ends the track, and reopening then would be fighting the user.
+        if (streamRef.current !== stream) return;
+        console.info("[operator] microphone ended (likely a Bluetooth profile switch) — reopening");
+        const id = track.getSettings().deviceId;
+        disable();
+        // A beat, so the profile switch finishes before we ask for it back.
+        window.setTimeout(() => void enableRef.current?.(id), 800);
+      });
       // What the platform actually handed over, which is the only honest
       // answer to "which microphone is this".
       setDeviceLabel(stream.getAudioTracks()[0]?.label || null);
@@ -256,6 +287,8 @@ export function useMicLevel(): MicLevel {
       disable();
     }
   }, [supported, disable]);
+
+  enableRef.current = enable;
 
   // Release the microphone on unmount. A stream left open keeps the recording
   // indicator lit, which on a phone looks exactly like an app spying on you.
