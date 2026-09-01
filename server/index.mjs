@@ -58,6 +58,7 @@ import {
 import { runAction, listActions, ActionError } from "./actions.mjs";
 import { initProviders } from "./providers.mjs";
 import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
+import { matchIntent } from "./intent.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -602,7 +603,30 @@ const server = createServer(async (req, res) => {
 
       try {
         const heard = await transcribeUpload(Buffer.concat(chunks));
-        return json(res, 200, heard);
+
+        /*
+          Same observation as the clap path, for the microphone he actually
+          uses. Phone audio is where most real speech arrives, so it is where
+          the intent router's phrase list gets its evidence.
+
+          Reported to the client as well as logged, so it can be watched from
+          the phone rather than only in serve.log — but the client is told
+          plainly this is an observation, not an offer. Nothing acts on it.
+        */
+        let intent = null;
+        try {
+          intent = heard?.text ? matchIntent(heard.text) : null;
+          if (intent) {
+            console.log(
+              `[operator] intent (WOULD run, not running): ${intent.action}` +
+                `${intent.needs ? ` via ${intent.needs.find}` : ""} — ${intent.why}`,
+            );
+          }
+        } catch (err) {
+          console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
+        }
+
+        return json(res, 200, { ...heard, wouldMatch: intent });
       } catch (err) {
         return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
       }
@@ -873,6 +897,39 @@ server.listen(PORT, HOST, () => {
           `[operator] clap heard: ${JSON.stringify(text)} ` +
             `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%)`,
         );
+        /*
+          Watch what the intent router WOULD have done, without letting it.
+
+          `server/intent.mjs` turns a spoken sentence into a capability action
+          in microseconds with no model involved, and it passes 103 of its own
+          tests. But every one of those phrases was invented — none came from a
+          real transcript of him speaking. Shipping it live on that basis is
+          exactly the guessed-clap-threshold mistake, which cost two evenings
+          against a microphone that could not physically reach the number.
+
+          So it runs and logs and changes nothing. A few days of real speech
+          says whether it fires when it should, and more importantly whether it
+          ever fires when it should NOT — which is the failure that matters,
+          because a match writes to his data with no model and no confirmation
+          in between. The same discipline semantic verification used before it
+          was trusted.
+
+          Wrapped, because a router that throws must not cost him the sentence.
+        */
+        try {
+          const guess = matchIntent(text);
+          if (guess) {
+            console.log(
+              `[operator] intent (WOULD run, not running): ${guess.action}` +
+                `${guess.needs ? ` via ${guess.needs.find}` : ""} — ${guess.why}`,
+            );
+          } else {
+            console.log("[operator] intent: no match, going to a worker");
+          }
+        } catch (err) {
+          console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
+        }
+
         /*
           Straight into a job, so the transcript is answered rather than
           logged. Routed with "auto" like anything else — a spoken request is

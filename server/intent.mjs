@@ -104,7 +104,19 @@ const MAX_LENGTH = 120;
   about the gym page" becomes "tell me about the gym page", which matches
   nothing and returns null exactly as it should.
 */
-const FILLER = /^(hey|ok|okay|so|um+|uh+|right|now|operator|please|can you|could you|would you|will you|i want you to|i need you to|go ahead and|just)\b[\s,]*/;
+/*
+  Widened 2026-09-02 after probing the owner's actual register.
+
+  "yeah i did push day" matched NOTHING, because "yeah" was missing from this
+  list while "ok" and "so" were in it. His real Whisper transcripts from 31
+  August literally begin "Okay.", "Yeah. Okay." and "Mm-hmm" — spoken agreement
+  is how he starts a sentence, and Whisper faithfully transcribes it.
+
+  This does not widen what MATCHES. It normalises the same sentence so the rules
+  below see the words carrying meaning, which is a different and far safer kind
+  of change than loosening a pattern. The must-not-match set was re-run after.
+*/
+const FILLER = /^(hey|ok|okay|yeah|yea|yep|yup|yes|alright|all right|well|so|um+|uh+|erm+|right|now|operator|please|can you|could you|would you|will you|i want you to|i need you to|go ahead and|just)\b[\s,]*/;
 const TRAILING = /[\s,]*(please|thanks|thank you|mate|cheers)$/;
 
 /*
