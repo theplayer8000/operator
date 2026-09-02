@@ -12,7 +12,10 @@ rust-version = "1.77"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# The one thing a web page genuinely cannot do: be summoned when it is not
+# focused. Everything else here could be done in the browser.
+tauri-plugin-global-shortcut = "2"
 
 [profile.release]
 # A shell has no hot path; optimise for a small binary instead.

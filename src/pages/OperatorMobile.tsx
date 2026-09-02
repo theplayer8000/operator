@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { onSummoned, reportMicState } from "@/lib/desktop";
 import { useJobs } from "@/hooks/useJobs";
 import OperatorChat from "@/components/map/OperatorChat";
 import { useSpeech } from "@/hooks/useSpeech";
@@ -49,6 +50,8 @@ export default function OperatorMobile() {
     same enabled flag and the same one-at-a-time rule as the chat's.
   */
   const speech = useSpeech();
+  /** An answer Operator had ready but could not say aloud, because it is muted. */
+  const [mutedReply, setMutedReply] = useState<string | null>(null);
   const jobs = useJobs();
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -144,6 +147,50 @@ export default function OperatorMobile() {
     The confirmation is spoken instead, so he hears WHICH thing changed and can
     catch a wrong match while it is one tap to reverse.
   */
+  /*
+    The desktop shell, when there is one.
+
+    Two things only, both from ADR 0015's list of what a browser refused:
+
+    - **Summoned.** Ctrl+Alt+O or the tray brings the window back, and the shell
+      emits an event rather than doing anything to the microphone itself. The
+      mic belongs to `useMicLevel`, and a second owner in Rust would be two
+      things fighting over one device — exactly how the desktop clap detector
+      broke.
+    - **Mic state to the tray.** The ADR made "off by default and visibly so" a
+      condition of having a desktop client at all, and only the page knows
+      whether a stream is actually open.
+
+    Both no-op in a browser, so the phone never learns this exists.
+  */
+  useEffect(() => {
+    let stop = () => {};
+    void onSummoned(() => {
+      /*
+        Summoning does NOT open the microphone. Being on screen and being
+        listened to are different things, and conflating them is how a machine
+        ends up recording because a window was raised.
+
+        It puts the cursor in the chat instead, so the hotkey lands you ready to
+        type or to press the mic yourself. Found by role rather than by a ref
+        because the input belongs to OperatorChat, and threading a ref up through
+        two pages to focus one field would be more coupling than the feature is
+        worth.
+      */
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        'input[placeholder^="Ask Operator"], textarea[placeholder^="Ask Operator"]',
+      );
+      input?.focus();
+    }).then((off) => {
+      stop = off;
+    });
+    return () => stop();
+  }, []);
+
+  useEffect(() => {
+    void reportMicState(mic.active);
+  }, [mic.active]);
+
   const spokenFor = useRef<string | null>(null);
   useEffect(() => {
     const heard = transcript.last;
@@ -160,7 +207,26 @@ export default function OperatorMobile() {
       speech.stop();
       return;
     }
-    if (heard.handled && heard.say) speech.speak(heard.say);
+    if (!heard.handled || !heard.say) return;
+
+    /*
+      Muted is not the same as broken, and the difference has to be visible.
+
+      Operator answered a spoken question correctly and said nothing, because
+      `speech.enabled` defaults to OFF and is stored per device — and the
+      desktop shell is a different storage profile from the browser, so turning
+      it on in Edge does nothing for the Tauri window. From the owner's side
+      that reads as the feature failing: *"why didnt it speak out loud"*.
+
+      So when there is something to say and it cannot be said, the reason goes
+      on screen next to the answer rather than being swallowed.
+    */
+    if (!speech.enabled) {
+      setMutedReply(heard.say);
+      return;
+    }
+    setMutedReply(null);
+    speech.speak(heard.say);
   }, [transcript.last, speech]);
 
   const lastHeard = transcript.lines.length
@@ -365,8 +431,22 @@ export default function OperatorMobile() {
               pipeline is alive between sentences. Worth removing once the
               novelty wears off, not before.
             */}
+            {/*
+              The answer it had, when it could not say it.
+
+              Shown in the accent rather than the faint status colour, because
+              this is Operator's reply — the thing he asked for — and it only
+              appears at all when the spoken channel is closed.
+            */}
+            {mutedReply && (
+              <p className="text-sm leading-snug text-xp/90">{mutedReply}</p>
+            )}
             <p className="font-mono text-[10px] text-ink-700/70">
-              {transcript.working ? "transcribing…" : transcript.status}
+              {mutedReply
+                ? "muted — tap the speaker in the chat to hear replies"
+                : transcript.working
+                  ? "transcribing…"
+                  : transcript.status}
             </p>
           </div>
         </div>
