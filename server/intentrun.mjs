@@ -279,7 +279,16 @@ function select(all, needs, toParams, groupLabel) {
       "skip what is done" this layer's job, not the action's.
     */
     const todo = needs.skipDone ? all.filter((c) => !c.done) : all;
-    if (!todo.length) return { fail: "that was already all ticked off" };
+    /*
+      `found` marks a failure that is actually an ANSWER.
+
+      A chain of lookups (`needs.also`) falls through on a miss, and "already
+      ticked off" is not a miss — it means the thing was located and there is
+      nothing to do. Without this flag, "tick off bench press" on a day it was
+      already done would fall through to the routine and report "nothing called
+      bench press there", replacing a useful answer with a confusing one.
+    */
+    if (!todo.length) return { fail: "that was already all ticked off", found: true };
     return {
       fill: todo.map(toParams),
       labels: todo.map((c) => c.text),
@@ -304,11 +313,13 @@ function select(all, needs, toParams, groupLabel) {
 
   const chosen = needs.skipDone ? hit.hits.filter((c) => !c.done) : hit.hits;
   if (!chosen.length) {
+    // Located, and nothing to do — an answer, so a chain stops here.
     return {
       fail:
         hit.hits.length === 1
           ? `${hit.hits[0].text} is already ticked off`
           : "that was already all ticked off",
+      found: true,
     };
   }
 
@@ -339,10 +350,37 @@ export async function runIntent(transcript) {
   }
   if (!intent) return { ran: false, reason: "no match" };
 
-  if (NEVER.has(intent.action)) {
-    // A rule emitting one of these is a bug in the rules, so say so loudly.
-    console.warn(`[operator] intent: REFUSED ${intent.action} — not runnable by voice`);
-    return { ran: false, reason: `${intent.action} is not runnable by voice` };
+  /*
+    Every action this sentence could reach, primary first.
+
+    `intent.mjs` may attach `needs.also` — alternative lookups tried only where
+    the one before found NOTHING. It exists because "tick off X" cannot be
+    routed from words alone: "bench press" and "meditation" are the same
+    sentence shape, and only the data knows which is on today. The routine
+    resolver looks first, and where it finds nothing the gym resolver does.
+
+    A chain never changes a sentence that already resolves, because the primary
+    always runs first.
+  */
+  const chain = [
+    // The primary IS `intent.action`; `chosen` is decided further down.
+    { action: intent.action, needs: intent.needs },
+    ...(intent.needs?.also ?? []).map((alt) => ({ action: alt.action, needs: alt })),
+  ];
+
+  /*
+    NEVER is checked PER LINK, not once on the primary.
+
+    That list is the second lock on create and delete — the one that holds even
+    if a rule is widened later. Checking only `intent.action` would let a
+    fallback route straight around it, which is exactly the kind of gap a second
+    code path opens by default.
+  */
+  for (const link of chain) {
+    if (NEVER.has(link.action)) {
+      console.warn(`[operator] intent: REFUSED ${link.action} — not runnable by voice`);
+      return { ran: false, reason: `${link.action} is not runnable by voice` };
+    }
   }
 
   /*
@@ -363,46 +401,93 @@ export async function runIntent(transcript) {
   let sweep = false;
   let groupLabel = null;
 
+  /** Which link actually resolved. Drives the action run and the words spoken. */
+  let chosen = chain[0];
+
   if (intent.needs) {
-    const resolver = RESOLVE[intent.needs.find];
-    if (!resolver) {
-      return { ran: false, reason: `no resolver for ${intent.needs.find}` };
-    }
-    let outcome;
-    try {
-      outcome = await resolver(intent.needs);
-    } catch (err) {
-      return { ran: false, reason: `resolving ${intent.needs.find}: ${err?.message ?? err}` };
+    /*
+      The PRIMARY's failure is the one worth saying.
+
+      When every link misses, reporting the last one is nonsense: "tick off
+      meditation" on a rest day would answer "no gym session today", which is
+      not what he asked about. The routine was the reading his sentence
+      supported, so the routine's answer is the honest one.
+    */
+    let primaryFailure = null;
+    let resolved = null;
+
+    for (const link of chain) {
+      const resolver = RESOLVE[link.needs.find];
+      if (!resolver) {
+        return { ran: false, reason: `no resolver for ${link.needs.find}` };
+      }
+
+      let outcome;
+      try {
+        outcome = await resolver(link.needs);
+      } catch (err) {
+        return { ran: false, reason: `resolving ${link.needs.find}: ${err?.message ?? err}` };
+      }
+
+      if (outcome.ambiguous) {
+        /*
+          Ambiguity STOPS the chain rather than falling through. Two exercises
+          matching "press" is an answer — a question to ask him — and trying
+          somewhere else would discard it to go looking for a worse match.
+
+          Answered by asking rather than picking, and spoken back rather than
+          logged: he is standing there, and a log he reads tomorrow cannot
+          resolve a command he gave today.
+        */
+        const names = outcome.ambiguous.slice(0, 3).join(", or ");
+        return { ran: false, reason: "ambiguous", say: `Did you mean ${names}?` };
+      }
+
+      if (outcome.fail) {
+        /*
+          `found` separates "it is not here" from "it is here and already done".
+          Only the first is a miss. Falling through on the second would replace
+          a useful answer with a confusing one.
+        */
+        if (outcome.found) {
+          return { ran: false, reason: outcome.fail, say: `I couldn't — ${outcome.fail}.` };
+        }
+        if (!primaryFailure) primaryFailure = outcome.fail;
+        continue;
+      }
+
+      chosen = link;
+      resolved = outcome;
+      break;
     }
 
-    if (outcome.ambiguous) {
-      /*
-        Ambiguity is answered by asking, not by picking. Spoken back to him
-        rather than logged, because he is standing there and a log he reads
-        tomorrow cannot resolve a command he gave today.
-      */
-      const names = outcome.ambiguous.slice(0, 3).join(", or ");
-      return { ran: false, reason: "ambiguous", say: `Did you mean ${names}?` };
+    if (!resolved) {
+      const why = primaryFailure ?? "nothing matched";
+      return { ran: false, reason: why, say: `I couldn't — ${why}.` };
     }
-    if (outcome.fail) {
-      return { ran: false, reason: outcome.fail, say: `I couldn't — ${outcome.fail}.` };
+
+    if (chosen !== chain[0]) {
+      console.log(
+        `[operator] intent: ${chain[0].action} found nothing, using ${chosen.action}`,
+      );
     }
+
     /*
       Resolved values LAST, so a resolver always wins over whatever the rule
       guessed. The rule works from words; the resolver worked from what is
       actually on the board today.
     */
-    fills = outcome.fill.map((f) => ({ ...intent.params, ...f }));
-    labels = outcome.labels ?? [];
-    sweep = Boolean(outcome.sweep);
-    groupLabel = outcome.groupLabel ?? null;
+    fills = resolved.fill.map((f) => ({ ...intent.params, ...f }));
+    labels = resolved.labels ?? [];
+    sweep = Boolean(resolved.sweep);
+    groupLabel = resolved.groupLabel ?? null;
   }
 
   const done = [];
   let last = null;
   for (const [i, params] of fills.entries()) {
     try {
-      last = await runAction(intent.action, params);
+      last = await runAction(chosen.action, params);
       done.push(labels[i] ?? null);
     } catch (err) {
       /*
@@ -413,13 +498,13 @@ export async function runIntent(transcript) {
         toggles, all recoverable with a tap — and the spoken reply says how far
         it got instead of claiming the whole thing.
       */
-      console.warn(`[operator] intent: ${intent.action} failed — ${err?.message ?? err}`);
+      console.warn(`[operator] intent: ${chosen.action} failed — ${err?.message ?? err}`);
       if (!done.length) {
-        return { ran: false, reason: `${intent.action} failed: ${err?.message ?? err}` };
+        return { ran: false, reason: `${chosen.action} failed: ${err?.message ?? err}` };
       }
       return {
         ran: true,
-        action: intent.action,
+        action: chosen.action,
         result: last,
         say: `Got ${done.length} of ${fills.length}, then it failed.`,
       };
@@ -427,14 +512,14 @@ export async function runIntent(transcript) {
   }
 
   console.log(
-    `[operator] intent: RAN ${intent.action} x${done.length} — ${intent.why}`,
+    `[operator] intent: RAN ${chosen.action} x${done.length} — ${intent.why}`,
   );
   return {
     ran: true,
-    action: intent.action,
+    action: chosen.action,
     result: last,
     count: done.length,
-    say: spokenResult(intent, last, { labels: done, sweep, groupLabel }),
+    say: spokenResult(intent, last, { labels: done, sweep, groupLabel, action: chosen.action }),
   };
 }
 
@@ -446,8 +531,9 @@ export async function runIntent(transcript) {
  * naming what changed is what makes a mistake audible at the moment it is
  * cheap to undo.
  */
-function spokenResult(intent, result, { labels, sweep, groupLabel }) {
-  const a = intent.action;
+function spokenResult(intent, result, { labels, sweep, groupLabel, action }) {
+  // The action that ACTUALLY ran, which is not intent.action when a fallback won.
+  const a = action ?? intent.action;
   const it = labels[0] ?? "that";
   /*
     A sweep is counted, not listed. Reading six exercise names back is longer

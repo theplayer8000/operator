@@ -53,6 +53,29 @@
 // a generic path language for reaching into action results, and a generic way to
 // address anything is the shape `server/actions.mjs` exists to refuse.
 //
+// ## Which DOMAIN a spoken name belongs to is not a question words can answer
+//
+// "Tick off bench press" and "tick off meditation" are the same sentence. One
+// names a gym exercise and one names a routine step, and nothing in either
+// string says which — the difference lives in his data, and this file reads no
+// data by design (see the last paragraph). Guessing from the words means a list
+// of exercise names in source, drifting from the programme in `gym.sessions` the
+// first time he changes it.
+//
+// So a `needs` block may carry `also`: an ordered list of ALTERNATIVE lookups,
+// each a complete `needs` block plus the `action` it would run, tried only when
+// the one before it found nothing. The resolver decides the domain, because the
+// resolver is the thing that can see what is actually on today.
+//
+// Two properties make this safe rather than a second guess:
+//
+//   - **A fallback only runs where the primary found nothing.** It cannot change
+//     any sentence that already resolves, so "tick off meditation" never reaches
+//     the gym and the must-not-match set is untouched by it.
+//   - **`action` at the top level stays the primary's.** A caller that ignores
+//     `also` behaves exactly as it did before — including `intentrun.mjs`'s
+//     refusal list, which must be applied to `also[].action` too.
+//
 // Nothing here imports anything. It is a pure function over a string, which is
 // what makes `--self-test` at the bottom a real test rather than a mock.
 
@@ -83,6 +106,11 @@ export const EMITTED_ACTIONS = [
  *                  `sectionKey` and `taskId`.
  *   mission        read `missions_list`. Candidates are `missions` (each has
  *                  `id`, `name`). Fills `id`.
+ *
+ * A caller must also honour `needs.also` — see the header. Each entry is one of
+ * these same three lookups, in the same shape, with the action it fills for; try
+ * them in order, and only while the lookup before returned nothing found. An
+ * `also` entry that comes back ambiguous is still ambiguous, and abandons.
  */
 export const RESOLVERS = ["gym_exercise", "routine_step", "mission"];
 
@@ -568,6 +596,14 @@ function matchGymDone(text) {
         against `session.name` and abandons if it is not in there.
       */
       expect: label ? stem(label) : null,
+      /*
+        No fallback, and it is not an oversight. This rule only fires on a
+        sentence that named TRAINING — "I did push day", "gym done" — so the
+        domain was said out loud and there is nothing left to decide. `also`
+        exists for the one phrasing that is genuinely domain-blind, which is
+        "tick off X" below.
+      */
+      also: null,
     },
     why: label
       ? `you said you did ${label} — ticking that session off`
@@ -660,9 +696,54 @@ function matchRoutine(text) {
       skipDone: true,
       unique: !sweeping,
       expect: null,
+      /*
+        The gym, when the routine does not have it.
+
+        "Tick off bench press" is this rule's sentence — `tick off` is Daily
+        Routine's vocabulary — but bench press is an exercise, and the routine
+        resolver correctly finds no step by that name and abandons. Safe, and
+        wrong: he gets "nothing called bench press there" instead of the tick
+        he asked for.
+
+        The name cannot be classified from the words. Bench press, meditation,
+        and everything else he might say are all just names; which domain owns
+        one is a fact about his data, and hardcoding a list of exercises here
+        would drift from `gym.sessions` the first time he changes the
+        programme. So the lookup that CAN see today decides, by being asked
+        second.
+
+        Only for a NAMED step. A sweep ("mark my routine done", "check off my
+        morning routine") said the word routine — there is no other domain it
+        could have meant, and sweeping today's gym session off the back of it
+        would be exactly the wrong write.
+      */
+      also: sweeping
+        ? null
+        : [
+            {
+              action: "gym_toggle_exercise",
+              from: "gym_day",
+              args: { date },
+              find: "gym_exercise",
+              match: step,
+              // One named exercise, never the session — "tick off bench press"
+              // is a claim about one lift, unlike "I did push day".
+              each: false,
+              skipDone: true,
+              unique: true,
+              /*
+                No session guard. `expect` is for a sentence that NAMED a
+                session and could therefore contradict the day; this one named
+                an exercise, and finding it on today's session is itself the
+                proof that the day is right.
+              */
+              expect: null,
+              also: null,
+            },
+          ],
     },
     why: step
-      ? `ticking "${step}" off your routine`
+      ? `ticking "${step}" off — your routine, or today's session`
       : section
         ? `ticking off your ${section} routine`
         : "ticking today's routine off",
@@ -737,6 +818,8 @@ function matchMissionProgress(text) {
       // taking the first. Abandon and let him say which.
       unique: true,
       expect: null,
+      // A percentage is mission vocabulary; nothing else here has one.
+      also: null,
     },
     why: `setting "${name}" to ${progress}%`,
   };
@@ -807,6 +890,8 @@ function matchMissionStatus(text) {
       skipDone: false,
       unique: true,
       expect: null,
+      // This rule already requires the word "mission" — the domain was named.
+      also: null,
     },
     why: `marking "${name}" as ${status.replace("_", " ")}`,
   };
@@ -1005,6 +1090,17 @@ const MUST_MATCH = [
   ["session done", "gym_toggle_exercise"],
   // Whisper writes the sign as often as the word; the sign never once matched.
   ["set darams to 45%", "mission_set_progress"],
+  /*
+    A named thing ticked off, where the words do not say which domain owns it.
+
+    The action asserted here is the PRIMARY lookup's — the routine, which is
+    whose vocabulary "tick off" is. The gym reading rides along in `needs.also`
+    and is asserted properly in PARAMS below, because the point of the fix is
+    that this pair of phrases is indistinguishable until something reads today.
+  */
+  ["tick off bench press", "routine_toggle_task"],
+  ["tick bench press off", "routine_toggle_task"],
+  ["cross off squats", "routine_toggle_task"],
 ];
 
 const MUST_NOT = [
@@ -1075,6 +1171,17 @@ const MUST_NOT = [
   "i did legs yesterday and today",
   // A session that was not a training session.
   "i did a session with my therapist",
+  /*
+    The same tick-off phrasing the gym fallback was added for, in the shapes
+    that are still not an instruction. A second lookup makes a MATCH more
+    likely to land somewhere, which makes these worth pinning: none of the
+    guards above may be widened by reaching into a second domain.
+  */
+  "tick off bench press tomorrow",
+  "did i tick off bench press",
+  "i didnt tick off bench press",
+  "im going to tick off bench press later",
+  "tick off bench press and delete the gym mission",
 ];
 
 async function selfTest() {
@@ -1145,6 +1252,49 @@ async function selfTest() {
   if (!oOk) fail.push('"tick off meditation" should be one uniquely-named step');
   out.push(line(oOk, `step → match=${JSON.stringify(one?.needs.match)} each=${one?.needs.each} unique=${one?.needs.unique}`));
 
+  /*
+    The gym fallback, asserted on the block and not on the action name.
+
+    `matchIntent("tick off bench press").action` is `routine_toggle_task` and
+    always will be — the fix is not a different action, it is a second lookup
+    the resolver may fall through to. Checking only the action name would pass
+    with the fallback deleted, which is precisely the bug it fixes coming back.
+  */
+  const bench = matchIntent("tick off bench press");
+  const alt = bench?.needs.also?.[0];
+  const bOk =
+    bench?.needs.match === "bench press" &&
+    bench?.needs.unique === true &&
+    alt?.action === "gym_toggle_exercise" &&
+    alt?.find === "gym_exercise" &&
+    alt?.from === "gym_day" &&
+    alt?.match === "bench press" &&
+    alt?.each === false &&
+    alt?.skipDone === true &&
+    alt?.unique === true &&
+    alt?.expect === null &&
+    alt?.args?.date === bench?.params.date;
+  if (!bOk) fail.push('"tick off bench press" should offer the gym as a second lookup');
+  out.push(line(bOk, `named step → also ${alt?.find} for ${JSON.stringify(alt?.match)}`));
+
+  /*
+    And a sweep must NOT. "Check off my morning routine" said which feature it
+    meant; falling through to the gym would tick a whole training session off
+    the back of a sentence about the routine — a worse write than the one this
+    change fixes.
+  */
+  const sweepAlt = matchIntent("check off my morning routine")?.needs.also;
+  const wholeAlt = matchIntent("mark my routine done")?.needs.also;
+  const swOk = sweepAlt === null && wholeAlt === null;
+  if (!swOk) fail.push("a routine sweep must not fall through to the gym");
+  out.push(line(swOk, `sweeps → also=${sweepAlt} / ${wholeAlt}`));
+
+  // Nor the other direction: "I did push day" named training out loud.
+  const gymAlt = matchIntent("i did push day")?.needs.also;
+  const gOk = gymAlt === null;
+  if (!gOk) fail.push('"i did push day" named its domain and needs no fallback');
+  out.push(line(gOk, `gym session → also=${gymAlt}`));
+
   const ns = matchIntent("mark the epyc mission as not started");
   const nOk = ns?.params.status === "not_started" && ns?.needs.match === "epyc";
   if (!nOk) fail.push('"not started" must not be read as the substring "started"');
@@ -1162,6 +1312,22 @@ async function selfTest() {
     const ok = real.has(read);
     if (!ok) fail.push(`read action "${read}" is not in actions.mjs`);
     out.push(line(ok, `${read} (read, for needs.from)`));
+  }
+
+  /*
+    A fallback is a WRITE PATH, so it gets the same registry check as the top
+    level — declared in EMITTED_ACTIONS, real in actions.mjs, and pointed at a
+    lookup that exists. Without this, `needs.also` would be the one way to
+    reach an action nothing above ever looked at.
+  */
+  const fallbacks = new Map();
+  for (const [phrase] of MUST_MATCH) {
+    for (const a of matchIntent(phrase)?.needs?.also ?? []) fallbacks.set(a.action, a.find);
+  }
+  for (const [name, find] of fallbacks) {
+    const ok = EMITTED_ACTIONS.includes(name) && real.has(name) && RESOLVERS.includes(find);
+    if (!ok) fail.push(`fallback "${name}" via "${find}" is not a declared action and resolver`);
+    out.push(line(ok, `${name} via ${find} (needs.also)`));
   }
 
   console.log(out.join("\n"));
