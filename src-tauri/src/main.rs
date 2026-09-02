@@ -33,6 +33,52 @@ fn summon(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
+
+        /*
+          Onto the chosen screen, fullscreen — the gesture he already had.
+
+          `focus_operator` in server/actions.mjs does this for the BROWSER, by
+          finding a window titled "Operator" and sending F11. That helper would
+          find this window too, since the title matches, but F11 is a browser
+          convention and does nothing here. Hence doing it natively.
+
+          `OPERATOR_FOCUS_SCREEN` is read from the same variable so the two
+          behave identically and there is one place to change it. It is 1-based
+          to match what a person calls their screens, and clamped rather than
+          erroring — unplugging a monitor should fall back to the first, not
+          break the gesture.
+        */
+        let index = std::env::var("OPERATOR_FOCUS_SCREEN")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1);
+
+        /*
+          Already fullscreen means leave it alone.
+
+          The browser version measures before sending F11 for exactly this
+          reason: F11 TOGGLES, so a blind send throws him OUT of fullscreen when
+          he summons while already there. `is_fullscreen()` makes that
+          measurement exact rather than inferred from window bounds.
+        */
+        let already = window.is_fullscreen().unwrap_or(false);
+        if !already {
+            if let Ok(monitors) = window.available_monitors() {
+                if !monitors.is_empty() {
+                    let target = &monitors[index.min(monitors.len()) - 1];
+                    /*
+                      Position BEFORE fullscreen. Fullscreen applies to whichever
+                      monitor the window is currently on, so setting it first
+                      would fill the wrong screen and then refuse to move.
+                    */
+                    let _ = window.set_fullscreen(false);
+                    let _ = window.set_position(*target.position());
+                    let _ = window.set_fullscreen(true);
+                }
+            }
+        }
+
         let _ = window.set_focus();
         /*
           Tell the page it was summoned.
@@ -99,11 +145,31 @@ fn summon_window(app: tauri::AppHandle) {
     summon(&app);
 }
 
+/**
+ * Leave fullscreen, if we are in it.
+ *
+ * @returns true if it actually did something, so the caller knows whether to
+ *          treat the keypress as consumed. Escape means "back out of the
+ *          current thing", and in fullscreen the current thing IS fullscreen —
+ *          navigating away instead would leave him on another page still filling
+ *          the screen with no obvious way out.
+ */
+#[tauri::command]
+fn exit_fullscreen(app: tauri::AppHandle) -> bool {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_fullscreen().unwrap_or(false) {
+            let _ = window.set_fullscreen(false);
+            return true;
+        }
+    }
+    false
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(MicLabel(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window])
+        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window, exit_fullscreen])
         .setup(|app| {
             let handle = app.handle().clone();
 

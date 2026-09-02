@@ -78,6 +78,23 @@ export async function summonWindow(): Promise<void> {
 }
 
 /**
+ * Leave fullscreen if the shell is in it.
+ *
+ * @returns true when it actually left, so the caller can treat Escape as
+ *          consumed. Always false in a browser, where the page never put itself
+ *          fullscreen in the first place.
+ */
+export async function exitFullscreen(): Promise<boolean> {
+  if (!isDesktop()) return false;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return Boolean(await invoke("exit_fullscreen"));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Tell the tray whether the microphone is open.
  *
  * The shell cannot know this on its own — the stream lives in the page. The

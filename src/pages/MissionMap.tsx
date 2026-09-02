@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { onSummoned, onToggleMic, reportMicState, summonWindow } from "@/lib/desktop";
+import {
+  exitFullscreen,
+  onSummoned,
+  onToggleMic,
+  reportMicState,
+  summonWindow,
+} from "@/lib/desktop";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useSpeech } from "@/hooks/useSpeech";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -955,7 +961,21 @@ export default function MissionMap() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") navigate("/dashboard");
+      if (e.key === "Escape") {
+        /*
+          Back out of the current thing, and in the desktop shell that is
+          FULLSCREEN before it is the page. Summoning puts Operator fullscreen
+          on the chosen screen; navigating away from there would leave the
+          dashboard filling the display with no obvious way out.
+
+          Async, so the navigate only happens when there was no fullscreen to
+          leave. In a browser `exitFullscreen` resolves false immediately and
+          this behaves exactly as it did.
+        */
+        void exitFullscreen().then((left) => {
+          if (!left) navigate("/dashboard");
+        });
+      }
       // "r" as well as "0" — the hint was set in 10px mono and read as a "B".
       if (e.key === "0" || e.key === "r" || e.key === "R") fitView();
     };
