@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   exitFullscreen,
   onSummoned,
+  onToggleDetector,
   onToggleMic,
   reportMicState,
   summonWindow,
@@ -232,8 +233,8 @@ export default function MissionMap() {
   }, []);
 
   useEffect(() => {
-    void reportMicState(mic.active);
-  }, [mic.active]);
+    void reportMicState(mic.active, voice.listening);
+  }, [mic.active, voice.listening]);
 
   /*
     The tray's microphone line, which is the control that makes the rest usable.
@@ -246,16 +247,57 @@ export default function MissionMap() {
     The tray asks and the page acts, so there is still exactly one owner of the
     device.
   */
+  /*
+    Registered ONCE, and reading the current mic through a ref.
+
+    The first version depended on `[mic]`, and `useMicLevel` returns a fresh
+    object every render — so the effect tore the listener down and rebuilt it
+    constantly. `listen()` is async, so during each gap there was no listener at
+    all, and clicking the tray did nothing most of the time. That is why the
+    toggle "didn't seem to work".
+  */
+  /*
+    Both read inside listeners that register once, so the values are current
+    without the effect depending on them. A ref for `mic` already exists further
+    down for the render loop; this one is declared here because the tray
+    listener is set up above it, and two refs holding the same object is
+    cheaper than reordering a file around a subscription.
+  */
+  const listeningRef = useRef(false);
+  listeningRef.current = voice.listening;
+  const trayMicRef = useRef(mic);
+  trayMicRef.current = mic;
+
   useEffect(() => {
-    let stop = () => {};
+    let stopMic = () => {};
+    let stopDetector = () => {};
     void onToggleMic(() => {
-      if (mic.active) mic.disable();
-      else void mic.enable();
+      const m = trayMicRef.current;
+      if (m.active) m.disable();
+      else void m.enable();
     }).then((off) => {
-      stop = off;
+      stopMic = off;
     });
-    return () => stop();
-  }, [mic]);
+    /*
+      The detector goes through `/api/`, not through the shell, so the request
+      carries an identity like every other one. A native binary reaching past
+      authentication because it happens to be local is the shape of bypass this
+      project spent an ADR closing.
+    */
+    void onToggleDetector(() => {
+      void fetch("/api/listen/detector", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !listeningRef.current }),
+      }).catch(() => {});
+    }).then((off) => {
+      stopDetector = off;
+    });
+    return () => {
+      stopMic();
+      stopDetector();
+    };
+  }, []);
 
   const spokenFor = useRef<string | null>(null);
   useEffect(() => {

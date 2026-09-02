@@ -63,7 +63,15 @@ import { runAction, listActions, ActionError } from "./actions.mjs";
 import { configured as pushConfigured, publicKey as vapidPublicKey } from "./push.mjs";
 import { add as addSubscription, remove as removeSubscription } from "./subscriptions.mjs";
 import { initProviders } from "./providers.mjs";
-import { startListening, state as listenState, transcribeUpload } from "./listen.mjs";
+import {
+  startListening,
+  stopListening,
+  state as listenState,
+  transcribeUpload,
+} from "./listen.mjs";
+
+/** The clap handler, held so the detector can be restarted after a stop. */
+let clapCallback = null;
 import { matchIntent } from "./intent.mjs";
 import { runIntent } from "./intentrun.mjs";
 import { matchVoiceCommand, VOICE_ARM_MS } from "./voicecommand.mjs";
@@ -643,6 +651,37 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    /*
+      Turn the clap detector on and off while Operator runs.
+
+      The detector is the ALWAYS-ON layer: it reduces the stream to one number
+      per chunk and cannot produce words, but it holds a microphone open and
+      keeps two seconds of audio in memory so a capture is not clipped. That is
+      a thing worth being able to switch off deliberately rather than only by
+      not setting an environment variable at boot.
+
+      Gated like everything under /api/ — being able to open the owner's
+      microphone is not something an unidentified caller should reach.
+    */
+    if (pathname === "/api/listen/detector" && req.method === "POST") {
+      const body = await readBody(req);
+      const wanted = Boolean(body?.on);
+      if (wanted) {
+        if (!clapCallback) {
+          return json(res, 409, { error: "the detector was never configured this run" });
+        }
+        const started = startListening(clapCallback);
+        console.log(`[operator] clap detector ${started ? "ON" : "refused"} by ${identity?.device ?? "?"}`);
+        return json(res, started ? 200 : 409, {
+          listening: listenState.listening,
+          reason: listenState.reason ?? null,
+        });
+      }
+      stopListening();
+      console.log(`[operator] clap detector OFF by ${identity?.device ?? "?"}`);
+      return json(res, 200, { listening: listenState.listening, reason: null });
+    }
+
     if (pathname === "/api/listen") {
       return json(res, 200, {
         listening: listenState.listening,
@@ -1105,7 +1144,7 @@ server.listen(PORT, HOST, () => {
     misfired clap should cost a moment of listening, not an empty conversation
     in the tab strip.
   */
-  if (startListening(() => {
+  const onDoubleClap = () => {
     /*
       `pause: false` — the clap no longer touches what is playing.
 
@@ -1254,7 +1293,23 @@ server.listen(PORT, HOST, () => {
       .catch((err) => {
         console.warn(`[operator] clap listen failed: ${err?.message ?? err}`);
       });
-  })) {
+  };
+
+  /*
+    Exposed so the detector can be switched on and off while Operator runs.
+
+    It used to start once at boot with no way off short of a restart. ADR 0015
+    made "off by default and visibly so" a condition of the desktop shell, and
+    the owner's framing is the better one: self-hosting decides who HOLDS a
+    recording, not whether it should have been made. A microphone that is open
+    because nobody chose to close it is a decision by default.
+
+    The callback is captured rather than rebuilt, so restarting the detector
+    cannot quietly get a different one.
+  */
+  clapCallback = onDoubleClap;
+
+  if (startListening(onDoubleClap)) {
     console.log(`[operator] listening for a double clap on "${listenState.device}"`);
   } else if (listenState.reason && process.env.OPERATOR_LISTEN) {
     console.warn(`[operator] not listening: ${listenState.reason}`);

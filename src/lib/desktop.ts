@@ -61,6 +61,24 @@ export async function onToggleMic(handler: () => void): Promise<() => void> {
 }
 
 /**
+ * Run `handler` when the tray's clap-detector line is clicked.
+ *
+ * The page does this rather than the shell calling the server directly, so the
+ * request goes through `/api/` and its identity check like every other one. A
+ * native binary reaching past authentication because it happens to be local is
+ * exactly the shape of bypass this project spent an ADR closing.
+ */
+export async function onToggleDetector(handler: () => void): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen("operator://toggle-detector", () => handler());
+  } catch {
+    return () => {};
+  }
+}
+
+/**
  * Bring the window to the front. Used by the clap.
  *
  * Only worth calling when Operator is NOT already focused: clapping while
@@ -95,18 +113,25 @@ export async function exitFullscreen(): Promise<boolean> {
 }
 
 /**
- * Tell the tray whether the microphone is open.
+ * Tell the tray about BOTH microphones.
  *
- * The shell cannot know this on its own — the stream lives in the page. The
- * ADR made "off by default and visibly so" a condition of accepting a desktop
- * client at all, and a tray that guesses would be worse than no tray: the whole
- * point is that he can tell at a glance whether Operator is listening.
+ * Two flags, not one, because there are two different things and reporting them
+ * as "the microphone" is what made this confusing to reason about:
+ *
+ * - `detector` — always-on, server-side, reduces the stream to one number per
+ *   chunk. It can hear a clap and cannot produce words.
+ * - `dictation` — this device's stream, opened only when asked, and the one
+ *   that becomes text.
+ *
+ * The shell cannot know either on its own. ADR 0015 made "off by default and
+ * visibly so" a condition of having a desktop client at all, and a tray that
+ * guessed would be worse than no tray.
  */
-export async function reportMicState(active: boolean): Promise<void> {
+export async function reportMicState(dictation: boolean, detector: boolean): Promise<void> {
   if (!isDesktop()) return;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("set_mic_state", { active });
+    await invoke("set_mic_state", { dictation, detector });
   } catch {
     /* The shell is a nicety; the page works without it. */
   }

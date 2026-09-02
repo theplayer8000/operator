@@ -30,9 +30,17 @@
 // ## The posture change, and how it is gated
 //
 // **This holds the microphone open for as long as Operator runs.** Nothing is
-// recorded, nothing is written to disk, and nothing leaves the machine — the
-// stream is read in fixed-size chunks, reduced to one number per chunk, and
-// discarded. But an always-open microphone is a decision, not a setting, so it
+// written to disk and nothing leaves the machine: the stream is read in
+// fixed-size chunks and reduced to one number per chunk — an amplitude — which
+// is all a clap detector needs. It cannot produce words. There is no model
+// here and no text.
+//
+// One honest qualification, because "nothing is recorded" was too strong:
+// **the last two seconds of raw audio exist in memory** (`PRE_ROLL_MS`),
+// continuously overwritten. That is what makes "clap and start talking" work
+// rather than "clap, wait, talk" — the capture begins before the clap. It is
+// never written unless a double clap actually fires, and the ring is two
+// seconds long, but it is audio in RAM and the file should say so. But an always-open microphone is a decision, not a setting, so it
 // is **off unless `OPERATOR_LISTEN` names a device** and it is environment-only
 // for the same reason `OPERATOR_TERMINAL_DEVICES` is: a worker has `Write`
 // across the tree, and a listener it could switch on by editing a file is one

@@ -30,7 +30,11 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 /// while still minimised stays in the taskbar, which looks exactly like the
 /// hotkey not working.
 fn summon(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("[operator] summon: no window named \"main\"");
+        return;
+    };
+    {
         let _ = window.unminimize();
         let _ = window.show();
 
@@ -63,19 +67,32 @@ fn summon(app: &tauri::AppHandle) {
           measurement exact rather than inferred from window bounds.
         */
         let already = window.is_fullscreen().unwrap_or(false);
-        if !already {
-            if let Ok(monitors) = window.available_monitors() {
-                if !monitors.is_empty() {
-                    let target = &monitors[index.min(monitors.len()) - 1];
+        if already {
+            println!("[operator] summon: already fullscreen, just focusing");
+        } else {
+            match window.available_monitors() {
+                Ok(monitors) if !monitors.is_empty() => {
+                    let pick = index.min(monitors.len()) - 1;
+                    let position = *monitors[pick].position();
                     /*
                       Position BEFORE fullscreen. Fullscreen applies to whichever
                       monitor the window is currently on, so setting it first
                       would fill the wrong screen and then refuse to move.
                     */
                     let _ = window.set_fullscreen(false);
-                    let _ = window.set_position(*target.position());
-                    let _ = window.set_fullscreen(true);
+                    let moved = window.set_position(position);
+                    let full = window.set_fullscreen(true);
+                    println!(
+                        "[operator] summon: screen {} of {} at {:?} — move {:?}, fullscreen {:?}",
+                        pick + 1,
+                        monitors.len(),
+                        position,
+                        moved.is_ok(),
+                        full.is_ok()
+                    );
                 }
+                Ok(_) => eprintln!("[operator] summon: no monitors reported"),
+                Err(e) => eprintln!("[operator] summon: could not read monitors: {e}"),
             }
         }
 
@@ -95,8 +112,17 @@ fn summon(app: &tauri::AppHandle) {
     }
 }
 
-/// The tray's microphone line, so the page can rewrite it.
-struct MicLabel(Mutex<Option<MenuItem<tauri::Wry>>>);
+/// The tray's two microphone lines, so the page can rewrite them.
+///
+/// TWO, because there are two different microphones and conflating them is what
+/// made this confusing. The detector is always-on and can only hear a clap —
+/// one number per chunk, no model, no words. Dictation is the one that produces
+/// text, and it only opens when he asks. Showing a single "microphone" state
+/// would either overstate the first or hide the second.
+struct TrayLabels {
+    detector: Mutex<Option<MenuItem<tauri::Wry>>>,
+    dictation: Mutex<Option<MenuItem<tauri::Wry>>>,
+}
 
 /**
  * Report whether the microphone is open.
@@ -108,22 +134,44 @@ struct MicLabel(Mutex<Option<MenuItem<tauri::Wry>>>);
  * to tell at a glance whether Operator is listening.
  */
 #[tauri::command]
-fn set_mic_state(active: bool, label: State<MicLabel>, app: tauri::AppHandle) {
-    if let Ok(item) = label.0.lock() {
+fn set_mic_state(
+    dictation: bool,
+    detector: bool,
+    labels: State<TrayLabels>,
+    app: tauri::AppHandle,
+) {
+    if let Ok(item) = labels.dictation.lock() {
         if let Some(item) = item.as_ref() {
-            let _ = item.set_text(if active {
-                "Microphone: ON"
+            let _ = item.set_text(if dictation {
+                "Dictation: ON — listening to you"
             } else {
-                "Microphone: off"
+                "Dictation: off"
             });
         }
     }
-    // The tooltip carries it too, so hovering answers without opening the menu.
+    if let Ok(item) = labels.detector.lock() {
+        if let Some(item) = item.as_ref() {
+            let _ = item.set_text(if detector {
+                "Clap detector: ON"
+            } else {
+                "Clap detector: off"
+            });
+        }
+    }
+
+    /*
+      The tooltip says the STRONGER of the two, because it is one line and the
+      question it answers is "can this hear what I am saying".
+
+      Dictation outranks the detector deliberately: the detector holds a
+      microphone but cannot produce words, and reporting them as equivalent
+      would make the serious state indistinguishable from the harmless one.
+    */
     if let Some(tray) = app.tray_by_id("operator") {
-        let _ = tray.set_tooltip(Some(if active {
-            "Operator — listening"
-        } else {
-            "Operator"
+        let _ = tray.set_tooltip(Some(match (dictation, detector) {
+            (true, _) => "Operator — listening to you",
+            (false, true) => "Operator — waiting for a clap",
+            (false, false) => "Operator",
         }));
     }
 }
@@ -168,7 +216,10 @@ fn exit_fullscreen(app: tauri::AppHandle) -> bool {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(MicLabel(Mutex::new(None)))
+        .manage(TrayLabels {
+            detector: Mutex::new(None),
+            dictation: Mutex::new(None),
+        })
         .invoke_handler(tauri::generate_handler![set_mic_state, summon_window, exit_fullscreen])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -234,13 +285,21 @@ fn main() {
               which owns the stream; the label only changes when the page
               reports back that something actually happened.
             */
-            let mic = MenuItem::with_id(app, "mic", "Microphone: off", true, None::<&str>)?;
+            let detector = MenuItem::with_id(app, "detector", "Clap detector: off", true, None::<&str>)?;
+            let mic = MenuItem::with_id(app, "mic", "Dictation: off", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
-            let menu = Menu::with_items(app, &[&show, &mic, &separator, &quit])?;
+            let separator2 = PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(app, &[&show, &separator, &detector, &mic, &separator2, &quit])?;
 
-            // Hand the item to the command above so the page can rewrite it.
-            if let Ok(mut slot) = app.state::<MicLabel>().0.lock() {
+            // Hand both items to the command above so the page can rewrite them.
+            // `State` borrows from the app, so bind it before locking rather
+            // than chaining — the temporary would be dropped mid-expression.
+            let labels: State<TrayLabels> = app.state();
+            if let Ok(mut slot) = labels.detector.lock() {
+                *slot = Some(detector.clone());
+            }
+            if let Ok(mut slot) = labels.dictation.lock() {
                 *slot = Some(mic.clone());
             }
 
@@ -255,6 +314,12 @@ fn main() {
                     "mic" => {
                         // Ask, do not act. The page owns the microphone.
                         let _ = app.emit("operator://toggle-mic", ());
+                    }
+                    "detector" => {
+                        // Also the page's to do: it goes through /api/, which is
+                        // authenticated, rather than the shell reaching into the
+                        // server behind the identity check.
+                        let _ = app.emit("operator://toggle-detector", ());
                     }
                     "quit" => app.exit(0),
                     _ => {}
