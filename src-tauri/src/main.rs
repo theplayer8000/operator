@@ -96,7 +96,29 @@ fn summon(app: &tauri::AppHandle) {
             }
         }
 
+        /*
+          Windows will not let a background process take the foreground, and
+          `set_focus()` fails SILENTLY when it refuses.
+
+          That is exactly what the log showed: "already fullscreen, just
+          focusing" on every hotkey press while nothing came forward. The call
+          returns Ok, the window stays behind, and there is nothing to debug.
+
+          `actions.mjs` hit this first and works around it in its native helper
+          by pressing and releasing ALT, which briefly makes the calling process
+          eligible. There is no such trick in Tauri's API, but toggling
+          always-on-top does the same job through a different door: raising a
+          topmost window is not foreground theft, so it is allowed, and dropping
+          the flag immediately afterwards leaves it an ordinary window that
+          happens to now be in front.
+
+          Order matters. Topmost must be set BEFORE focus and cleared AFTER, or
+          the raise and the focus race and it lands behind again roughly half
+          the time.
+        */
+        let _ = window.set_always_on_top(true);
         let _ = window.set_focus();
+        let _ = window.set_always_on_top(false);
         /*
           Tell the page it was summoned.
 

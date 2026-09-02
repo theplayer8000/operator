@@ -58,3 +58,30 @@ npm run tauri:build   # a distributable
 
 Start the storage server first (`npm run serve`) — the shell has nothing to
 show without it, by design.
+
+## Build the profile you are about to run
+
+There are now **two** shell binaries — `target/debug/` and `target/release/` —
+and `cargo build` produces only the first. This is the same class of problem as
+the three builds in `CLAUDE.md`'s table, and it caught a session on 2026-09-02:
+several fixes were built into debug, tested from release, and reported as "still
+not working" because the running binary predated them by eleven hours.
+
+`npm run tauri:dev` and `npm run tauri:build` each handle one profile
+end-to-end. Reach for a bare `cargo build` only when you know which one is
+running, and check the timestamp when a change appears to have done nothing:
+
+```bash
+ls -l target/release/operator-shell.exe
+```
+
+## Launch it through hidden.vbs, not from a shell
+
+`scripts/operator-shell.cmd`, started by `scripts/hidden.vbs`, exactly as the
+server and both Vite instances are.
+
+The binary is built with `windows_subsystem = "windows"` so it creates no
+console of its own — but it INHERITS one from whatever starts it. Launching the
+exe from a terminal leaves a stray window titled "Operator (2)" full of log
+lines sitting on the desktop, which is a launcher problem wearing the costume of
+a build problem.
