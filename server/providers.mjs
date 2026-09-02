@@ -9,6 +9,12 @@
 import { runTurn as runClaudeTurn } from "./runner.mjs";
 import { runTurn as runGeminiTurn } from "./gemini.mjs";
 import {
+  runTurn as runAirouterTurn,
+  configured as airouterConfigured,
+  MODELS as airouterModels,
+  DEFAULT_MODEL as airouterDefaultModel,
+} from "./airouter.mjs";
+import {
   runTurn as runOllamaTurn,
   isAvailable as ollamaAvailable,
   installedModels as installedOllamaModels,
@@ -95,9 +101,42 @@ const OLLAMA = {
   runTurn: runOllamaTurn,
 };
 
+/**
+ * AI Router — flat-rate, Swiss-hosted, OpenAI-compatible. ADR 0016.
+ *
+ * Registered here rather than probed like OLLAMA because a key either exists at
+ * boot or it does not; there is no service to come up late.
+ *
+ * **It is the local model's replacement, not Claude's.** The 3B that Ollama can
+ * fit in 4GB of VRAM is measurably too weak for the verification and routing it
+ * is already given, and these are 27B and 284B at a fixed monthly price. Claude
+ * on the Pro subscription keeps the judgement work, where its marginal turn is
+ * already free.
+ *
+ * `tools: "capability-actions"` like the other two non-Claude workers: it reaches
+ * `actions.mjs` and nothing else. No filesystem, no shell — so every tool call
+ * is something the owner could already do through a page, and there is nothing
+ * to ask permission about.
+ */
+const AIROUTER = {
+  id: "airouter",
+  label: "AI Router",
+  defaultModel: airouterDefaultModel,
+  models: airouterModels.map((id) => ({ id, label: id })),
+  capabilities: {
+    tools: "capability-actions",
+    attachments: false,
+    permissions: "pre-approved",
+    sessions: "in-memory",
+    verification: "worker-reported",
+  },
+  runTurn: runAirouterTurn,
+};
+
 const WORKERS = new Map([
   [CLAUDE_CODE.id, CLAUDE_CODE],
   ...(process.env.GEMINI_API_KEY ? [[GEMINI.id, GEMINI]] : []),
+  ...(airouterConfigured ? [[AIROUTER.id, AIROUTER]] : []),
 ]);
 
 /**
