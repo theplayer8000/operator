@@ -8,9 +8,12 @@ import {
   CheckCircle2,
   XCircle,
   RotateCcw,
+  Volume2,
+  Check,
 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { usePush } from "@/hooks/usePush";
+import { useSpeech } from "@/hooks/useSpeech";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 
 const STATUS_META = {
@@ -41,6 +44,7 @@ export default function Settings() {
   } = useSettings();
 
   const push = usePush();
+  const speech = useSpeech();
   const fileInput = useRef<HTMLInputElement>(null);
   const meta = STATUS_META[status];
 
@@ -169,6 +173,99 @@ export default function Settings() {
         )}
       </section>
 
+      {/* --- Voice output --- */}
+      {/*
+        A device picker rather than a fix in code, because the problem is
+        physical: Operator plays through the desk speakers while he listens on
+        a Bluetooth headset, so it hears its own sentence and answers it. Echo
+        cancellation is already on and can do nothing across two devices —
+        there is no shared clock and nothing to subtract. Speaking through the
+        device the microphone is on is what makes it work at all.
+      */}
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center gap-2 mb-1">
+          <Volume2 size={15} className="text-ink-500" />
+          <h2 className="font-display text-sm font-medium text-ink-300">Voice output</h2>
+        </header>
+        <p className="text-xs text-ink-700 mb-4 leading-relaxed">
+          Which speaker Operator talks through on this device. Choose the{" "}
+          <span className="text-ink-500">same one your microphone is on</span> and it stops hearing
+          itself — echo cancellation has nothing to work with while it plays from the speakers and
+          listens on a headset.
+        </p>
+
+        {!speech.outputSupported ? (
+          /*
+            Two different reasons produce one missing API, and telling them
+            apart is the whole value of this paragraph. On a bare 100.x address
+            the page is insecure and Chrome hides the API entirely — which
+            looks exactly like Safari not having it, and would otherwise send
+            someone hunting for a browser bug. Same trap as the microphone in
+            useMicLevel, same answer.
+          */
+          <p className="text-xs text-ink-600 leading-relaxed p-3 rounded-badge border border-base-600 bg-base-700/30">
+            {typeof window !== "undefined" && !window.isSecureContext
+              ? "Choosing a speaker needs a secure page — open Operator at its https://…ts.net address rather than a bare IP."
+              : "This browser won't let a page choose a speaker — Safari and everything on iOS included, since they all run WebKit."}{" "}
+            Operator plays wherever the system sends it, and the guard that drops anything recorded
+            while it was talking is what stops the loop here.
+          </p>
+        ) : (
+          <>
+            <ul className="space-y-1.5">
+              {/*
+                The absence of a choice, offered as a choice. Not the "Default"
+                device id Windows publishes: pinning that would freeze today's
+                default, where leaving it unset genuinely follows the system.
+              */}
+              <OutputRow
+                label="System default"
+                hint="Whatever this machine is currently using."
+                selected={speech.outputId === null}
+                onSelect={() => speech.setOutputId(null)}
+              />
+              {speech.outputs.map((d) => (
+                <OutputRow
+                  key={d.deviceId}
+                  label={d.label || "Unnamed output"}
+                  selected={speech.outputId === d.deviceId}
+                  onSelect={() => speech.setOutputId(d.deviceId)}
+                />
+              ))}
+            </ul>
+
+            {!speech.outputsNamed && (
+              <div className="mt-3 pt-3 border-t border-base-600">
+                <p className="text-xs text-ink-700 leading-relaxed mb-2">
+                  Your speakers aren't listed by name yet. Browsers withhold them until the
+                  microphone has
+                  been allowed once — the list of your audio devices is itself identifying. This
+                  asks for it and closes the microphone immediately; it is spent on the names, not
+                  on listening.
+                </p>
+                <button
+                  onClick={() => void speech.nameOutputs()}
+                  className="px-3 min-h-[44px] rounded-badge border border-base-600 text-sm text-ink-300 hover:bg-base-700/60 transition-colors"
+                >
+                  Show device names
+                </button>
+              </div>
+            )}
+
+            {speech.outputError && (
+              <p className="text-xs text-vital-down mt-3 leading-relaxed">{speech.outputError}</p>
+            )}
+
+            <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+              This routes the spoken voice. If that voice is unavailable and Operator falls back to
+              the browser's built-in one, that sentence{" "}
+              <span className="text-ink-500">cannot be routed</span> — it plays wherever the
+              platform decides.
+            </p>
+          </>
+        )}
+      </section>
+
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
         <header className="mb-1">
           <h2 className="font-display text-sm font-medium text-ink-300">Backup</h2>
@@ -268,5 +365,50 @@ export default function Settings() {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * One speaker in the list.
+ *
+ * A button rather than a `<select>`: a native picker on iOS covers half the
+ * screen and hides the hint under each option, and the selected state has to
+ * be visible without opening anything.
+ */
+function OutputRow({
+  label,
+  hint,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  hint?: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <li>
+      <button
+        onClick={onSelect}
+        aria-pressed={selected}
+        className={`w-full flex items-center gap-3 text-left px-3 min-h-[44px] py-2 rounded-badge border transition-colors ${
+          selected
+            ? "border-xp/40 bg-xp/10"
+            : "border-base-600 bg-base-700/30 hover:border-base-500"
+        }`}
+      >
+        <Check
+          size={14}
+          className={`shrink-0 ${selected ? "text-xp" : "text-transparent"}`}
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1">
+          <span className={`block text-sm truncate ${selected ? "text-ink-100" : "text-ink-300"}`}>
+            {label}
+          </span>
+          {hint && <span className="block text-[11px] text-ink-700 leading-relaxed">{hint}</span>}
+        </span>
+      </button>
+    </li>
   );
 }

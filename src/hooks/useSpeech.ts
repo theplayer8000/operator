@@ -28,6 +28,11 @@ import { readStorage, writeStorage } from "@/lib/storage";
 
 const ENABLED_KEY = "speech.enabled";
 const VOICE_KEY = "speech.voice";
+/**
+ * Which speaker Operator talks through. Same reasoning as the two above: a
+ * property of the device you are at, so `localStorage` rather than the store.
+ */
+const OUTPUT_KEY = "speech.output";
 
 export interface SpeechState {
   /** False when the browser has no synthesis at all — hide the control, don't offer it. */
@@ -41,6 +46,33 @@ export interface SpeechState {
   setVoiceName: (name: string | null) => void;
   speak: (text: string) => void;
   stop: () => void;
+
+  /**
+   * This browser will let a page choose an output device at all.
+   *
+   * False on Safari and on every iOS browser, since they all run WebKit. The
+   * UI must SAY that rather than showing a picker that quietly does nothing —
+   * a dead control is how "I set it and it still echoes" becomes another
+   * debugging round.
+   */
+  outputSupported: boolean;
+  /** Speakers this browser can offer. Empty until it has been asked. */
+  outputs: MediaDeviceInfo[];
+  /** Chosen device id, or null for "whatever the system is using". */
+  outputId: string | null;
+  setOutputId: (id: string | null) => void;
+  /**
+   * True once device labels are readable.
+   *
+   * Browsers withhold them until the microphone has been granted once on this
+   * origin — the list of your audio devices is itself identifying. Before that
+   * the ids exist and the names do not, which is a picker of hex strings.
+   */
+  outputsNamed: boolean;
+  /** Why the chosen speaker is not the one being used, when that happens. */
+  outputError: string | null;
+  /** Spend one microphone grant so the browser will name the devices. */
+  nameOutputs: () => Promise<void>;
 }
 
 /**
@@ -165,6 +197,132 @@ function audioElement(): HTMLAudioElement {
   return sharedAudio;
 }
 
+/*
+  ## Choosing the speaker, and why it is worth the code
+
+  Operator plays through the desk speakers while the owner listens on a
+  Bluetooth headset, so it hears itself and answers its own sentence. The
+  standing defence is `echoCancellation: true` in `useMicLevel`, and in that
+  arrangement it is INERT: a canceller subtracts the playback stream from the
+  captured one, and two different devices share no clock, so there is nothing to
+  subtract. `usePhoneTranscript` therefore carries the whole load — it discards
+  any segment recorded while Operator was talking, plus a 400ms tail for the
+  room's decay.
+
+  Playing through the SAME device the microphone is on is what makes echo
+  cancellation start working, because then there is one clock and one stream to
+  reference. That is the row ADR 0015 lists as "output device selection", and
+  `setSinkId` is the whole of it.
+
+  Two honest limits, both surfaced in Settings rather than hidden here:
+
+  - WebKit has no `setSinkId`, so this does nothing on Safari or anything on
+    iOS. The phone keeps the software guard alone.
+  - The `speechSynthesis` fallback cannot be routed at all. It is the browser's
+    own engine, not an element, and it plays wherever the platform decides.
+*/
+
+/** Whether a page may choose its output device here at all. */
+export function outputRoutingSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof HTMLMediaElement !== "undefined" &&
+    typeof HTMLMediaElement.prototype.setSinkId === "function"
+  );
+}
+
+/**
+ * The preference is read from storage on every use rather than cached.
+ *
+ * There is one audio element and several mounted copies of this hook, so a
+ * module-level cache would be a second source of truth that the Settings page
+ * could change while the map's copy carried on using the old one.
+ */
+function chosenOutput(): string | null {
+  return readStorage<string | null>(OUTPUT_KEY, null);
+}
+
+/*
+  The device the element is actually pointed at, set only on SUCCESS.
+
+  Compared against the wish rather than reading `el.sinkId`, because after a
+  device disappears the element keeps reporting the id it was given while the
+  browser plays through the default. Tracking the successful applications means
+  a failed one is retried on the next sentence, which is what makes a headset
+  that comes back start working again without a reload.
+*/
+let appliedSink: string | null = null;
+let sinkError: string | null = null;
+const sinkErrorListeners = new Set<(message: string | null) => void>();
+
+function setSinkError(message: string | null) {
+  sinkError = message;
+  sinkErrorListeners.forEach((fn) => fn(message));
+}
+
+/** The last routing failure, for a hook mounting after it happened. */
+export function outputError(): string | null {
+  return sinkError;
+}
+
+/**
+ * Point the shared element at the chosen speaker.
+ *
+ * Never throws. A sentence coming out of the wrong speaker is a worse-sounding
+ * success; a sentence not spoken because the headset is in another room is a
+ * failure, and this project has already lost a week to audio that silently did
+ * nothing.
+ */
+async function applyOutputDevice(el: HTMLAudioElement): Promise<void> {
+  const wanted = chosenOutput();
+  if (!outputRoutingSupported()) return;
+
+  // "System default" is the absence of a choice, not a device id: leaving the
+  // element unset means it FOLLOWS the OS default when that changes, which
+  // pinning it to today's default id would not.
+  if (!wanted) {
+    if (appliedSink) {
+      try {
+        await el.setSinkId("");
+        appliedSink = null;
+        setSinkError(null);
+      } catch {
+        /* Staying on the previous device is not worth reporting. */
+      }
+    }
+    return;
+  }
+
+  if (appliedSink === wanted) return;
+
+  try {
+    await el.setSinkId(wanted);
+    appliedSink = wanted;
+    setSinkError(null);
+  } catch (err) {
+    appliedSink = null;
+    const name = (err as Error)?.name;
+    setSinkError(
+      name === "NotFoundError"
+        ? "That speaker isn't connected — playing through the system default until it's back."
+        : name === "NotAllowedError"
+          ? "This browser won't let the page choose a speaker here. Allow it in the site settings."
+          : ((err as Error)?.message ?? "Could not switch to that speaker."),
+    );
+  }
+}
+
+/**
+ * Forget which device the element is on, so the next sentence re-applies.
+ *
+ * Called when the device list changes. A headset that was unplugged and
+ * reconnected is a device that CAN be routed to again, but nothing tells the
+ * element that — without this it keeps quietly using the default forever.
+ */
+function forgetAppliedOutput() {
+  appliedSink = null;
+}
+
 /**
  * Buy the right to speak later, using a gesture happening now.
  *
@@ -180,6 +338,13 @@ export function unlockSpeech() {
   unlocked = true;
 
   const el = audioElement();
+  /*
+    Route now, but do NOT await it — an await here ends the gesture, and the
+    right to play is exactly what this function exists to buy. The silent WAV
+    coming out of the old device is of no consequence; what matters is that the
+    element is already pointed at the right speaker before the first sentence.
+  */
+  void applyOutputDevice(el);
   el.src =
     "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
   void el.play().catch(() => {
@@ -284,6 +449,102 @@ export function useSpeech(): SpeechState {
     writeStorage(VOICE_KEY, name);
   }, []);
 
+  // --- Which speaker it comes out of. See applyOutputDevice above. ---
+
+  const outputSupported = outputRoutingSupported();
+  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [outputId, setOutputIdState] = useState<string | null>(
+    () => readStorage<string | null>(OUTPUT_KEY, null),
+  );
+  const [outputErr, setOutputErr] = useState<string | null>(() => outputError());
+
+  const refreshOutputs = useCallback(async () => {
+    if (typeof navigator === "undefined") return;
+    if (typeof navigator.mediaDevices?.enumerateDevices !== "function") return;
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      /*
+        Windows publishes ALIASES beside the real devices — "Default - Speakers
+        (…)" and "Communications - Speakers (…)" pointing at whatever the
+        control panel currently selects. Listing them shows one speaker three
+        times, which is what made the microphone picker look broken. Filtered
+        by id rather than by label, because the prefix is localised and the id
+        is not. "System default" is offered by the UI as the null choice, which
+        is the same thing without pinning it to today's default.
+      */
+      setOutputs(
+        all.filter(
+          (d) =>
+            d.kind === "audiooutput" &&
+            d.deviceId &&
+            d.deviceId !== "default" &&
+            d.deviceId !== "communications",
+        ),
+      );
+    } catch {
+      /* Not fatal: speech still works, it just cannot be re-pointed. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshOutputs();
+
+    // The routing failure happens inside a sentence, module-side. This is how
+    // it reaches a card the owner is looking at.
+    const onError = (message: string | null) => setOutputErr(message);
+    sinkErrorListeners.add(onError);
+
+    /*
+      A device list that changes means one was plugged in or pulled out, and
+      the element's routing has to be reconsidered either way — including the
+      case that matters, the chosen headset reappearing after Windows dropped
+      it.
+    */
+    const onChange = () => {
+      forgetAppliedOutput();
+      void refreshOutputs();
+    };
+    navigator.mediaDevices?.addEventListener?.("devicechange", onChange);
+
+    return () => {
+      sinkErrorListeners.delete(onError);
+      navigator.mediaDevices?.removeEventListener?.("devicechange", onChange);
+    };
+  }, [refreshOutputs]);
+
+  const setOutputId = useCallback((id: string | null) => {
+    setOutputIdState(id);
+    writeStorage(OUTPUT_KEY, id);
+    forgetAppliedOutput();
+    setSinkError(null);
+    /*
+      Applied on the tap rather than at the next sentence, so choosing a
+      speaker that is not plugged in says so immediately. Waiting until
+      Operator next speaks would report the failure minutes later, to whoever
+      happened to be on the page.
+    */
+    if (outputRoutingSupported()) void applyOutputDevice(audioElement());
+  }, []);
+
+  const nameOutputs = useCallback(async () => {
+    if (typeof navigator === "undefined") return;
+    if (typeof navigator.mediaDevices?.getUserMedia !== "function") return;
+    try {
+      /*
+        A microphone grant is the only thing that makes device LABELS readable
+        — there is no separate permission for "name my speakers". The stream is
+        stopped the instant it opens: this is here to buy names, not to listen,
+        and a track left running would flip a Bluetooth headset into HFP and
+        make everything sound worse for no reason.
+      */
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      await refreshOutputs();
+    } catch {
+      /* Refused: the picker stays as unnamed ids, which is honest. */
+    }
+  }, [refreshOutputs]);
+
   /*
     The <audio> element playing Kokoro's output.
 
@@ -301,7 +562,16 @@ export function useSpeech(): SpeechState {
     playingRef.current = false;
   }, []);
 
-  /** The browser's own voice. Kept as the fallback — see speak() above. */
+  /**
+   * The browser's own voice. Kept as the fallback — see speak() above.
+   *
+   * This one CANNOT be pointed at a device. `speechSynthesis` is an engine
+   * rather than an element, it exposes no sink, and it plays wherever the
+   * platform sends it — so a fallback sentence can still come out of the
+   * speakers with the headset on, and the self-hearing guard is still the only
+   * thing covering that case. Settings says so instead of implying the picker
+   * covers everything.
+   */
   const speakWithSystemVoice = useCallback(
     (clean: string) => {
       if (!supported) return;
@@ -352,6 +622,12 @@ export function useSpeech(): SpeechState {
         forever, which is exactly why the phone was silent.
       */
       const el = audioElement();
+      /*
+        Re-applied per sentence rather than once at startup. A device can
+        disappear and come back between two replies — the headset does it every
+        time it idles — and the check is a no-op whenever it is already right.
+      */
+      await applyOutputDevice(el);
       if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
       el.src = URL.createObjectURL(blob);
 
@@ -432,5 +708,12 @@ export function useSpeech(): SpeechState {
     setVoiceName,
     speak,
     stop,
+    outputSupported,
+    outputs,
+    outputId,
+    setOutputId,
+    outputsNamed: outputs.some((d) => Boolean(d.label)),
+    outputError: outputErr,
+    nameOutputs,
   };
 }
