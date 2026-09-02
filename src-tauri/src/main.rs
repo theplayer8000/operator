@@ -325,12 +325,28 @@ fn main() {
                 *slot = Some(mic.clone());
             }
 
-            let tray_handle = handle.clone();
             TrayIconBuilder::with_id("operator")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Operator")
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                /*
+                  Left click opens the MENU, not the window.
+
+                  It was the other way round — left to summon, right for the
+                  menu, which is the Windows convention. It was also the wrong
+                  call here: the owner clicked the icon repeatedly, nothing
+                  happened, and he reported the tray as broken. He was right
+                  that nothing happened, because summon was silently failing on
+                  the foreground restriction at the time; but he never saw the
+                  menu either, so the two toggles he had asked for were
+                  invisible behind a gesture he had no reason to try.
+
+                  A tray icon whose whole purpose is showing two microphone
+                  states should show them on the obvious click. Summoning is
+                  already on Ctrl+Alt+O and on the menu's first item, so
+                  nothing is lost.
+                */
+                .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => summon(app),
                     "mic" => {
@@ -345,18 +361,6 @@ fn main() {
                     }
                     "quit" => app.exit(0),
                     _ => {}
-                })
-                .on_tray_icon_event(move |_tray, event| {
-                    // Left click opens it. The menu is on right click, which is
-                    // what a tray icon does everywhere else.
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Left,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        summon(&tray_handle);
-                    }
                 })
                 .build(app)?;
 
