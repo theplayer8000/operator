@@ -1,81 +1,70 @@
 # Current work
 
-Nothing in flight. Committed on `main`, `dist/` built, server restarted.
+Nothing in flight. Committed on `main`, `dist/` built, server restarted with the
+new worker live.
 
-## Where things got to, 2026-09-01/02
+## FIRST THING TO CHECK — it is probably not broken
 
-**Speech changes data.** `server/intentrun.mjs` runs matched intents through the
-capability layer. Guards rather than trust: a resolver that finds nothing
-abandons, ambiguity becomes a spoken question, create/delete refused
-independently of the rules.
+Speech is **off by default and stored per device**, and the Tauri window is its
+own storage profile from the browser. Symptom: Operator answers correctly on
+screen and says nothing, which reads exactly like the feature failing.
 
-**"Stop" works**, and is the one command written to fire when unsure — a wrong
-stop costs a retry, a missed one costs money. Barge-in works because overlapped
-audio is uploaded flagged rather than discarded, and only a stop may come out of
-it.
+The map now prints the reply in gold with `muted — tap the speaker in the chat
+to hear replies` underneath. If that line is showing, that is the answer.
 
-**Notifications are Web Push**, ntfy retired. Apple carries an encrypted payload
-it cannot read. Arrives as Operator, with Operator's icon.
+## Landed 2026-09-02
 
-**The page follows changes it did not make.** `/api/health` reports the store's
-`updatedAt`; the client polls that and only fetches data when it moves. Adaptive
-— 800ms for 15s after a change, 4s at rest.
+- **AI Router** ([ADR 0016](decisions/0016-ai-router.md)) — flat CHF 39/mo,
+  Swiss, OpenAI-compatible with real tool calling. Verified end to end: a `now`
+  tool call answered correctly in **1641ms**. It replaces the LOCAL model, not
+  Claude. Reports `basis: "billed"` with a **null** cost, never $0.
+- **Usage ceilings** (ADR 0013) — tokens stored, USD derived, nothing sums
+  across `basis`, quota is a separate ledger. All ceilings env-only and unset by
+  default, so nothing is enforcing yet.
+- **"tick off bench press"** reaches the gym via `needs.also`, a fallback chain
+  tried only where the primary found nothing. 121 self-test checks.
+- **Voice output picker** (Settings) — `setSinkId` on the shared audio element.
+- **Desktop shell**: Ctrl+Alt+O, tray with a two-state microphone, clap summons
+  only when unfocused, fullscreen on `OPERATOR_FOCUS_SCREEN`, Escape backs out.
+  Release build is 6.2MB.
 
-**The desktop shell exists.** ADR 0015, Tauri, 12MB. It compiles, opens, and
-shows the real map. `main.rs` registers nothing native yet, deliberately.
+## Next, agreed with the owner
 
-## The digest earned its keep
+**Hosted Whisper + TTS through AI Router, with local as the fallback.**
+Approved on 2026-09-02, and the reasoning is RAM rather than speed:
 
-`scripts/intent-misses.mjs` collected 26 real utterances: 3 matched, 23 missed.
-The largest genuine cluster was **asking what is on the gym** — so that became
-the first rule in `intent.mjs` written from evidence rather than invention.
+- Local Whisper is already **287ms warm** — transcription is the SMALLEST part
+  of a spoken exchange. The 1200ms silence window is the real latency, and the
+  fix for that is a smart-turn model, not a hosting change.
+- What it does buy is memory. Kokoro holds ~300MB resident and Whisper its own
+  model, on a machine that hit **2.33GB free** during the Rust build.
 
-It is a READ, placed above the question guard alongside `matchClock`, and it may
-only ever emit `gym_day`. The guard is about writes, not about question marks;
-`matchClock` had already established that position for the same reason.
+So: build it switchable, hosted first, and **fall back to local once the 2×8GB
+arrives** (Facebook Marketplace, no date). An env var, defaulting to local, so
+the machine that has RAM keeps its voice on the box.
 
-Self-test is 109 checks, and the boundary is pinned both ways — "should i do
-push day tomorrow" and "how did my gym session go" must still fall through.
-
-**The rest of the misses are mostly Whisper noise** ("And... Huh...", "Okay,
-thanks.") and one instance of Operator hearing itself, which the 400ms release
-tail should now stop. Do not write rules for those.
-
-## Next
-
-- **Tauri natives**: microphone without a gesture, global hotkey, output device
-  selection, tray. Background listening **off by default and visibly so**, and
-  the clap detector becomes a toggle — the owner's condition on accepting 0015.
-- **Usage ceiling** (ADR 0013). `OPERATOR_MAX_CONCURRENT` is 3 and nothing
-  bounds spend.
-- **Keep reading the digest.** Every four hours, `OperatorIntentDigest`.
+**This crosses a line held three times** — Deepgram, ElevenLabs and iOS
+`SpeechRecognition` were all refused because they send AUDIO OF HIM rather than
+text he chose to send. ADR 0016 approved prompts and job context, not voice.
+Extend that ADR with an explicit audio clause before writing the code; do not
+treat the existing approval as covering it.
 
 ## Environment
 
-- `OPERATOR_TTS_IDLE_MS=14400000` (4h). Was 15 min, which made the first reply
-  after a quiet spell take 8.5s instead of 1.0s. Set to `0` — never release —
-  once the 2x8GB lands; free RAM touched **2.33GB** during the Rust build, so
-  holding 300MB permanently is not free yet.
-- `OPERATOR_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT` for push, env only.
-- `OPERATOR_LISTEN` is `Microphone (Realtek USB Audio)`, which is the **default
-  communications device** while the headset is the default device. Clap works.
-
-  **A measurement I got wrong:** I reported that input as dead at −91 dB. It was
-  not. `listen.mjs` holds the dshow device open, so a second ffmpeg reading it
-  gets a silent stream — the exact trap written up in `useMicLevel.ts`. Do not
-  measure a device Operator is already listening on.
+- `AIROUTER_API_KEY` set. `OPERATOR_TTS_IDLE_MS=14400000` (4h) — set to `0` when
+  the RAM lands, which removes the 8.5s cold start entirely.
+- `OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`.
+- Four workers registered: claude-code, gemini, airouter, ollama.
 
 ## The restart trap, still true
 
-`POST /api/restart` and `schtasks /End` **do not reload the environment** while
-the supervisor survives. Stop all three by PID (`npm run serve` →
-`supervise.mjs` → `index.mjs`), then `schtasks /Run /TN OperatorServe`.
+`POST /api/restart` and `schtasks /End` do NOT reload the environment while the
+supervisor survives. Stop all three by PID, then `schtasks /Run /TN OperatorServe`.
 
-## Two files to delete by hand
+## Debris to delete by hand
 
-`scratch-gymrun.mjs` and `.probe-intent.mjs` in the repo root — debris from
-today, left because deletion is denied to this session by design.
+Deletion is denied to the agent session by design:
 
 ```
-rm scratch-gymrun.mjs .probe-intent.mjs
+rm scratch-also.mjs scratch-chain.mjs scratch-undo.mjs scratch-air.mjs
 ```
