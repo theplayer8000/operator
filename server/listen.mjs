@@ -156,6 +156,17 @@ export function muteBriefly(ms = SELF_MUTE_MS) {
  *   view change, so a caller can start capturing speech immediately.
  */
 export function startListening(onDoubleClap) {
+  /*
+    Clear the stop latch, or starting again does nothing.
+
+    `stopListening` sets `stopping = true` so the respawn loop does not fight a
+    deliberate shutdown, and nothing ever cleared it — which was fine while this
+    was called once at boot and never again. The moment the detector became a
+    runtime toggle it meant OFF worked and ON silently did not: the route
+    returned, the state stayed false, and there was no error anywhere.
+  */
+  stopping = false;
+
   if (!DEVICE) {
     state.reason = "OPERATOR_LISTEN is not set — no microphone named";
     return false;
