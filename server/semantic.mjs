@@ -39,6 +39,51 @@ import { ask, isAvailable, installedModels } from "./ollama.mjs";
 
 const run = promisify(execFile);
 
+/*
+  Which model checks the work — and why this is a switch rather than a decision.
+
+  The case for moving it off the local model is strong and is ADR 0016's whole
+  argument: the 3B that fits in 4GB of VRAM scores two out of three here and has
+  hallucinated agreement outright. AI Router offers a 27B and a 284B at a flat
+  rate, so the check could be genuinely good at no marginal cost.
+
+  **And it is off by default, because of what this particular caller sends.**
+
+  This layer sees the owner's SOURCE DIFF, on every completed turn, automatically.
+  ADR 0016 approved "the prompt and whatever job context is attached" — the same
+  class as the Gemini approval. A routine per-job upload of his code is not that,
+  and the header above says so in as many words. It is his decision to make
+  knowingly, not one to be inherited from a nearby approval.
+
+  `OPERATOR_SEMANTIC_PROVIDER=airouter` turns it on. Local remains the default,
+  and remains the right default for anyone who has not thought about it.
+*/
+const PROVIDER = (process.env.OPERATOR_SEMANTIC_PROVIDER ?? "local").trim().toLowerCase();
+
+/**
+ * Ask whichever model is configured. Same shape as `ollama.ask`.
+ *
+ * Deliberately narrow: no tools on either path. A checker that can write to his
+ * data is a second actor rather than a check, and that is true regardless of
+ * which model is behind it.
+ */
+async function askModel({ prompt, model, system, maxTokens }) {
+  if (PROVIDER === "airouter") {
+    const { runTurn, DEFAULT_MODEL } = await import("./airouter.mjs");
+    let text = "";
+    await runTurn({
+      prompt,
+      model: model || DEFAULT_MODEL,
+      appendSystemPrompt: system,
+      onEvent: (type, data) => {
+        if (type === "text") text += data.text;
+      },
+    });
+    return text.trim();
+  }
+  return ask({ prompt, model, system, maxTokens });
+}
+
 export const enabled = process.env.OPERATOR_SEMANTIC_VERIFY === "1";
 
 /** Overridable, because the model that fits will change with the hardware. */
@@ -120,13 +165,26 @@ export async function reviewWork({ cwd, request, claimed = "" }) {
 
   const startedAt = Date.now();
 
-  if (!(await isAvailable())) {
-    // Ollama not running is not a verdict. Returning "unsure" here would be
-    // indistinguishable from the model having looked and hesitated.
-    return null;
-  }
+  /*
+    Is the configured model reachable, asked of whichever one it is.
 
-  const model = MODEL || (await installedModels())[0];
+    This checked Ollama unconditionally, which would refuse to run on a machine
+    that had deliberately pointed the check at the router and had no local model
+    at all — a guard written for one provider silently vetoing another.
+
+    "Not reachable" is not a verdict either way. Returning `unsure` here would be
+    indistinguishable from the model having looked and hesitated, which is the
+    one thing this must never blur.
+  */
+  let model = MODEL;
+  if (PROVIDER === "airouter") {
+    const { configured, DEFAULT_MODEL } = await import("./airouter.mjs");
+    if (!configured) return null;
+    model = model || DEFAULT_MODEL;
+  } else {
+    if (!(await isAvailable())) return null;
+    model = model || (await installedModels())[0];
+  }
   if (!model) return null;
 
   const stat = await git(cwd, ["diff", "--stat", "HEAD"], MAX_STAT);
@@ -194,7 +252,7 @@ export async function reviewWork({ cwd, request, claimed = "" }) {
   ].join("\n");
 
   try {
-    const raw = await ask({
+    const raw = await askModel({
       prompt,
       model,
       system:
