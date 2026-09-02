@@ -143,11 +143,35 @@ export default function OperatorChat({
     [jobs.events],
   );
 
+  /*
+    What THIS device asked for, so only this device reads the answer aloud.
+
+    Jobs are shared — the event log is server-side and every open client sees
+    every event on the selected thread. The speech effect below spoke anything
+    new, so telling Operator on the phone that a gym session was skipped made
+    the PC in the other room announce the confirmation too. The owner's report:
+    "i tried telling it i skipped gym yesterday and it worked but then also came
+    on my pc".
+
+    Matching on the prompt TEXT rather than an id, because that needs no server
+    change and no per-client identity: the question is only ever "was the thing
+    being answered something I asked?". A collision needs the same sentence sent
+    from two devices into one thread within the same session, and the cost of
+    one is a duplicate reading — the failure it replaces is the guaranteed one.
+
+    A Set rather than a single value: two questions can be in flight at once now
+    that turns run concurrently.
+  */
+  const askedHere = useRef<Set<string>>(new Set());
+
   /** One place that actually sends, so voice and the button cannot diverge. */
   const sendText = useCallback(
     async (text: string) => {
       if (!text.trim() || jobs.busy) return;
       setExpanded(true);
+      // Before sending, so a fast reply cannot arrive before the record of
+      // having asked for it.
+      askedHere.current.add(text.trim());
 
       /*
         `selected`, not `selectedId`.
@@ -242,8 +266,26 @@ export default function OperatorChat({
       spokenTo.current = messages.length - 1;
       return;
     }
+    /*
+      Whether the turn currently being answered was asked FROM THIS DEVICE.
+
+      Walked forward with the messages rather than decided up front, because a
+      thread can hold answers to several questions and they can come from
+      different devices. Each `prompt` event flips it, so the replies that
+      follow are read aloud only where the question was typed or spoken.
+
+      Defaults to false at the top of a thread: an answer with no prompt in
+      front of it is history, and nobody in this room asked for it.
+    */
+    let mine = false;
+
     for (let i = spokenTo.current + 1; i < messages.length; i++) {
       const e = messages[i];
+      if (e.type === "prompt") {
+        mine = askedHere.current.has(String(e.text ?? "").trim());
+        continue;
+      }
+      if (!mine) continue;
       if (e.type === "accepted") {
         const worker = e.provider === "claude-code" ? "Claude" : e.provider === "gemini" ? "Gemini" : "the local model";
         speech.speak(

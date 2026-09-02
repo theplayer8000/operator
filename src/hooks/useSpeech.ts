@@ -156,6 +156,64 @@ function bestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null 
 */
 let operatorSpeaking = false;
 
+/*
+  Which utterance is current.
+
+  Bumped by every `speak()` and every `stop()`. A streamed reply awaits several
+  times — once per piece it renders and once per piece it plays — and each of
+  those is a moment something newer can arrive. Without a generation to check
+  against, the tail of a superseded reply keeps playing over the top of the one
+  that replaced it, which is worse than the delay the streaming removed.
+*/
+let speechGeneration = 0;
+
+/**
+ * Break a reply into pieces that can be rendered and played independently.
+ *
+ * ## The first piece is deliberately the shortest
+ *
+ * Time to FIRST WORD is the number that decides whether Operator feels alive;
+ * everything after it is covered by the piece before it still playing. So the
+ * opening piece is cut small enough to come back fast, and the rest are allowed
+ * to be long — each additional request costs a round trip, and there is no
+ * reason to pay it once per sentence when the audio ahead of it buys the time.
+ *
+ * ## Split on sentences, never mid-clause
+ *
+ * Kokoro's prosody comes from seeing a whole sentence: it places the stress and
+ * the fall at the end. Cutting at a fixed character count produced pieces that
+ * each ended as though they were a full stop, and a paragraph read that way
+ * sounds like a list of unrelated statements. So the boundary is punctuation,
+ * and the size limits only decide how many sentences travel together.
+ */
+export function splitForSpeech(text: string, first = 110, rest = 260): string[] {
+  const clean = text.trim();
+  if (!clean) return [];
+
+  // Sentence-ish, keeping the punctuation and any closing quote or bracket.
+  const sentences = clean.match(/[^.!?…]+(?:[.!?…]+["')\]]*\s*|$)/g) ?? [clean];
+
+  const out: string[] = [];
+  let buffer = "";
+  for (const sentence of sentences) {
+    const limit = out.length === 0 ? first : rest;
+    if (buffer && (buffer + sentence).length > limit) {
+      out.push(buffer.trim());
+      buffer = sentence;
+    } else {
+      buffer += sentence;
+    }
+  }
+  if (buffer.trim()) out.push(buffer.trim());
+
+  /*
+    One very long sentence with no punctuation is still one piece. Cutting it
+    would trade the prosody for a saving that only applies to text nobody
+    writes — and a hard cut mid-word is audible in a way a wait is not.
+  */
+  return out.filter(Boolean);
+}
+
 /** True while Operator is talking, through EITHER voice. */
 export function isOperatorSpeaking() {
   return operatorSpeaking || (typeof window !== "undefined" && "speechSynthesis" in window
@@ -609,83 +667,141 @@ export function useSpeech(): SpeechState {
    * would simply stay silent with no way to fall back; and the text can be
    * long enough to be awkward in a query string.
    */
+  /**
+   * Speak through Kokoro on the server, a piece at a time.
+   *
+   * ## Why this is chunked, measured rather than assumed
+   *
+   * It used to synthesise the whole reply and then play it. Measured
+   * 2026-09-02 against the running server: a short sentence took **1.7s warm**
+   * and a single paragraph **4.6s** — and the capability action that produced
+   * the answer took 90ms. So asking about the gym was answered almost
+   * instantly and then sat in silence for several seconds, and the longer the
+   * reply the longer the silence, which is exactly backwards.
+   *
+   * Kokoro is not the problem; waiting for all of it is. This synthesises the
+   * FIRST piece, starts playing it, and renders the rest behind it — so time
+   * to first word stops depending on how much there is to say.
+   *
+   * ## The flags stay set for the whole reply, not per piece
+   *
+   * `operatorSpeaking` is what stops the transcriber hearing Operator's own
+   * voice. Clearing it between two sentences would open a gap in exactly the
+   * place a gap is most dangerous — mid-answer, with the microphone live — so
+   * it is set once at the start and cleared once at the end.
+   */
   const speakLocally = useCallback(
     async (clean: string) => {
-      const res = await fetch(`/api/speak?text=${encodeURIComponent(clean)}`);
-      if (!res.ok) throw new Error(`speak ${res.status}`);
-      const blob = await res.blob();
-      if (!blob.size) throw new Error("empty audio");
-
       /*
-        The one shared element, not a new one. See `unlockSpeech` above — on
-        iOS a fresh element has never been touched by the user and is blocked
-        forever, which is exactly why the phone was silent.
+        Which utterance this is. A newer `speak()` or a `stop()` bumps it, and
+        every await below rechecks — otherwise a two-sentence reply would keep
+        playing its second half over the top of whatever replaced it.
       */
+      const mine = (speechGeneration += 1);
+      const superseded = () => speechGeneration !== mine;
+
+      const parts = splitForSpeech(clean);
+      if (!parts.length) return;
+
       const el = audioElement();
       /*
-        Re-applied per sentence rather than once at startup. A device can
-        disappear and come back between two replies — the headset does it every
-        time it idles — and the check is a no-op whenever it is already right.
+        Re-applied per REPLY rather than per piece. A device can disappear and
+        come back between two replies — the headset does it every time it idles
+        — but not usually between two sentences, and doing it per piece would
+        put a device round trip inside the gap this whole change exists to
+        close.
       */
       await applyOutputDevice(el);
-      if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
-      el.src = URL.createObjectURL(blob);
+      if (superseded()) return;
+
+      const fetchPart = async (text: string): Promise<Blob> => {
+        const res = await fetch(`/api/speak?text=${encodeURIComponent(text)}`);
+        if (!res.ok) throw new Error(`speak ${res.status}`);
+        const blob = await res.blob();
+        if (!blob.size) throw new Error("empty audio");
+        return blob;
+      };
+
+      const playPart = (blob: Blob) =>
+        new Promise<void>((resolve, reject) => {
+          if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
+          el.src = URL.createObjectURL(blob);
+          el.onended = () => resolve();
+          el.onerror = () => reject(new Error("playback failed"));
+          el.play().catch(reject);
+        });
 
       operatorSpeaking = true;
       playingRef.current = true;
       setSpeaking(true);
-      const done = () => {
+
+      /*
+        Release the source when the reply ends.
+
+        A paused element still holding a playable blob keeps the page
+        registered with the OS transport controls — on Windows, System Media
+        Transport Controls — so the hardware play key aims at Operator and
+        replays its last sentence instead of controlling whatever is actually
+        playing. Releasing the source ends that. The element itself is kept:
+        it is the same one for the page's life, which is the iOS unlock, and
+        that survives losing a `src`.
+      */
+      const finish = () => {
+        if (superseded()) return;
         operatorSpeaking = false;
         playingRef.current = false;
         setSpeaking(false);
-      };
-      /*
-        Hand the media session back when the sentence ends.
-
-        A paused `<audio>` element still holding a playable source keeps the
-        page registered with the OS transport controls — on Windows, System
-        Media Transport Controls. The hardware play/pause key then aims at
-        Operator instead of at whatever is actually playing, and pressing it
-        replays the last thing Operator said.
-
-        Releasing the source is what ends that: no source, no session, and the
-        key goes back to Spotify. The element itself is kept — it is the same
-        one for the page's life, which is the iOS unlock the note above
-        describes, and that survives losing a `src`.
-      */
-      const release = () => {
         try {
           if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
           el.removeAttribute("src");
           el.load();
           if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
         } catch {
-          // Best effort. Failing to tidy up must never swallow the reply.
+          /* Best effort. Failing to tidy up must never swallow the reply. */
         }
-      };
-      el.onended = () => {
-        done();
-        release();
-      };
-      el.onerror = () => {
-        done();
-        release();
       };
 
       try {
-        await el.play();
+        /*
+          The overlap, which is the entire point.
+
+          The NEXT piece starts rendering before the current one has finished
+          playing, so every piece after the first is already waiting by the
+          time it is needed. Only the first synthesis is ever heard as a delay,
+          and `splitForSpeech` deliberately makes that one the shortest.
+        */
+        let pending = fetchPart(parts[0]);
+        for (let i = 0; i < parts.length; i += 1) {
+          const blob = await pending;
+          if (superseded()) return;
+          // Kicked off BEFORE the current piece plays, which is the overlap.
+          // The last piece has nothing to prefetch; a resolved placeholder
+          // keeps the type honest without a null check inside the loop.
+          pending =
+            i + 1 < parts.length ? fetchPart(parts[i + 1]) : Promise.resolve(new Blob());
+          await playPart(blob);
+          if (superseded()) return;
+        }
+        finish();
       } catch (err) {
-        // Rejected play leaves the flags set, and then the transcriber thinks
-        // Operator is talking forever and discards everything he says.
-        done();
+        /*
+          Leaving the flags set would have the transcriber believe Operator is
+          talking forever and discard everything he says.
+        */
+        finish();
         throw err;
       }
     },
-    [stopAudio],
+    [],
   );
 
   const stop = useCallback(() => {
     // Both engines: whichever is talking, "stop" has to mean stop.
+    //
+    // Bumped HERE rather than only inside speakLocally, and synchronously. A
+    // streamed reply is sitting on an await; if the generation only moved once
+    // the replacement got going, the piece already in flight would still play.
+    speechGeneration += 1;
     if (supported) window.speechSynthesis.cancel();
     stopAudio();
     currentRef.current = null;
@@ -707,6 +823,7 @@ export function useSpeech(): SpeechState {
 
       // One thing at a time. Queuing would have it read a reply from two turns
       // ago over the top of the current one.
+      speechGeneration += 1;
       if (supported) window.speechSynthesis.cancel();
       stopAudio();
 
