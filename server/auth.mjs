@@ -63,6 +63,7 @@
 // address *is* the phone and tailscale identity works directly. That is the
 // better posture when away from the machine, and the faster path anyway.
 
+import { hostname } from "node:os";
 import { execFile } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
@@ -216,6 +217,24 @@ function forwardedClient(req) {
  * Always resolves — never throws — so a broken tailscale install degrades to
  * "token required" rather than locking the owner out of his own data.
  */
+/*
+  What to call the machine Operator runs on.
+
+  It read "this machine" for every loopback caller, which is true and useless
+  on the Dev page: three rows all saying "this machine" is a list that has
+  stopped distinguishing anything, and the owner asked for his PC by name.
+
+  Defaults to the real hostname rather than a friendly guess — inventing
+  "Tosin's PC" from `TOSIN-PC` is the kind of cleverness that gets it wrong on
+  the next machine. `OPERATOR_DEVICE_NAME` sets whatever he prefers.
+
+  Environment-only, like every other name that identifies a device here. A
+  label an app can rewrite is a label that can be made to lie about who is
+  calling, and this one sits next to the tailnet device names in the same list.
+*/
+const LOCAL_DEVICE =
+  (process.env.OPERATOR_DEVICE_NAME ?? "").trim() || hostname() || "this machine";
+
 export async function identify(req) {
   const peer = normaliseIp(req.socket?.remoteAddress);
   const forwarded = forwardedClient(req);
@@ -227,7 +246,7 @@ export async function identify(req) {
 
   // 1. Genuinely this machine, no proxy in between.
   if (isLoopback(peer) && !viaProxy) {
-    return { ok: true, method: "local", device: "this machine", peer };
+    return { ok: true, method: "local", device: LOCAL_DEVICE, peer };
   }
 
   // The address we actually judge: what the proxy saw, otherwise the peer.
@@ -238,7 +257,7 @@ export async function identify(req) {
   // than from the request — the rightmost-entry rule above is what makes that
   // true, and reading the leftmost entry instead would make it a bypass.
   if (viaProxy && isLoopback(client)) {
-    return { ok: true, method: "local", device: "this machine", peer, client };
+    return { ok: true, method: "local", device: LOCAL_DEVICE, peer, client };
   }
 
   // 2. A device on the owner's tailnet, confirmed by the local daemon.

@@ -823,39 +823,44 @@ const server = createServer(async (req, res) => {
         let acted = null;
         try {
           /*
-            The same signal gate the clap path has had since 2026-08-31, which
-            this route never got. That omission had teeth.
+            Match everything; gate only what reaches OUTSIDE Operator.
 
-            Whisper fed near-silence emits stock phrases with high confidence —
-            "Okay.", "Thank you.", "Thanks for watching!" — and this log is full
-            of them. Harmless while they miss. Not harmless when one lands on a
-            rule: `MEDIA` in intent.mjs matches a bare "play", so a hallucinated
-            single word pressed the play/pause key on his machine and started
-            music he had not asked for. The owner's report was "something's
-            triggering my play key", and it was this.
+            This started as a blanket signal gate on the whole route, added
+            because three "intent: no match" lines in the log looked like
+            Whisper's known silence hallucinations. They were not — the owner
+            had actually said all three, and `media_play_pause` turns out never
+            to have run at all. The premise was wrong and the blanket gate it
+            justified was quietly costing every one-word command.
 
-            Biased towards dropping, for the same asymmetry stated on the clap
-            path: a missed command costs saying it again, an invented one
-            reaches into whatever else is running on the desk.
+            What survives is the narrow version, kept because the risk is real
+            even though this was not an instance of it: `MEDIA` in intent.mjs
+            matches a bare "play", and a single word is exactly what a bad
+            transcription produces. Ticking off a gym set on a misheard sentence
+            is undoable from the page it happened on. Pressing the play/pause
+            key reaches into whatever else is running on the desk, and there is
+            nothing in Operator to undo it with.
 
-            Note this gates ACTING, not transcribing. `heard` is still returned
-            in full, so dictation into the chat box is untouched — a short reply
-            typed by voice still arrives, it just cannot fire a device action on
-            its own.
+            So Operator's own data matches on the transcript as it always has,
+            and the one action with a side effect outside Operator wants a
+            transcript worth trusting.
           */
-          const confidence = Number(heard?.confidence ?? 0);
-          const voicedPct = Number(heard?.voicedPct ?? 0);
-          const words = String(heard?.text ?? "").split(/\s+/).filter(Boolean).length;
-          const trustworthy = confidence >= 0.55 && voicedPct >= 1.5 && words >= 2;
+          const OUTSIDE_OPERATOR = new Set(["media_play_pause"]);
 
-          if (heard?.text && !trustworthy) {
-            console.log(
-              `[operator] intent: not acting on ${JSON.stringify(heard.text.slice(0, 80))} ` +
-                `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%, ${words} word(s))`,
-            );
+          intent = heard?.text ? matchIntent(heard.text) : null;
+
+          if (intent && OUTSIDE_OPERATOR.has(intent.action)) {
+            const confidence = Number(heard?.confidence ?? 0);
+            const voicedPct = Number(heard?.voicedPct ?? 0);
+            const words = String(heard?.text ?? "").split(/\s+/).filter(Boolean).length;
+            if (confidence < 0.55 || voicedPct < 1.5 || words < 2) {
+              console.log(
+                `[operator] intent: not acting on ${JSON.stringify(heard.text.slice(0, 80))} ` +
+                  `— ${intent.action} reaches outside Operator ` +
+                  `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%, ${words} word(s))`,
+              );
+              intent = null;
+            }
           }
-
-          intent = heard?.text && trustworthy ? matchIntent(heard.text) : null;
           if (intent) {
             /*
               Run it, and hand the result back for the page to speak.

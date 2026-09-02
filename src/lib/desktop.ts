@@ -136,3 +136,24 @@ export async function reportMicState(dictation: boolean, detector: boolean): Pro
     /* The shell is a nicety; the page works without it. */
   }
 }
+
+/**
+ * Write one line into `data/shell.log`, from the page.
+ *
+ * The shell can log that it emitted an event; only the page knows what happened
+ * next, and the release build has no console to print it to. Without this the
+ * two halves of one gesture are observable from opposite sides of a wall — which
+ * is how the tray came to be reported broken three times for three different
+ * reasons.
+ *
+ * A no-op in a browser, like everything else here.
+ */
+export async function logToShell(text: string): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("log_line", { text });
+  } catch {
+    /* Logging must never be the thing that breaks. */
+  }
+}

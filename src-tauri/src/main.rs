@@ -154,6 +154,27 @@ fn summon(app: &tauri::AppHandle) {
     }
 }
 
+/**
+ * Let the page write one line into `data/shell.log`.
+ *
+ * Added 2026-09-02, after the tray was reported broken for a third time with a
+ * third distinct cause. The shell can log that it emitted an event; only the
+ * page knows what happened next, and a release build has no console to print
+ * it to. Without this the two halves of one gesture are observable from
+ * opposite sides of a wall.
+ *
+ * Deliberately dumb: a string, prefixed so it cannot be mistaken for the
+ * shell's own output. It grants the page nothing it did not already have —
+ * writing a log line is not a capability, which is the line ADR 0015 draws
+ * around what may live here.
+ */
+#[tauri::command]
+fn log_line(text: String) {
+    // Bounded, because a page in a loop should cost a big file rather than a
+    // full disk.
+    log(&format!("[page] {}", text.chars().take(300).collect::<String>()));
+}
+
 /// The tray's two microphone lines, so the page can rewrite them.
 ///
 /// TWO, because there are two different microphones and conflating them is what
@@ -262,7 +283,7 @@ fn main() {
             detector: Mutex::new(None),
             dictation: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window, exit_fullscreen])
+        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window, exit_fullscreen, log_line])
         .setup(|app| {
             let handle = app.handle().clone();
 

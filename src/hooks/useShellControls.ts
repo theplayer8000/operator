@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { onToggleDetector, onToggleMic } from "@/lib/desktop";
+import { logToShell, onToggleDetector, onToggleMic } from "@/lib/desktop";
 import { toggleMic } from "@/lib/micBridge";
 
 /**
@@ -28,6 +28,18 @@ import { toggleMic } from "@/lib/micBridge";
  */
 export function useShellControls(): void {
   const navigate = useNavigate();
+  /*
+    Read through a ref so the effect below can have an EMPTY dependency list.
+
+    `useNavigate` does not promise a stable identity across renders, and an
+    effect that lists it re-runs on navigation — tearing the listener down and
+    rebuilding it. `listen()` is async, so each of those cycles leaves a window
+    with nothing subscribed, and a tray click landing in one of them does
+    nothing at all. That is the precise failure this hook exists to fix, so it
+    must not be reintroduced by the fix's own dependency array.
+  */
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
 
   useEffect(() => {
     let stopMic = () => {};
@@ -40,8 +52,11 @@ export function useShellControls(): void {
         request and replays it on mount, so this navigates to the surface that
         has a microphone and it is already on when you arrive.
       */
-      if (!toggleMic()) navigate("/");
+      const handled = toggleMic();
+      void logToShell(`toggle-mic received — ${handled ? "a page owns the mic" : "no owner, going to the map"}`);
+      if (!handled) navigateRef.current("/");
     }).then((off) => {
+      void logToShell("toggle-mic listener registered");
       stopMic = off;
     });
 
@@ -74,5 +89,7 @@ export function useShellControls(): void {
       stopMic();
       stopDetector();
     };
-  }, [navigate]);
+    // Empty on purpose — see `navigateRef` above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
