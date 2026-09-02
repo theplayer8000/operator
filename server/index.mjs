@@ -822,7 +822,40 @@ const server = createServer(async (req, res) => {
         let intent = null;
         let acted = null;
         try {
-          intent = heard?.text ? matchIntent(heard.text) : null;
+          /*
+            The same signal gate the clap path has had since 2026-08-31, which
+            this route never got. That omission had teeth.
+
+            Whisper fed near-silence emits stock phrases with high confidence —
+            "Okay.", "Thank you.", "Thanks for watching!" — and this log is full
+            of them. Harmless while they miss. Not harmless when one lands on a
+            rule: `MEDIA` in intent.mjs matches a bare "play", so a hallucinated
+            single word pressed the play/pause key on his machine and started
+            music he had not asked for. The owner's report was "something's
+            triggering my play key", and it was this.
+
+            Biased towards dropping, for the same asymmetry stated on the clap
+            path: a missed command costs saying it again, an invented one
+            reaches into whatever else is running on the desk.
+
+            Note this gates ACTING, not transcribing. `heard` is still returned
+            in full, so dictation into the chat box is untouched — a short reply
+            typed by voice still arrives, it just cannot fire a device action on
+            its own.
+          */
+          const confidence = Number(heard?.confidence ?? 0);
+          const voicedPct = Number(heard?.voicedPct ?? 0);
+          const words = String(heard?.text ?? "").split(/\s+/).filter(Boolean).length;
+          const trustworthy = confidence >= 0.55 && voicedPct >= 1.5 && words >= 2;
+
+          if (heard?.text && !trustworthy) {
+            console.log(
+              `[operator] intent: not acting on ${JSON.stringify(heard.text.slice(0, 80))} ` +
+                `(confidence ${confidence.toFixed(2)}, voiced ${voicedPct.toFixed(1)}%, ${words} word(s))`,
+            );
+          }
+
+          intent = heard?.text && trustworthy ? matchIntent(heard.text) : null;
           if (intent) {
             /*
               Run it, and hand the result back for the page to speak.

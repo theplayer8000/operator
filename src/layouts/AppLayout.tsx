@@ -40,29 +40,21 @@ export default function AppLayout() {
   const bigScreen = useMediaQuery("(min-width: 1024px)");
   const onDoubleClap = useCallback(() => {
     /*
-      Pause whatever is playing, on the way past. A page cannot do this — see
-      the media_play_pause action — so it goes through the server, and it is
-      fire-and-forget: failing to pause Spotify must not stop Operator coming
-      to the front, which is the part that was actually asked for.
-    */
-    /*
-      Both are fire-and-forget, and both are best-effort: failing to pause
-      Spotify or to raise the window must not stop the navigation, which is the
-      part that always works and the part actually asked for.
+      Summon, and NOTHING else.
 
-      Order matters slightly — pause first, because the window coming forward is
-      what the eye follows and it should not arrive over the top of music still
-      playing.
-    */
-    /*
-      ONE call, not two.
+      Three stale comments used to sit here describing a version that also
+      pressed the media play/pause key, first as a second call and then folded
+      into the summon script. Both are gone — `focusOperator` in actions.mjs
+      states plainly that summoning never touches what is playing, after the
+      owner's verdict: "remove the media play thing i'll just pause it myself."
+      A gesture that does two things when you asked for one is surprising, and
+      the surprising half was reaching into whatever held the media session.
 
-      This used to fire media_play_pause and focus_operator separately, which
-      meant paying PowerShell's ~320ms startup and its C# compile twice for a
-      gesture that should feel instant — most of the delay the owner reported.
-      focus_operator now presses the media key itself, inside the same script.
+      Left as a note rather than deleted because the comments outlived the code
+      by two revisions and sent a later session hunting for a media key press
+      that was not there.
 
-      Still fire-and-forget: failing to summon must not stop the navigation,
+      Fire-and-forget: failing to raise the window must not stop the navigation,
       which is the part that always works.
     */
     void fetch("/api/actions", {

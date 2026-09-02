@@ -113,7 +113,22 @@ export default function OperatorChat({
    * Keying on the job id fixes both that and switching tabs, because the marker
    * is only trusted while it refers to the thread currently on screen.
    */
-  const spokenForJob = useRef<string | null>(null);
+  /*
+    `undefined` is "nothing yet", `null` is "no job selected". They must be
+    different values, and making them the same was a real bug.
+
+    This ref was initialised to `null`, which is also what `jobs.selected?.id ??
+    null` evaluates to before the job list resolves. So on a fresh mount with a
+    thread already cached, the first run compared null against null, decided it
+    was the SAME thread it had been tracking, skipped the catch-up branch, and
+    read the entire history out loud. The owner's report: "whenever i reopen the
+    operator chat it repeats its last turn."
+
+    The earlier fix — keying on the job id rather than a boolean — was right and
+    is kept. It just needed a starting value no job id and no empty selection
+    can ever equal.
+  */
+  const spokenForJob = useRef<string | null | undefined>(undefined);
 
   const messages = useMemo(
     () =>

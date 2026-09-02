@@ -639,8 +639,38 @@ export function useSpeech(): SpeechState {
         playingRef.current = false;
         setSpeaking(false);
       };
-      el.onended = done;
-      el.onerror = done;
+      /*
+        Hand the media session back when the sentence ends.
+
+        A paused `<audio>` element still holding a playable source keeps the
+        page registered with the OS transport controls — on Windows, System
+        Media Transport Controls. The hardware play/pause key then aims at
+        Operator instead of at whatever is actually playing, and pressing it
+        replays the last thing Operator said.
+
+        Releasing the source is what ends that: no source, no session, and the
+        key goes back to Spotify. The element itself is kept — it is the same
+        one for the page's life, which is the iOS unlock the note above
+        describes, and that survives losing a `src`.
+      */
+      const release = () => {
+        try {
+          if (el.src.startsWith("blob:")) URL.revokeObjectURL(el.src);
+          el.removeAttribute("src");
+          el.load();
+          if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+        } catch {
+          // Best effort. Failing to tidy up must never swallow the reply.
+        }
+      };
+      el.onended = () => {
+        done();
+        release();
+      };
+      el.onerror = () => {
+        done();
+        release();
+      };
 
       try {
         await el.play();

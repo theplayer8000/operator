@@ -319,6 +319,10 @@ fn main() {
             match app.global_shortcut().on_shortcut(mic_shortcut, move |_app, _sc, event| {
                 if event.state == ShortcutState::Pressed {
                     // Ask the page, which owns the stream. Same rule as the tray.
+                    // Logged for the same reason: a key that registers and a key
+                    // that fires are different claims, and only one of them is
+                    // visible from the desk.
+                    log("[operator] hotkey: Ctrl+Alt+M — asking the page");
                     let _ = mic_handle.emit("operator://toggle-mic", ());
                 }
             }) {
@@ -390,13 +394,26 @@ fn main() {
                   nothing is lost.
                 */
                 .show_menu_on_left_click(true)
+                /*
+                  Every click is logged, because "the tray doesn't work" has had
+                  three distinct causes now and they are indistinguishable from
+                  outside: the menu never opened, the click never arrived, or it
+                  arrived and the page was not listening. Only the shell can
+                  tell the first two apart, and `data/shell.log` is where the
+                  answer has to be — release builds have no console.
+                */
                 .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "show" => summon(app),
+                    "show" => {
+                        log("[operator] tray: Open Operator");
+                        summon(app)
+                    }
                     "mic" => {
                         // Ask, do not act. The page owns the microphone.
+                        log("[operator] tray: toggle dictation — asking the page");
                         let _ = app.emit("operator://toggle-mic", ());
                     }
                     "detector" => {
+                        log("[operator] tray: toggle clap detector — asking the page");
                         // Also the page's to do: it goes through /api/, which is
                         // authenticated, rather than the shell reaching into the
                         // server behind the identity check.

@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   exitFullscreen,
   onSummoned,
-  onToggleDetector,
-  onToggleMic,
   reportMicState,
   summonWindow,
 } from "@/lib/desktop";
@@ -13,6 +11,7 @@ import { useSpeech } from "@/hooks/useSpeech";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { readStorage, writeStorage } from "@/lib/storage";
 import { useMicLevel } from "@/hooks/useMicLevel";
+import { registerMic } from "@/lib/micBridge";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
 import type { MissionRecord, MissionStatus } from "@/lib/types";
@@ -263,41 +262,19 @@ export default function MissionMap() {
     listener is set up above it, and two refs holding the same object is
     cheaper than reordering a file around a subscription.
   */
-  const listeningRef = useRef(false);
-  listeningRef.current = voice.listening;
-  const trayMicRef = useRef(mic);
-  trayMicRef.current = mic;
 
-  useEffect(() => {
-    let stopMic = () => {};
-    let stopDetector = () => {};
-    void onToggleMic(() => {
-      const m = trayMicRef.current;
-      if (m.active) m.disable();
-      else void m.enable();
-    }).then((off) => {
-      stopMic = off;
-    });
-    /*
-      The detector goes through `/api/`, not through the shell, so the request
-      carries an identity like every other one. A native binary reaching past
-      authentication because it happens to be local is the shape of bypass this
-      project spent an ADR closing.
-    */
-    void onToggleDetector(() => {
-      void fetch("/api/listen/detector", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ on: !listeningRef.current }),
-      }).catch(() => {});
-    }).then((off) => {
-      stopDetector = off;
-    });
-    return () => {
-      stopMic();
-      stopDetector();
-    };
-  }, []);
+  /*
+    The listeners themselves moved to `AppLayout` on 2026-09-02, because a
+    global hotkey that only fires on two routes is not a global hotkey — see
+    `lib/micBridge.ts`. This page keeps what only it can have: the stream.
+
+    Registered on every render rather than in an effect. `mic` is a fresh object
+    each time, and a subscription keyed on that identity is precisely the churn
+    that made the tray look broken the first time round; an assignment has no
+    teardown to get wrong.
+  */
+  registerMic(mic);
+  useEffect(() => () => registerMic(null), []);
 
   const spokenFor = useRef<string | null>(null);
   useEffect(() => {

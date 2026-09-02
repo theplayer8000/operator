@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "@/layouts/AppLayout";
+import { useShellControls } from "@/hooks/useShellControls";
 import Dashboard from "@/pages/Dashboard";
 import DailyRoutine from "@/pages/DailyRoutine";
 import MissionBoard from "@/pages/MissionBoard";
@@ -34,6 +35,14 @@ function MapSurface() {
 }
 
 export default function App() {
+  /*
+    The desktop shell's tray toggles and Ctrl+Alt+M, wired up here rather than
+    in AppLayout — the map surface is deliberately outside that layout, so
+    putting them there would fix eleven routes by breaking the two that already
+    worked. See `useShellControls`.
+  */
+  useShellControls();
+
   return (
     <Routes>
       {/*
