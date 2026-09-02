@@ -68,7 +68,7 @@ Approved so far — this list is the whole set:
 | **Google Gemini** | `generativelanguage.googleapis.com` | **2026-08-20**, `server/gemini.mjs`. What leaves the machine: the prompt and whatever job context is attached. Key in `GEMINI_API_KEY`, env only |
 | **ntfy.sh — as a relay** | `ntfy.sh`, via the owner's own ntfy server | **Restored 2026-09-02** after being retired for a day. Web Push to his iPhone returned `201 Created` and never arrived — iOS drops a home-screen web app's push entitlement when the app has not been opened recently, and a PWA never gets the durable entitlement a native app has. What leaves the machine: a message ID and a hash of the topic. **Both channels now send**, because push reports success and delivers nothing, so a fallback on error would never fire. `OPERATOR_NOTIFY_CHANNELS` trims it |
 | **Web Push** | the browser's push service — `web.push.apple.com` on iOS, Google/Mozilla/Microsoft elsewhere | **2026-09-01**, `server/push.mjs`. What leaves the machine: the subscription endpoint, an **encrypted** payload, and the time. **A push service is unavoidable** — it is how a sleeping OS is woken — so this is a swap, not an elimination, and it was approved on that basis. What changed: RFC 8291 encryption is mandatory and the key is shared only between this server and the browser that subscribed, so the carrier holds ciphertext rather than a promise not to look. Keys in `OPERATOR_VAPID_PUBLIC` / `OPERATOR_VAPID_PRIVATE`, env only |
-| **AI Router** | `api.airouter.ch` | **2026-09-02**, `server/airouter.mjs`, [ADR 0016](docs/decisions/0016-ai-router.md). Flat CHF 39/mo, Swiss-hosted, OpenAI-compatible with tool calling. What leaves the machine: the prompt and whatever job context is attached — same class as the Gemini approval. **It replaces the LOCAL model, not Claude**: the 3B Ollama fits in 4GB is too weak for the verification it already does. Key in `AIROUTER_API_KEY`, env only. Risks recorded in the ADR: no named legal entity, no SLA, and 'no prompt logging' is a policy rather than a structural property |
+| **AI Router** | `api.airouter.ch` | **2026-09-02**, `server/airouter.mjs`, [ADR 0016](docs/decisions/0016-ai-router.md). Flat CHF 39/mo, Swiss-hosted, OpenAI-compatible with tool calling. What leaves the machine: the prompt and whatever job context is attached — same class as the Gemini approval — **plus, since the 2026-09-02 amendment, his source diff on every completed turn (`semantic.mjs`) and whole project files handed down by `delegate.mjs`.** Those two are named in the ADR rather than inherited from this row, and audio of him is still outside it. **It replaces the LOCAL model, not Claude**: the 3B Ollama fits in 4GB is too weak for the verification it already does. Key in `AIROUTER_API_KEY`, env only. Risks recorded in the ADR: no named legal entity, no SLA, and 'no prompt logging' is a policy rather than a structural property |
 
 **Each AI provider needs its own named approval.** The AI Provider Manager was
 approved on 2026-07-30 (ADR 0009); approving the router did **not** approve its
@@ -320,6 +320,15 @@ server/
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job
                           closes or clears — nothing here outlives its job
+  delegate.mjs          — the OTHER half of dispatch. routing.mjs picks who takes
+                          a job; this lets the worker holding one hand a piece of
+                          it down to a cheaper model and get the answer back, so
+                          Claude stops paying to read four thousand lines it only
+                          needs a summary of. NO tools on the sub-task (a checker
+                          that can write is a second actor) and no files outside
+                          the project. Deliberately NOT a capability action —
+                          worker-to-worker is not a data operation, and keeping it
+                          out means a delegated worker cannot delegate onward
   routing.mjs           — picks the worker for a new job. Rules first (they work
                           with no network and no quota), a Flash call only for
                           genuinely ambiguous phrasing. Uncertain → Claude Code
@@ -343,6 +352,10 @@ scripts/
   dev.mjs               — starts the API and Vite together
   log-update.mjs        — append one entry to the Updates changelog. No deps.
                           Goes through the API, not the file — see the rule above
+  delegate.mjs          — hand one piece of work to a cheaper model and print its
+                          answer (server/delegate.mjs). Pre-allowed: a gate here
+                          would defeat it, since a hand-off that costs a tap is a
+                          hand-off the worker skips
   operator-action.mjs   — run one capability action (server/actions.mjs). How an
                           AI worker changes DATA instead of editing code. A CLI
                           rather than an SDK tool on purpose: every worker calls

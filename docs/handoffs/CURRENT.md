@@ -1,7 +1,7 @@
 # Current work
 
-Nothing in flight. Committed on `main`, `dist/` built, server restarted with the
-new worker live.
+Nothing in flight. **`main` is 37 commits ahead of `origin` and needs pushing by
+hand** — see the bottom of this file.
 
 ## FIRST THING TO CHECK — it is probably not broken
 
@@ -9,62 +9,80 @@ Speech is **off by default and stored per device**, and the Tauri window is its
 own storage profile from the browser. Symptom: Operator answers correctly on
 screen and says nothing, which reads exactly like the feature failing.
 
-The map now prints the reply in gold with `muted — tap the speaker in the chat
-to hear replies` underneath. If that line is showing, that is the answer.
+The map prints the reply in gold with `muted — tap the speaker in the chat to
+hear replies` underneath. If that line is showing, that is the answer.
 
-## Landed 2026-09-02
+## Landed 2026-09-02 (evening) — Claude dispatches, the others do the reading
 
-- **AI Router** ([ADR 0016](decisions/0016-ai-router.md)) — flat CHF 39/mo,
-  Swiss, OpenAI-compatible with real tool calling. Verified end to end: a `now`
-  tool call answered correctly in **1641ms**. It replaces the LOCAL model, not
-  Claude. Reports `basis: "billed"` with a **null** cost, never $0.
-- **Usage ceilings** (ADR 0013) — tokens stored, USD derived, nothing sums
-  across `basis`, quota is a separate ledger. All ceilings env-only and unset by
-  default, so nothing is enforcing yet.
-- **"tick off bench press"** reaches the gym via `needs.also`, a fallback chain
-  tried only where the primary found nothing. 121 self-test checks.
-- **Voice output picker** (Settings) — `setSinkId` on the shared audio element.
-- **Desktop shell**: Ctrl+Alt+O, tray with a two-state microphone, clap summons
-  only when unfocused, fullscreen on `OPERATOR_FOCUS_SCREEN`, Escape backs out.
-  Release build is 6.2MB.
+The owner's ask: *"claude opus 5 as the main bit taking in everything and
+dispatching and the other models helping so claude doesnt have to be the heavy
+worker anymore but it can be if needed."*
 
-## Next, agreed with the owner
+`routing.mjs` already did half of that — it picks which worker takes a JOB. What
+was missing is the other half: once Claude has a job, it read everything itself,
+at Claude's price, into Claude's context.
 
-**Hosted Whisper + TTS through AI Router, with local as the fallback.**
-Approved on 2026-09-02, and the reasoning is RAM rather than speed:
+- **`server/delegate.mjs` + `scripts/delegate.mjs`** — the dispatching worker
+  hands one piece of work down and gets prose back. Measured on its own source:
+  local 3B **101.7s**, two of five environment variables found; AI Router
+  **6.8s**, all five.
+- **Two refusals are structural, not advisory.** The sub-task gets `useTools:
+  false`, so it cannot write anything; and a path outside the project is
+  refused by name (verified against `~/.gitconfig`).
+- **NOT a capability action.** `actions.mjs` is Operator's own data;
+  worker-to-worker is a different thing wearing the same shape. It also settles
+  "can a delegated worker delegate?" as a plain no.
+- Pre-allowed in `jobs.mjs` and named in the system prompt — a gate would defeat
+  it, and a tool that is merely mentioned does not get used.
 
-- Local Whisper is already **287ms warm** — transcription is the SMALLEST part
-  of a spoken exchange. The 1200ms silence window is the real latency, and the
-  fix for that is a smart-turn model, not a hosting change.
-- What it does buy is memory. Kokoro holds ~300MB resident and Whisper its own
-  model, on a machine that hit **2.33GB free** during the Rust build.
+**Semantic verification is now ON and on AI Router.**
+`OPERATOR_SEMANTIC_VERIFY=1` was already set; `OPERATOR_SEMANTIC_PROVIDER` was
+not, so it had been silently running on the 3B. Both set now.
 
-So: build it switchable, hosted first, and **fall back to local once the 2×8GB
-arrives** (Facebook Marketplace, no date). An env var, defaulting to local, so
-the machine that has RAM keeps its voice on the box.
+**[ADR 0016](decisions/0016-ai-router.md) amended** — source diffs and project
+files named explicitly rather than inherited from "prompt and job context".
+Audio of him is still outside it; moving Whisper or TTS there needs its own
+clause written first.
 
-**This crosses a line held three times** — Deepgram, ElevenLabs and iOS
-`SpeechRecognition` were all refused because they send AUDIO OF HIM rather than
-text he chose to send. ADR 0016 approved prompts and job context, not voice.
-Extend that ADR with an explicit audio clause before writing the code; do not
-treat the existing approval as covering it.
+## What is NOT changed, and why
+
+**Routing still classifies with Qwen3.8, not Opus.** Making Opus the literal
+front door means paying an Opus turn to answer "which worker?" for every message
+the rules do not settle — the exact cost `routing.mjs` was built to avoid ($0.58
+for "what time is it", measured 2026-08-31). Claude is the dispatcher for WORK,
+not for triage. Raise it if he wants it the other way.
+
+## Next
+
+**Hosted Whisper + TTS through AI Router, local as the fallback.** Approved in
+principle 2026-09-02 for RAM reasons — Kokoro holds ~300MB resident on a machine
+that hit 2.33GB free during the Rust build. Local Whisper is already 287ms warm,
+so this buys memory, not speed. **Write the ADR 0016 audio clause first.**
+
+**`runner.mjs` still discards the SDK's token counts** — a five-line change, and
+the highest-value follow-up in the accounting. Claude's records read `reported`
+where they should read `derived`.
 
 ## Environment
 
-- `AIROUTER_API_KEY` set. `OPERATOR_TTS_IDLE_MS=14400000` (4h) — set to `0` when
-  the RAM lands, which removes the 8.5s cold start entirely.
-- `OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`.
+- `AIROUTER_API_KEY` set. `OPERATOR_SEMANTIC_PROVIDER=airouter`,
+  `OPERATOR_SEMANTIC_VERIFY=1`, `OPERATOR_TTS_IDLE_MS=14400000`,
+  `OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`.
 - Four workers registered: claude-code, gemini, airouter, ollama.
+- **`OperatorShell` scheduled task added** — the desktop shell now launches the
+  same hidden way the server and both Vite instances do.
 
 ## The restart trap, still true
 
 `POST /api/restart` and `schtasks /End` do NOT reload the environment while the
-supervisor survives. Stop all three by PID, then `schtasks /Run /TN OperatorServe`.
+supervisor survives. **The new `OPERATOR_SEMANTIC_PROVIDER` needs a full stop:**
+kill all three node PIDs, then `schtasks /Run /TN OperatorServe`.
 
-## Debris to delete by hand
+## For the owner to run by hand
 
-Deletion is denied to the agent session by design:
+Both denied to the agent session by design:
 
 ```
-rm scratch-also.mjs scratch-chain.mjs scratch-undo.mjs scratch-air.mjs
+git push origin main
+rm scratch-also.mjs scratch-chain.mjs scratch-undo.mjs scratch-air.mjs scratch-sem.mjs
 ```

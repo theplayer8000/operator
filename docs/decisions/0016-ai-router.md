@@ -64,6 +64,37 @@ again rather than a new category.
 else. No filesystem, no shell. Every tool call is something the owner could
 already do through a page.
 
+### Amended 2026-09-02 — source diffs, named explicitly
+
+The wording above is "the prompt and whatever job context is attached",
+inherited from the Gemini approval. **Two callers added since then send
+something that wording does not honestly cover, and they are approved here by
+name rather than by proximity.**
+
+- **`semantic.mjs`** — the owner's SOURCE DIFF, on every completed turn,
+  automatically. That file was written with the switch off by default for
+  exactly this reason.
+- **`delegate.mjs`** — whole project files, whenever the dispatching worker
+  hands a read down.
+
+Approved on the measurement rather than on principle. Same task, same file, same
+prompt: the local 3B took **101.7s** and named two of the five environment
+variables; `DeepSeek-V4-Flash` took **6.8s** and named all five. On the earlier
+semantic-verification benchmark the local model returned `unsure` in 41.0s and
+described the change as "a comment"; the router returned the correct `mismatch`
+verdict in 3.4s. A checker that is usually wrong is not a cheaper checker, it is
+a decoration.
+
+**What this does NOT approve.** Audio of him — Whisper, TTS — remains outside
+it. Deepgram, ElevenLabs and iOS `SpeechRecognition` were each refused on the
+grounds that a recording of a person is a different category from text he chose
+to send, and moving Whisper here needs its own clause, written before the code.
+Files outside the project are refused in `delegate.mjs` itself, so that half of
+the boundary is enforced rather than merely stated.
+
+**The revocation is one variable.** `OPERATOR_SEMANTIC_PROVIDER=local` puts
+verification back on the box; `--worker ollama` does the same per delegation.
+
 ## The risks, recorded because they are real
 
 **No named legal entity.** The site carries "© 2026 AI Router Switzerland" and

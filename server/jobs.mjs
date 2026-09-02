@@ -485,6 +485,22 @@ export const ALLOWED_TOOLS = (
 
       Widen it to `Bash(node scripts/app.mjs:*)` if that ever becomes friction.
     */
+    /*
+      Handing a piece of work down to a cheaper model (server/delegate.mjs).
+
+      Pre-allowed because a gate here would defeat it. The point of delegation
+      is that the expensive worker stops doing the cheap reading — if every
+      hand-off costs a tap on the phone, it does the reading itself, which is
+      the behaviour this exists to change.
+
+      Safe to pre-allow on its own terms: the sub-task gets NO tools, so it
+      cannot write anything; it reads only files inside the project, which this
+      worker could already Read; and it reaches only AI Router or the local
+      model, both already approved and already registered as workers.
+    */
+    "Bash(node scripts/delegate.mjs:*)",
+    'Bash("C:\\Program Files\\nodejs\\node.exe" scripts/delegate.mjs:*)',
+    'Bash("C:/Program Files/nodejs/node.exe" scripts/delegate.mjs:*)',
     "Bash(node scripts/app.mjs list:*)",
     "Bash(node scripts/app.mjs status:*)",
     // Git, minus the one that publishes — which the deny list stops outright.
@@ -635,6 +651,28 @@ const APPEND_PROMPT = [
   "and Read the PNG it prints. Only the viewport is captured, so make the",
   "height tall enough. Check your own visual work this way instead of asking",
   "the owner whether it came out right.",
+  /*
+    Delegation, stated as an instruction rather than an option.
+
+    The owner's ask on 2026-09-02: Claude takes everything in and dispatches,
+    the other models help, and it only does the heavy lifting when the work
+    genuinely needs it. A tool this model is merely TOLD EXISTS will not get
+    used — its default is to read the file itself, because that always works.
+    So the prompt names the shapes where delegating is the right call, and says
+    plainly which half of the job stays here.
+  */
+  "YOU ARE THE ONE DISPATCHING, not the one who has to do everything.",
+  "`node scripts/delegate.mjs \"<task>\" --file <path> --file <path>` hands one",
+  "piece of work to a cheaper model (AI Router, flat rate) and prints its answer.",
+  "The sub-task gets NO tools and cannot change anything — it reads and reports.",
+  "Delegate the bulk reading: summarising a long file or diff, finding which of",
+  "twenty files mentions a thing, drafting boilerplate, checking a document for",
+  "contradictions, writing a first pass you will then review. It costs you one",
+  "command and a short answer instead of the whole file in your context.",
+  "Keep for yourself: the decisions, anything touching correctness, the final",
+  "edit, and anything where being wrong is expensive. Delegating is not a",
+  "requirement — do the work directly when it is small, when you already have",
+  "the file, or when the judgement IS the task.",
   "To restart an app Operator hosts, use `node scripts/app.mjs restart <name>`",
   "(`list` shows them) rather than running its stop and start commands yourself —",
   "it confirms the app actually stopped before starting it, waits until it answers,",

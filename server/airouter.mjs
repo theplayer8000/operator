@@ -172,6 +172,16 @@ export async function runTurn({
   appendSystemPrompt = "",
   signal,
   onEvent,
+  /*
+    Whether this turn may reach the capability layer.
+
+    True for a job, because a worker answering "what's on this week" needs to
+    look. False for a DELEGATED sub-task (`server/delegate.mjs`), where the
+    model is reading code and returning prose — there, tools are ~16KB of
+    declarations it has no use for, and worse: a sub-task that can write to his
+    data is a second actor rather than an assistant to the one that asked.
+  */
+  useTools = true,
 }) {
   const id = sessionId ?? newSessionId();
   const history = conversations.get(id) ?? [];
@@ -187,7 +197,7 @@ export async function runTurn({
   }
   messages.push({ role: "user", content: prompt });
 
-  const tools = toolDeclarations(groupsFor(prompt));
+  const tools = useTools ? toolDeclarations(groupsFor(prompt)) : [];
   let error = null;
   let rounds = 0;
 
