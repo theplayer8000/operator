@@ -70,6 +70,14 @@ import { claimResources, removeJobResources } from "./uploads.mjs";
 import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
 import { routeTask, noteFailure, noteSuccess } from "./routing.mjs";
 import { verifyWorkspace } from "./verify.mjs";
+import {
+  checkCeiling,
+  countRequest,
+  jobCeilingUsd,
+  markQuotaExhausted,
+  recordTurn,
+  usageSnapshot,
+} from "./usage.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -154,25 +162,38 @@ const MAX_RESULT_CHARS = 600;
 const MAX_STDOUT_BYTES = 4_000_000;
 
 /*
-  The usage ceiling.
+  The usage ceiling lives in `server/usage.mjs` now — ADR 0013.
 
-  Unset by default, and that is deliberate: a number picked here would be a guess
-  at the owner's headroom, and limits are temporarily boosted (Claude Code +50%,
-  Cowork +100%) so anything tuned to today is wrong next month.
+  What used to be here was `spentUsd += result.costUsd` against
+  `OPERATOR_USAGE_BUDGET_USD`: one accumulator summing one number that does not
+  mean one thing. The ADR retired it rather than shipping it, because the same
+  addition mixes a subscription *valuation* with real *billed* spend, and a
+  ceiling that stops work for a reason it cannot explain is worse than none.
 
-  **Checking before a turn rather than during it was a proposed default**, not
-  the owner's decision — an earlier session recorded it as his and he has since
-  said it was a suggestion. It stands on its own reasoning: killing a turn
-  mid-edit leaves the repo half-changed, which is worse than overshooting a
-  self-imposed number by one turn.
+  Three env-only ceilings replace it, checked in this order:
 
-  Read `OPERATOR_USAGE_BUDGET_USD` to arm it.
+    OPERATOR_CEILING_JOB_USD       the runaway guard. Also handed to the SDK as
+                                   maxBudgetUsd, so it can stop a loop MID-turn.
+    OPERATOR_CEILING_PROVIDER_USD  routing exists to funnel work, so funnelling
+                                   it all into the expensive worker is likely.
+    OPERATOR_CEILING_DAILY_USD     last and weakest alone — applied per basis.
+    OPERATOR_QUOTA_REQUESTS        a separate ledger. Gemini's free tier ran out
+                                   while reporting $0.00; dollars cannot see it.
+
+  All unset by default: a number picked here would be a guess at the owner's
+  headroom, and limits get temporarily boosted, so anything tuned to today is
+  wrong next month. **Setting one matters now that OPERATOR_MAX_CONCURRENT is
+  above 1** — one turn at a time bounded spend by wall-clock, and N turns
+  multiply it by N.
+
+  Checking before a turn rather than during it is the owner's requirement:
+  killing a turn mid-edit leaves the repo half-changed, which is worse than
+  overshooting a self-imposed number by one turn.
 
   **This counts Operator's own usage and nothing else.** There is no
   `claude usage` subcommand and `/usage` is interactive-only, so the plan
-  percentage is not knowable from here. Every label says "Operator has used X".
-  A number that looks like plan usage but only counts one client is worse than no
-  number at all.
+  percentage is not knowable from here. A number that looks like plan usage but
+  only counts one client is worse than no number at all.
 */
 /*
   The standing permission profile. The owner's decision, 2026-08-01.
@@ -657,10 +678,6 @@ ${recalled}` : APPEND_PROMPT;
   }
 }
 
-const BUDGET_USD = Number(process.env.OPERATOR_USAGE_BUDGET_USD ?? 0) || 0;
-/** Assume a turn costs at least this, when nothing has run yet to measure. */
-const MIN_RESERVE_USD = 0.5;
-
 // --- state ----------------------------------------------------------------
 
 /** @type {Map<string, object>} newest last, insertion-ordered. */
@@ -696,9 +713,6 @@ const running = new Set();
  */
 const MAX_CONCURRENT = Math.max(1, Number(process.env.OPERATOR_MAX_CONCURRENT ?? 1) || 1);
 let jobSeq = 0;
-let spentUsd = 0;
-/** The most expensive turn seen, used as the reserve. */
-let maxTurnUsd = 0;
 
 /*
   Only the tab index is on disk. Events are not.
@@ -1081,36 +1095,41 @@ function prune() {
   }
 }
 
-// --- budget ---------------------------------------------------------------
+// --- ceilings -------------------------------------------------------------
 
 /**
- * Whether there is room to *start* another turn.
+ * Whether there is room to *start* another turn for this job.
  *
  * Checked before spawning, never during. The owner's requirement was to stop
  * before the limit rather than at it — "if I overlap it becomes half done and
  * stuff would break" — and killing a turn mid-edit is precisely that breakage.
  * So a turn that starts is always allowed to finish; what a ceiling does is
  * refuse the next one.
+ *
+ * The reasoning behind each ceiling lives in `usage.mjs`; this is only the call
+ * site. `job.costUsd` is passed rather than read there because a job's running
+ * total is job bookkeeping, not accounting state.
  */
-function budgetBlock() {
-  if (!BUDGET_USD) return null;
-  const reserve = Math.max(maxTurnUsd, MIN_RESERVE_USD);
-  if (spentUsd + reserve <= BUDGET_USD) return null;
-  return (
-    `Operator has used $${spentUsd.toFixed(2)} of its own $${BUDGET_USD.toFixed(2)} ceiling, ` +
-    `and the next turn could cost about $${reserve.toFixed(2)}. Stopping here rather than ` +
-    `part-way through one. Raise OPERATOR_USAGE_BUDGET_USD and restart to continue.`
-  );
+function ceilingBlockFor(job) {
+  return checkCeiling({ provider: job.provider, model: job.model, jobUsd: job.costUsd });
 }
 
+/** The accounting, for `list()` and anything that renders a number. */
 export function usage() {
-  return {
-    spentUsd,
-    budgetUsd: BUDGET_USD || null,
-    // Named so no caller can mistake it for plan usage. There is no way to read
-    // the plan percentage from here; see the note on BUDGET_USD.
-    scope: "operator-only",
-  };
+  return usageSnapshot();
+}
+
+/**
+ * The flat pair the current Orchestrator footer reads.
+ *
+ * Both are pinned to one basis by `usageSnapshot()` — they are **not** a total
+ * across bases, and there deliberately is no such total. Kept only so the
+ * existing UI keeps working; the page should move to the `today` breakdown and
+ * these should then go.
+ */
+function legacyUsageFields() {
+  const { spentUsd, budgetUsd } = usageSnapshot();
+  return { spentUsd, budgetUsd };
 }
 
 // --- questions ------------------------------------------------------------
@@ -1419,6 +1438,20 @@ async function runViaSdk(job, prompt) {
       `${job.sessionId ? ` (resuming ${job.sessionId.slice(0, 8)})` : " (new session)"}`
   );
 
+  /*
+    Wall-clock for the turn, recorded alongside the cost.
+
+    The real defect of 2026-08-20 — 129 seconds and nine permission prompts to
+    answer "what's my gym session today" — was invisible to a dollar meter and
+    obvious in duration. Measured here rather than taken from the worker because
+    it is the only number every provider can produce.
+  */
+  const startedMs = Date.now();
+  // One provider request, against today's quota. Counted before the call: a
+  // request that fails still spent the allowance, which is the whole reason
+  // Gemini went from working to unusable inside one evening.
+  countRequest(job.provider);
+
   let result;
   try {
     result = await runWorkerTurn(job.provider, {
@@ -1429,7 +1462,9 @@ async function runViaSdk(job, prompt) {
       env: workerEnv(),
       deniedTools: DENIED_TOOLS,
       allowedTools: ALLOWED_TOOLS,
-      budgetUsd: BUDGET_USD || null,
+      // The SDK's own ceiling. The only one that can stop a runaway *inside* a
+      // turn rather than refusing the next one.
+      budgetUsd: jobCeilingUsd(),
       appendSystemPrompt: await systemPromptFor(),
       /*
         Option C. `default` is the only mode that consults the callback —
@@ -1483,21 +1518,45 @@ async function runViaSdk(job, prompt) {
   job.turns += 1;
   if (result.sessionId) job.sessionId = result.sessionId;
 
-  const cost = typeof result.costUsd === "number" ? result.costUsd : 0;
-  if (cost > 0) {
-    job.costUsd += cost;
-    spentUsd += cost;
-    maxTurnUsd = Math.max(maxTurnUsd, cost);
-    emit(job, "usage", {
-      // Reported by Claude Code as the API-equivalent cost. On a subscription
-      // login this is plan usage, not a charge — every label downstream must
-      // say so rather than render it as money.
-      turnUsd: cost,
-      jobUsd: job.costUsd,
-      spentUsd,
-      budgetUsd: BUDGET_USD || null,
-    });
-  }
+  /*
+    Recorded whether or not it cost anything.
+
+    The old code only counted a turn when `cost > 0`, which made every Gemini
+    and Ollama turn invisible to the accounting — and those are exactly the ones
+    a dollar figure cannot govern. `usage.mjs` decides what the number means;
+    this hands it the facts and nothing else.
+
+    `tokens` is not passed yet: `runner.mjs` reads `total_cost_usd` and drops the
+    SDK's `usage` and `modelUsage` on the floor, so the counts are available and
+    simply not plumbed through. When they are, add `tokens` here and the records
+    become re-derivable with no other change.
+  */
+  const record = recordTurn({
+    jobId: job.id,
+    attempt: job.attempts.length,
+    provider: job.provider,
+    model: job.model,
+    reportedUsd: typeof result.costUsd === "number" ? result.costUsd : null,
+    durationMs: Date.now() - startedMs,
+    turns: 1,
+    error: Boolean(result.error),
+  });
+
+  const cost = typeof record.usd === "number" ? record.usd : 0;
+  if (cost > 0) job.costUsd += cost;
+  emit(job, "usage", {
+    /*
+      `basis` is the field that stops this number being read as money. On the
+      subscription login it is a `valuation` — what the work would have cost at
+      API list price — not a charge, and every label downstream must say so.
+    */
+    basis: record.basis,
+    source: record.source,
+    turnUsd: record.usd,
+    jobUsd: job.costUsd,
+    durationMs: record.durationMs,
+    ...legacyUsageFields(),
+  });
 
   // Cancelling is not failing. The status was set when Stop was pressed and the
   // abort that followed is the expected end, not an error to report over it.
@@ -1524,6 +1583,15 @@ async function runViaSdk(job, prompt) {
       of limit plausibly lasts.
     */
     const kind = noteFailure(job.provider, failure);
+    /*
+      The provider itself saying "out for today" is the authority on its own
+      quota, and worth more than Operator's local request count — which counts
+      turns, while a worker like Gemini can spend several provider requests
+      inside one. Recorded in the quota ledger, not enforced there: `routing.mjs`
+      already steers away for six hours, and blocking here as well would stop a
+      retry after the window genuinely resets.
+    */
+    if (kind === "daily") markQuotaExhausted(job.provider, { window: "day", source: "provider" });
     if (kind) {
       emit(job, "text", {
         text:
@@ -1557,7 +1625,7 @@ async function runTurn(job) {
     send another message. One job failing to start must not silently stop the
     rest.
 
-    Deferred rather than called directly. The budget check runs before any
+    Deferred rather than called directly. The ceiling check runs before any
     `await`, so a direct call would re-enter `pump()` from inside its own frame,
     once per queued job.
   */
@@ -1575,7 +1643,7 @@ async function runTurn(job) {
     "running" — and until this call happens, that is whatever attempt last ran,
     including one a crash left stuck at "running" forever, since `restore()`
     rebuilds `attempts` verbatim from disk with no way to know one never
-    finished. Beginning the attempt first means a budget block always closes out
+    finished. Beginning the attempt first means a ceiling block always closes out
     its own attempt, never a stale unrelated one, and gives a blocked turn the
     same handoff record every other terminal status gets — previously it left
     whatever `job.handoff` a *previous* attempt had set, unrelated to why the
@@ -1583,10 +1651,10 @@ async function runTurn(job) {
   */
   beginAttempt(job, prompt);
 
-  const blocked = budgetBlock();
+  const blocked = ceilingBlockFor(job);
   if (blocked) {
-    job.error = blocked;
-    setStatus(job, "blocked", blocked);
+    job.error = blocked.message;
+    setStatus(job, "blocked", blocked.message);
     // Put it back: raising the ceiling and restarting should not lose what he
     // typed. It is in the event log either way.
     job.pending.unshift(prompt);
@@ -1873,22 +1941,32 @@ function ingest(job, line) {
 
     case "result": {
       job.turns += 1;
-      const cost = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : 0;
-      if (cost > 0) {
-        job.costUsd += cost;
-        spentUsd += cost;
-        maxTurnUsd = Math.max(maxTurnUsd, cost);
-        emit(job, "usage", {
-          // Reported by Claude Code as the API-equivalent cost. On a
-          // subscription login this is plan usage, not a charge — every label
-          // downstream must say so rather than render it as money.
-          turnUsd: cost,
-          jobUsd: job.costUsd,
-          spentUsd,
-          budgetUsd: BUDGET_USD || null,
-          durationMs: typeof msg.duration_api_ms === "number" ? msg.duration_api_ms : null,
-        });
-      }
+      /*
+        Same accounting as the SDK path — see the note there. This fallback has
+        one thing the SDK path does not: `num_turns` and `duration_api_ms` come
+        straight off the CLI's result envelope, so they are used in preference
+        to anything measured here.
+      */
+      const record = recordTurn({
+        jobId: job.id,
+        attempt: job.attempts.length,
+        provider: job.provider,
+        model: job.model,
+        reportedUsd: typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : null,
+        durationMs: typeof msg.duration_api_ms === "number" ? msg.duration_api_ms : null,
+        turns: typeof msg.num_turns === "number" ? msg.num_turns : 1,
+        error: Boolean(msg.is_error),
+      });
+      const cost = typeof record.usd === "number" ? record.usd : 0;
+      if (cost > 0) job.costUsd += cost;
+      emit(job, "usage", {
+        basis: record.basis,
+        source: record.source,
+        turnUsd: record.usd,
+        jobUsd: job.costUsd,
+        durationMs: record.durationMs,
+        ...legacyUsageFields(),
+      });
 
       const denials = Array.isArray(msg.permission_denials)
         ? msg.permission_denials.map(describeDenial).filter(Boolean)
