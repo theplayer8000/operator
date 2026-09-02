@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { usePush } from "@/hooks/usePush";
+import { useUsage } from "@/hooks/useUsage";
 import { useSpeech } from "@/hooks/useSpeech";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 
@@ -28,6 +29,35 @@ const STATUS_META = {
   },
 } as const;
 
+
+/*
+  The three bases, named for a person rather than for the ledger.
+
+  ADR 0013 exists because a single number here would be a lie: the ~$40 of
+  Claude usage on 2026-08-20 was a VALUATION — what the work would have cost
+  at API list rates, while actually running on the Pro subscription. Adding
+  that to real spend produces a figure that is true of nothing, and showing it
+  as plan usage would be worse still, because Operator cannot see plan
+  headroom at all.
+
+  Ordered most-real first, so the number that IS money is read first.
+*/
+const BASIS_ORDER = ["billed", "valuation", "unpriced"] as const;
+
+const BASIS_META: Record<string, { label: string; what: string }> = {
+  billed: {
+    label: "Charged",
+    what: "Real money. A flat-rate provider shows no per-turn figure.",
+  },
+  valuation: {
+    label: "Would have cost",
+    what: "Claude on the Pro subscription — priced at list rates, not charged.",
+  },
+  unpriced: {
+    label: "No price known",
+    what: "A model with no entry in the price table. Unknown, not free.",
+  },
+};
 export default function Settings() {
   const {
     status,
@@ -44,6 +74,7 @@ export default function Settings() {
   } = useSettings();
 
   const push = usePush();
+  const usage = useUsage();
   const speech = useSpeech();
   const fileInput = useRef<HTMLInputElement>(null);
   const meta = STATUS_META[status];
@@ -266,6 +297,101 @@ export default function Settings() {
         )}
       </section>
 
+      {/*
+        Usage, and the reason it does not add up to one number.
+
+        The owner asked where the usage graph went. There never was one — the
+        only figure anywhere was `0.0000 this turn` in the Orchestrator footer,
+        and the server grew a real ledger before anything rendered it.
+
+        Stat tiles rather than a chart, deliberately. There is one day of data,
+        and the Statistics page already set the precedent of saying a slice is
+        thin rather than drawing a trend through two points.
+
+        No total, and the absence is the point — ADR 0013. Three bases mean
+        three different things and summing them produces a number that is not
+        true of anything.
+      */}
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="mb-1 flex items-baseline justify-between gap-3">
+          <h2 className="font-display text-sm font-medium text-ink-300">Usage today</h2>
+          <span className="font-mono text-[11px] text-ink-700">{usage.snapshot?.usageDay ?? ""}</span>
+        </header>
+        <p className="text-xs text-ink-700 mb-4 leading-relaxed">
+          Counted per <span className="text-ink-500">basis</span>, and deliberately never added
+          together — the three mean different things, so one total would be true of nothing.
+        </p>
+
+        {usage.loading && <p className="text-sm text-ink-700">Reading the ledger…</p>}
+        {usage.error && <p className="text-sm text-vital-down/80">{usage.error}</p>}
+
+        {usage.snapshot && (
+          <div className="space-y-2">
+            {BASIS_ORDER.map((basis) => {
+              const row = usage.snapshot!.today[basis];
+              if (!row || row.turns === 0) return null;
+              const meta = BASIS_META[basis];
+              return (
+                <div
+                  key={basis}
+                  className="rounded-badge border border-base-600 bg-base-900/40 p-3"
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="font-display text-sm text-ink-200">{meta.label}</span>
+                    <span className="font-mono text-sm text-ink-100 tabular-nums">
+                      {row.usd === null ? "—" : `$${row.usd.toFixed(4)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 mt-1">
+                    <span className="text-xs text-ink-700 leading-relaxed">{meta.what}</span>
+                    <span className="font-mono text-[11px] text-ink-700 shrink-0 tabular-nums">
+                      {row.turns} turn{row.turns === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {row.unknownCost > 0 && (
+                    <p className="text-[11px] text-ink-600 mt-1.5 leading-relaxed">
+                      {row.unknownCost} of {row.turns} had no price — the figure above covers{" "}
+                      {row.priced}.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+
+            {Object.entries(usage.snapshot.quota ?? {}).some(([, q]) => q?.requests) && (
+              <div className="rounded-badge border border-base-600 bg-base-900/40 p-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-display text-sm text-ink-200">Requests</span>
+                  <span className="font-mono text-[11px] text-ink-700">a separate ledger</span>
+                </div>
+                <p className="text-xs text-ink-700 mt-1 leading-relaxed">
+                  Counted apart from cost, because a provider can be out of allowance while its
+                  spend still reads zero.
+                </p>
+                <div className="mt-2 space-y-1">
+                  {Object.entries(usage.snapshot.quota ?? {}).map(([id, q]) =>
+                    q?.requests ? (
+                      <div key={id} className="flex items-baseline justify-between gap-3">
+                        <span className="text-xs text-ink-500">{id}</span>
+                        <span className="font-mono text-xs text-ink-300 tabular-nums">
+                          {q.requests}
+                          {q.exhausted ? " · out of allowance" : ""}
+                        </span>
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] text-ink-700 leading-relaxed pt-1">
+              Token counts read zero because the runner reports a cost without them — the price
+              table is plumbed in and not yet fed. Prices version{" "}
+              <span className="font-mono">{usage.snapshot.priceTableVersion}</span>.
+            </p>
+          </div>
+        )}
+      </section>
       <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
         <header className="mb-1">
           <h2 className="font-display text-sm font-medium text-ink-300">Backup</h2>
