@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the Operator window is allowed to ask the shell for. Without this file the window is granted NOTHING: Tauri v2 gates every core API behind a capability, so listen() was being denied and the tray's toggles reached a page that could not hear them. Custom commands (log_line, set_mic_state, summon_window, exit_fullscreen) are not gated and were working the whole time, which is exactly what made this hard to see.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}
