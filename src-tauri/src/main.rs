@@ -82,31 +82,67 @@ fn set_mic_state(active: bool, label: State<MicLabel>, app: tauri::AppHandle) {
     }
 }
 
+/**
+ * Bring the window to the front, asked for by the page.
+ *
+ * This is how a CLAP summons Operator. The clap is detected server-side and
+ * reaches the page as a counter; the page decides whether to act on it and calls
+ * this. Rust does not listen for claps — the detector already exists, works, and
+ * having a second one here would be two things fighting over one microphone.
+ *
+ * The page only calls this when Operator is NOT focused, which is the owner's
+ * own refinement: clapping while already looking at it should do nothing, and a
+ * window that raises itself when it is already in front is just a flicker.
+ */
+#[tauri::command]
+fn summon_window(app: tauri::AppHandle) {
+    summon(&app);
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(MicLabel(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![set_mic_state])
+        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window])
         .setup(|app| {
             let handle = app.handle().clone();
 
             /*
-              Ctrl+Alt+O. Deliberately awkward.
+              Ctrl+Alt+**letter O**, and it stays that way.
 
-              A single modifier would collide with something in whatever he is
-              working in, and a hotkey that steals a keystroke from another app
-              is worse than no hotkey. Three keys and a letter that is not used
-              for anything common.
+              It was briefly changed to Ctrl+Shift+O on the theory that Ctrl+Alt
+              is AltGr on a UK layout and unreliable as a global hook. That was a
+              confident explanation for a problem that did not exist — it had
+              been working, and was read as Ctrl+Alt+ZERO.
+
+              Ctrl+Shift+O is also actively worse: it is Chrome's bookmark
+              manager, and a GLOBAL hook would take it away from every browser on
+              the machine. Ctrl+Alt+O collides with far less.
+
+              Three keys either way. A single modifier would steal a keystroke
+              from whatever he is working in, and a hotkey that does that is
+              worse than no hotkey.
             */
             let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyO);
             let hotkey_handle = handle.clone();
-            app.global_shortcut().on_shortcut(shortcut, move |_app, _sc, event| {
-                // Fire on press only. Without this it summons twice — once down,
-                // once up — and the second one lands after focus has settled.
+            /*
+              Registration is REPORTED, not assumed.
+
+              The previous attempt failed silently: nothing errored, nothing
+              logged, and the only symptom was a key combination that did
+              nothing — indistinguishable from the feature not existing. A
+              hotkey already held by another application fails exactly this way.
+            */
+            match app.global_shortcut().on_shortcut(shortcut, move |_app, _sc, event| {
+                // Press only. Without this it summons twice — once down, once
+                // up — and the second lands after focus has settled.
                 if event.state == ShortcutState::Pressed {
                     summon(&hotkey_handle);
                 }
-            })?;
+            }) {
+                Ok(()) => println!("[operator] hotkey registered: Ctrl+Alt+O (letter O)"),
+                Err(e) => eprintln!("[operator] hotkey NOT registered — something else holds it: {e}"),
+            }
 
             /*
               The tray, and the ADR's condition made visible.
@@ -121,7 +157,18 @@ fn main() {
               whether a stream is actually open.
             */
             let show = MenuItem::with_id(app, "show", "Open Operator", true, None::<&str>)?;
-            let mic = MenuItem::with_id(app, "mic", "Microphone: off", false, None::<&str>)?;
+            /*
+              Enabled, because he asked to TOGGLE from here rather than only
+              read it: *"i cant toggle microphone on or off and if i could that
+              would make it all work"*. It is the control that makes the rest
+              usable — with the mic on and the window out of focus, a clap or
+              the hotkey can bring Operator back.
+
+              It still does not touch the device. Clicking it asks the page,
+              which owns the stream; the label only changes when the page
+              reports back that something actually happened.
+            */
+            let mic = MenuItem::with_id(app, "mic", "Microphone: off", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(app, &[&show, &mic, &separator, &quit])?;
@@ -139,6 +186,10 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => summon(app),
+                    "mic" => {
+                        // Ask, do not act. The page owns the microphone.
+                        let _ = app.emit("operator://toggle-mic", ());
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })

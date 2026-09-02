@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { onSummoned, reportMicState } from "@/lib/desktop";
+import { onSummoned, onToggleMic, reportMicState, summonWindow } from "@/lib/desktop";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useSpeech } from "@/hooks/useSpeech";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -137,9 +137,25 @@ export default function MissionMap() {
       Skip only the genuine first reading — learning where the counter already
       is, rather than reacting to claps that happened before this page loaded.
     */
-    if (firstReading || mic.active || !mic.supported) return;
-    console.log(`[operator] clap heard (${voice.claps}) — opening the microphone`);
-    void mic.enable();
+    if (firstReading) return;
+
+    /*
+      A clap summons the WINDOW when Operator is behind something else, and does
+      nothing at all when it is already in front.
+
+      His refinement, and it is better than what was here: clapping while
+      looking at Operator should do nothing, because there is nothing to
+      summon — and a window raising itself when it is already focused is a
+      flicker rather than a feature.
+
+      Note this no longer opens the microphone. A clap can only be HEARD if
+      something is already listening, so "clap to turn the mic on" was
+      circular except in the one case where the server's own microphone heard
+      it. Arming is a deliberate act: the tray, or the picker.
+    */
+    if (typeof document !== "undefined" && document.hasFocus()) return;
+    console.log(`[operator] clap heard (${voice.claps}) — summoning`);
+    void summonWindow();
   }, [voice.claps, mic]);
   /*
     Remembered across reloads.
@@ -212,6 +228,28 @@ export default function MissionMap() {
   useEffect(() => {
     void reportMicState(mic.active);
   }, [mic.active]);
+
+  /*
+    The tray's microphone line, which is the control that makes the rest usable.
+
+    His words: *"i cant toggle microphone on or off and if i could that would
+    make it all work"* — with the mic on and the window behind something else, a
+    clap or the hotkey brings Operator back. Without a way to arm it from
+    outside the window, the whole out-of-focus story needs the window first.
+
+    The tray asks and the page acts, so there is still exactly one owner of the
+    device.
+  */
+  useEffect(() => {
+    let stop = () => {};
+    void onToggleMic(() => {
+      if (mic.active) mic.disable();
+      else void mic.enable();
+    }).then((off) => {
+      stop = off;
+    });
+    return () => stop();
+  }, [mic]);
 
   const spokenFor = useRef<string | null>(null);
   useEffect(() => {
