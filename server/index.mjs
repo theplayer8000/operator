@@ -56,6 +56,7 @@ import {
   deleteState,
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
+import { listLogs, tailLog } from "./logs.mjs";
 /*
   Web Push replaced ntfy on 2026-09-01. `notify.mjs` keeps the same interface,
   so nothing else in server/ changed — only who carries the message.
@@ -928,6 +929,29 @@ const server = createServer(async (req, res) => {
     // and not in the browser.
     if (pathname === "/api/claude-status") {
       return json(res, 200, await claudeStatus());
+    }
+
+    /*
+      The logs, readable from the app rather than only from a terminal.
+
+      Named, from a closed set in `logs.mjs` — there is no path parameter here
+      and there must not be one. `data/` holds the store, the backups and the
+      push subscriptions, so a log viewer that accepted a filename would be a
+      file reader wearing a smaller hat.
+
+      Gated like everything under /api/ by the check in front of the router.
+    */
+    if (pathname === "/api/logs") {
+      return json(res, 200, { logs: listLogs() });
+    }
+
+    if (pathname.startsWith("/api/logs/")) {
+      const id = pathname.slice("/api/logs/".length);
+      try {
+        return json(res, 200, await tailLog(id, url.searchParams.get("lines")));
+      } catch (err) {
+        return json(res, 404, { error: String(err?.message ?? err).slice(0, 200) });
+      }
     }
 
     if (pathname === "/api/health") {

@@ -17,6 +17,7 @@ import ConnectedClients from "@/components/dev/ConnectedClients";
 import ClaudeStatus from "@/components/dev/ClaudeStatus";
 import BuildStatus from "@/components/dev/BuildStatus";
 import TerminalPanel from "@/components/dev/TerminalPanel";
+import LogConsole from "@/components/dev/LogConsole";
 
 const DOC_SHORTCUTS = [
   { path: "CLAUDE.md", label: "CLAUDE.md" },
@@ -144,6 +145,8 @@ export default function Dev() {
       </div>
 
       <TerminalPanel />
+
+      <LogConsole />
 
       <ConnectedClients />
       <BuildStatus />

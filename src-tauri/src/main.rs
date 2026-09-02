@@ -24,6 +24,26 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+/// Write one line to `data/shell.log`, and to stdout when there is one.
+///
+/// The release binary is built `windows_subsystem = "windows"`, which means it
+/// has NO CONSOLE — so every `println!` in it goes nowhere. That is fine until
+/// something fails silently, which this shell has now done three separate ways:
+/// a hotkey that never registered, a tray click that opened nothing, and a
+/// `set_focus()` that returned Ok and did not focus.
+///
+/// Each of those cost a round of "it's fixed" / "no it isn't". A file the log
+/// can be read from afterwards is the cheapest possible answer to that, and it
+/// is the same reason `serve.log` exists on the Node side.
+fn log(line: &str) {
+    println!("{line}");
+    let path = std::path::Path::new("D:/Projects/operator/data/shell.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Bring the window back, wherever it went.
 ///
 /// Unminimise, show and focus, in that order — a window that is merely shown
@@ -68,7 +88,7 @@ fn summon(app: &tauri::AppHandle) {
         */
         let already = window.is_fullscreen().unwrap_or(false);
         if already {
-            println!("[operator] summon: already fullscreen, just focusing");
+            log("[operator] summon: already fullscreen, just focusing");
         } else {
             match window.available_monitors() {
                 Ok(monitors) if !monitors.is_empty() => {
@@ -82,14 +102,14 @@ fn summon(app: &tauri::AppHandle) {
                     let _ = window.set_fullscreen(false);
                     let moved = window.set_position(position);
                     let full = window.set_fullscreen(true);
-                    println!(
+                    log(&format!(
                         "[operator] summon: screen {} of {} at {:?} — move {:?}, fullscreen {:?}",
                         pick + 1,
                         monitors.len(),
                         position,
                         moved.is_ok(),
                         full.is_ok()
-                    );
+                    ));
                 }
                 Ok(_) => eprintln!("[operator] summon: no monitors reported"),
                 Err(e) => eprintln!("[operator] summon: could not read monitors: {e}"),
@@ -279,8 +299,31 @@ fn main() {
                     summon(&hotkey_handle);
                 }
             }) {
-                Ok(()) => println!("[operator] hotkey registered: Ctrl+Alt+O (letter O)"),
+                Ok(()) => log("[operator] hotkey registered: Ctrl+Alt+O (letter O)"),
                 Err(e) => eprintln!("[operator] hotkey NOT registered — something else holds it: {e}"),
+            }
+
+            /*
+              Ctrl+Alt+M — the microphone, from anywhere.
+
+              The tray menu can toggle it, but a tray icon is a thing you have
+              to go and find, and the whole point of arming the mic from outside
+              the window is that you are working in something else at the time.
+              This is the same event the menu emits, on a key.
+
+              M for microphone. Next to the summon key and equally unlikely to
+              be wanted by anything else.
+            */
+            let mic_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyM);
+            let mic_handle = handle.clone();
+            match app.global_shortcut().on_shortcut(mic_shortcut, move |_app, _sc, event| {
+                if event.state == ShortcutState::Pressed {
+                    // Ask the page, which owns the stream. Same rule as the tray.
+                    let _ = mic_handle.emit("operator://toggle-mic", ());
+                }
+            }) {
+                Ok(()) => log("[operator] hotkey registered: Ctrl+Alt+M (microphone)"),
+                Err(e) => eprintln!("[operator] mic hotkey NOT registered: {e}"),
             }
 
             /*
