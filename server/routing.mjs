@@ -28,8 +28,25 @@
 // that cannot possibly succeed costs the owner his time and his trust in the
 // routing, which is harder to get back.
 
-const CLASSIFIER_MODEL = "gemini-flash-latest";
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+/*
+  The cheap worker, which is no longer Gemini.
+
+  Gemini was the classifier and the destination for data questions. Both moved
+  to AI Router on 2026-09-02 for two reasons that compound: its free tier is 20
+  requests a DAY, so the classifier stopped working most evenings and every
+  routing decision silently fell back to the expensive worker — the exact cost
+  it exists to avoid. And its key was burned by being typed into Operator's own
+  terminal, which logs every command.
+
+  A flat rate has neither problem. There is no daily count to exhaust and no
+  per-call cost, so the classifier can run on every ambiguous request instead of
+  being rationed.
+*/
+const CLASSIFIER_MODEL = process.env.AIROUTER_CLASSIFIER_MODEL || "Qwen3.8";
+const ENDPOINT = (process.env.AIROUTER_BASE_URL || "https://api.airouter.ch/v1").replace(/\/+$/, "");
+
+/** Where a data question goes. Falls back to the capable worker if unconfigured. */
+const DATA_WORKER = process.env.AIROUTER_API_KEY ? "airouter" : "claude-code";
 
 // --- availability ----------------------------------------------------------
 //
@@ -190,7 +207,7 @@ function fastPath(prompt) {
     return { provider: "claude-code", why: "mentions code, the repo, or a git/build command" };
   }
   if (JUST_DATA.some((re) => re.test(prompt)) && prompt.length < 200) {
-    return { provider: "gemini", why: "your own data — no code involved" };
+    return { provider: DATA_WORKER, why: "your own data — no code involved" };
   }
   return null;
 }
@@ -205,7 +222,7 @@ function fastPath(prompt) {
  * failure rather than coerced into a guess.
  */
 async function classify(prompt, signal) {
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.AIROUTER_API_KEY;
   if (!key) return null;
 
   const question =
@@ -217,53 +234,51 @@ async function classify(prompt, signal) {
     `Request: ${prompt.slice(0, 500)}\n\nAnswer (CODE or DATA):`;
 
   try {
-    const res = await fetch(`${ENDPOINT}/${CLASSIFIER_MODEL}:generateContent`, {
+    /*
+      OpenAI-shaped now, not Gemini's `:generateContent`.
+
+      The reasoning control moved with it. Gemini needed
+      `thinkingConfig.thinkingBudget: 0` because Flash spends output budget on
+      internal reasoning BEFORE emitting text — a one-word classification burned
+      61 thinking tokens and came back MAX_TOKENS with null parts, so every
+      routing call failed while the silent fallback made it look fine.
+
+      Qwen3.8 is also a reasoning model and has the same trap. Its control is
+      `reasoning_effort: "none"`, which the router advertises in
+      `supportedReasoningEfforts`. If a future model ignores the field the
+      symptom is identical and equally quiet: check `finish_reason` before
+      believing the classifier is being consulted at all.
+    */
+    const res = await fetch(`${ENDPOINT}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: question }] }],
-        generationConfig: {
-          /*
-            `thinkingBudget: 0` is load-bearing, not a tuning knob.
-
-            Flash is a thinking model: it spends output budget on internal
-            reasoning *before* emitting any text. Measured — a one-word
-            classification burned 61 thinking tokens and returned
-            `finishReason: MAX_TOKENS` with `parts: null`. Every routing call
-            failed that way, and because the fallback is silent and sensible
-            ("send it to the capable worker"), the router looked like it was
-            working while never once consulting the model. Raising the token
-            cap does not fix it — the thinking scales to fill whatever it is
-            given. Turning thinking off returns "DATA" in a single token.
-
-            If a future model ignores this field, the symptom is the same
-            silent one: check `finishReason` before believing the router.
-          */
-          thinkingConfig: { thinkingBudget: 0 },
-          maxOutputTokens: 16,
-          temperature: 0,
-        },
+        model: CLASSIFIER_MODEL,
+        messages: [{ role: "user", content: question }],
+        reasoning_effort: "none",
+        max_tokens: 8,
+        temperature: 0,
       }),
       signal,
     });
     if (!res.ok) {
       /*
-        Logged rather than swallowed. A 429 here is the interesting case: the
-        free tier does rate-limit, and when it does, every routing decision
-        quietly falls back to the expensive worker — which is the exact cost
-        this is meant to avoid. Silent fallback is what made an entire test run
-        look like bad classification when the classifier was never reached.
+        Logged rather than swallowed. Under Gemini a 429 here was the COMMON
+        case — twenty requests a day — and every routing decision then quietly
+        fell back to the expensive worker, which is the exact cost this exists
+        to avoid. A flat rate should make that rare, so a warning here now means
+        something is genuinely wrong rather than that it is Tuesday evening.
       */
       console.warn(`[operator] routing classifier unavailable (${res.status}) — using rules`);
       return null;
     }
-    const body = await res.json();
-    const answer = body?.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toUpperCase() ?? "";
+    const answer =
+      (await res.json())?.choices?.[0]?.message?.content?.trim().toUpperCase() ?? "";
     if (answer.startsWith("CODE")) {
       return { provider: "claude-code", why: "reads as work on the app itself" };
     }
     if (answer.startsWith("DATA")) {
-      return { provider: "gemini", why: "reads as a question about your own data" };
+      return { provider: DATA_WORKER, why: "reads as a question about your own data" };
     }
     return null;
   } catch {

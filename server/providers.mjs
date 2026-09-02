@@ -135,7 +135,24 @@ const AIROUTER = {
 
 const WORKERS = new Map([
   [CLAUDE_CODE.id, CLAUDE_CODE],
-  ...(process.env.GEMINI_API_KEY ? [[GEMINI.id, GEMINI]] : []),
+  /*
+    Gemini is RETIRED, 2026-09-02. Registered only if explicitly asked for.
+
+    Two reasons that compound. Its free tier is twenty requests a DAY, so it
+    was unusable most evenings — and it was the routing classifier, which
+    meant every routing decision silently fell back to the expensive worker
+    exactly when it mattered. And its key was burned by being typed into
+    Operator's own terminal, which logs every command it runs.
+
+    AI Router does the same job with no daily count and no per-call cost.
+
+    The file stays and the worker can be brought back with
+    OPERATOR_ENABLE_GEMINI=1, because deleting a working provider to make a
+    point is not the same as retiring it.
+  */
+  ...(process.env.OPERATOR_ENABLE_GEMINI && process.env.GEMINI_API_KEY
+    ? [[GEMINI.id, GEMINI]]
+    : []),
   ...(airouterConfigured ? [[AIROUTER.id, AIROUTER]] : []),
 ]);
 
