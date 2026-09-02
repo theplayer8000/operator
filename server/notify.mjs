@@ -1,49 +1,75 @@
 // One line onto his phone when something happened that he did not do.
 //
-// ## What changed on 2026-09-01, and what did not
+// ## Two channels, on purpose
 //
-// This was a POST to the owner's OWN ntfy server on loopback, which relayed
-// through `ntfy.sh` so Apple could wake the iOS app. It is now **Web Push**,
-// direct from this process to the browser's push service.
+// Web Push AND ntfy, both attempted, results OR'd. That is not belt-and-
+// braces nervousness; it is the only arrangement that works given how each
+// one fails.
 //
-// **The interface is deliberately identical.** `notify(title, message, opts)`,
-// never throws, never retries, never queues. Every caller — `actions.mjs`,
-// `jobs.mjs`, the intent digest — is unchanged, because the decision that
-// changed was *how a notification reaches him*, not *when Operator sends one*.
+// **Push was made the sole channel on 2026-09-01 and that was wrong.** The
+// argument for it is still true — RFC 8291 encryption means Apple carries
+// ciphertext, where ntfy.sh sees a message id and a topic hash — but it
+// optimised the half that was already fine and gave up the half that mattered.
 //
-// ### Why the switch, stated honestly
+// **Measured 2026-09-02**: a push to his iPhone returned  and
+// never arrived. Subscription present, VAPID valid, payload encrypted,
+// accepted. iOS drops a home-screen web app's push entitlement when the app
+// has not been opened recently, and a PWA never gets the durable entitlement a
+// native app has.
 //
-// The owner's reason was reducing what leaves the machine, and the first answer
-// he got was that this does not do that: a push service is unavoidable, because
-// it is how a sleeping OS is woken. `ntfy.sh` is replaced by Apple, not by
-// nobody.
+// So the failure mode is the worst kind: **it reports success and delivers
+// nothing.** A fallback that fires on error would never fire. Hence both.
 //
-// What it does buy, and why he chose it anyway:
+// The cost is a duplicate when both work, which he has complained about
+// before. `OPERATOR_NOTIFY_CHANNELS` trims it once he knows which he trusts.
 //
-//   - **Strictly less content.** RFC 8291 encryption is mandatory and the key is
-//     shared only between this server and the browser that subscribed. Apple
-//     carries ciphertext. ntfy.sh saw a message id and a topic hash — comparable
-//     metadata, but this is provably unreadable rather than merely trusted.
-//   - **One fewer service to run.** No local ntfy, no `server.yml`, no
-//     `upstream-base-url`, no second app on the phone.
-//   - **It says Operator.** Notifications arrive under Operator's own name and
-//     icon rather than ntfy's, because the manifest supplies them.
+// ## What each one is good at
 //
-// ### Degrade to silence — unchanged, and it matters more now
+//   Web Push  encrypted end to end, arrives as Operator with Operator's icon,
+//             no second app. Unreliable on iOS for the reason above.
+//   ntfy      a native app with a durable push entitlement, so it actually
+//             wakes. Relays a message id and topic hash through ntfy.sh.
 //
-// A missed notification stays missed. No retry buffer, no queue. `CLAUDE.md`'s
-// rule applied outbound, and the event log remains the record.
+// ## The interface never changed
 //
-// It matters more because there is no fallback channel any more. If push fails
-// he simply does not hear about it, which is the trade he accepted knowingly.
+// `notify(title, message, opts)`. Every caller — actions.mjs, jobs.mjs, the
+// intent digest — has been untouched across both switches, because what kept
+// changing was HOW a notification reaches him, not WHEN Operator sends one.
+//
+// ## Degrade to silence
+//
+// Never throws, never retries, never queues. A missed notification stays
+// missed and the event log remains the record.
 //
 // No dependencies.
 
 import { sendTo, configured as pushConfigured, publicKey } from "./push.mjs";
 import { list as listSubscriptions, remove as forgetSubscription } from "./subscriptions.mjs";
+import { sendNtfy, configured as ntfyConfigured, destination as ntfyHost } from "./ntfy.mjs";
+
+/*
+  Which channels to use. Both by default, and that is deliberate.
+
+  Measured 2026-09-02: a push to his iPhone returned 201 Created from Apple
+  and never arrived — iOS drops a home-screen web app's push entitlement when
+  the app has not been opened recently. The server was correct in every
+  respect, which is the point: **push reports success and delivers nothing**,
+  so a fallback that fires on error would never fire.
+
+  The cost of sending both is a duplicate when both work, which he has
+  complained about before. That is the price of not missing one, and this
+  variable is how he trims it once he knows which he trusts.
+*/
+const CHANNELS = (process.env.OPERATOR_NOTIFY_CHANNELS ?? "push,ntfy")
+  .split(",")
+  .map((c) => c.trim().toLowerCase())
+  .filter(Boolean);
+
+const usePush = CHANNELS.includes("push") && pushConfigured;
+const useNtfy = CHANNELS.includes("ntfy") && ntfyConfigured;
 
 /** Whether a notification can be sent at all. Read by callers before bothering. */
-export const configured = pushConfigured;
+export const configured = usePush || useNtfy;
 
 /** Re-exported so the API can hand it to a browser that wants to subscribe. */
 export { publicKey };
@@ -74,59 +100,74 @@ let announced = false;
 export async function notify(title, message, opts = {}) {
   if (!configured) return false;
 
-  const devices = await listSubscriptions();
-  if (devices.length === 0) {
-    if (!announced) {
-      announced = true;
-      console.log("[operator] push is configured but no device has subscribed yet");
-    }
-    return false;
-  }
-
   if (!announced) {
     announced = true;
-    console.log(`[operator] notifications → Web Push, ${devices.length} device(s)`);
+    const where = [
+      usePush ? "Web Push" : null,
+      useNtfy ? `ntfy (${ntfyHost()})` : null,
+    ].filter(Boolean);
+    console.log(`[operator] notifications → ${where.join(" + ")}`);
   }
 
   /*
-    The payload the service worker will render. JSON rather than headers,
-    because unlike ntfy this is a body the browser decrypts and hands to our own
-    code — there is no protocol reading these fields, only `sw.js`.
-
-    No ASCII-folding here. That existed because ntfy put the title in an HTTP
-    HEADER, where a smart quote or an em-dash threw inside fetch before the
-    request was made. This is an encrypted body: UTF-8 throughout, so a mission
-    called "Don't — seriously" arrives intact.
+    Both channels are attempted, and their results are OR'd rather than one
+    gating the other. See the CHANNELS note above: push returns 201 for a
+    notification iOS then drops, so there is no failure for a fallback to
+    trigger on.
   */
-  const payload = JSON.stringify({
-    title: String(title ?? "Operator").slice(0, 200),
-    body: String(message ?? "").slice(0, 1000),
-    tag: opts.tags?.[0] ?? undefined,
-    url: opts.click ?? "/",
-    urgent: opts.priority === "urgent" || opts.priority === "max",
-  });
+  const sent = [];
 
-  const urgency = opts.priority === "low" || opts.priority === "min" ? "low" : "high";
-
-  const results = await Promise.all(
-    devices.map(async (device) => {
-      const result = await sendTo(device, payload, { urgency });
+  if (usePush) {
+    const devices = await listSubscriptions();
+    if (devices.length > 0) {
       /*
-        Forget a subscription the push service says is retired.
+        The payload the service worker renders. JSON rather than headers,
+        because unlike ntfy this is a body the browser decrypts and hands to our
+        own code — no protocol reads these fields, only `sw.js`.
 
-        Without this a deleted app leaves an endpoint that fails on every
-        notification forever — and because failures are silent by design, the
-        only symptom would be Operator getting slower for no visible reason.
+        No ASCII folding here. That exists in ntfy.mjs because ntfy puts the
+        title in an HTTP HEADER, where a smart quote throws inside fetch before
+        the request is made. This is an encrypted body: UTF-8 throughout, so a
+        mission called "Don't — seriously" arrives intact.
       */
-      if (result.gone) {
-        console.log(`[operator] push: forgetting a dead subscription (${result.status ?? "invalid"})`);
-        await forgetSubscription(device.endpoint).catch(() => {});
-      } else if (!result.ok) {
-        console.warn(`[operator] push failed (${result.status ?? "-"}): ${result.error ?? ""}`);
-      }
-      return result.ok;
-    }),
-  );
+      const payload = JSON.stringify({
+        title: String(title ?? "Operator").slice(0, 200),
+        body: String(message ?? "").slice(0, 1000),
+        tag: opts.tags?.[0] ?? undefined,
+        url: opts.click ?? "/",
+        urgent: opts.priority === "urgent" || opts.priority === "max",
+      });
+      const urgency = opts.priority === "low" || opts.priority === "min" ? "low" : "high";
 
-  return results.some(Boolean);
+      const results = await Promise.all(
+        devices.map(async (device) => {
+          const result = await sendTo(device, payload, { urgency });
+          /*
+            Forget a subscription the push service says is retired.
+
+            Without this a deleted app leaves an endpoint that fails on every
+            notification forever — and because failures are silent by design,
+            the only symptom would be Operator getting slower for no visible
+            reason.
+          */
+          if (result.gone) {
+            console.log(
+              `[operator] push: forgetting a dead subscription (${result.status ?? "invalid"})`,
+            );
+            await forgetSubscription(device.endpoint).catch(() => {});
+          } else if (!result.ok) {
+            console.warn(`[operator] push failed (${result.status ?? "-"}): ${result.error ?? ""}`);
+          }
+          return result.ok;
+        }),
+      );
+      sent.push(results.some(Boolean));
+    }
+  }
+
+  if (useNtfy) {
+    sent.push(await sendNtfy(title, message, opts));
+  }
+
+  return sent.some(Boolean);
 }
