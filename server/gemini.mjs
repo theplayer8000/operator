@@ -31,7 +31,7 @@
 // dependency would buy types and retries, neither worth reopening that rule
 // for. Node's built-in fetch is enough.
 
-import { runAction, listActions, groupsFor, ActionError } from "./actions.mjs";
+import { runAction, listActions, groupsFor, ActionError, redactParams } from "./actions.mjs";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -320,7 +320,7 @@ export async function runTurn({
           continue;
         }
 
-        onEvent("tool_use", { tool: call.name, subject: JSON.stringify(params) });
+        onEvent("tool_use", { tool: call.name, subject: redactParams(call.name, params) });
         try {
           const result = await runAction(call.name, params);
           onEvent("tool_result", { ok: true, text: JSON.stringify(result) });

@@ -229,6 +229,29 @@ let nextId = 1;
  * ordinary characters here — there is no shell to interpret them, which is the
  * property the whole design rests on.
  */
+/*
+  What goes in the audit line when the command is setting a secret.
+
+  The audit line is the point of ADR 0011 and must not go away — but it does
+  not need the VALUE to do its job. "tosins-iphone ran setx RUNWAY_API_KEY" is
+  a complete audit record of who did what; the key itself only makes the log a
+  place secrets live.
+
+  This is a safety net rather than the route: `secret_set` is the action that
+  should be used, and it never touches a shell. This catches the instinct to
+  type setx anyway, which is the instinct that cost a Gemini key.
+*/
+function auditLine(argv) {
+  const safe = argv.slice();
+  const cmd = String(safe[0] ?? "").toLowerCase();
+  if ((cmd === "setx" || cmd === "set") && safe.length > 2) {
+    for (let i = 2; i < safe.length; i += 1) {
+      if (safe[i] !== "/m" && safe[i] !== "/M") safe[i] = `«${safe[i].length} chars withheld»`;
+    }
+  }
+  return safe.join(" ");
+}
+
 export function tokenise(line) {
   const argv = [];
   let current = "";
@@ -650,7 +673,7 @@ export async function startRun(line, identity) {
   prune();
 
   console.log(
-    `[operator] terminal run ${id} by ${run.device}${run.user ? ` (${run.user})` : ""}: ${argv.join(" ")}`
+    `[operator] terminal run ${id} by ${run.device}${run.user ? ` (${run.user})` : ""}: ${auditLine(argv)}`
   );
 
   const proc = spawn(resolved.exe, [...resolved.prefixArgs, ...argv.slice(1)], {

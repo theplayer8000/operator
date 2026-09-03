@@ -42,7 +42,7 @@
 // parallel requests, 240/min, 10M tokens/min; the parallel limit happens to be
 // exactly `OPERATOR_MAX_CONCURRENT`.
 
-import { runAction, listActions, groupsFor, ActionError } from "./actions.mjs";
+import { runAction, listActions, groupsFor, ActionError, redactParams } from "./actions.mjs";
 
 const env = (name) => (process.env[name] ?? "").replace(/^﻿/, "").trim();
 
@@ -118,7 +118,7 @@ function toolDeclarations(groups) {
  * far more likely to be the per-minute ceiling than a suspension — which is
  * worth waiting out rather than failing the turn.
  */
-async function call({ model, messages, tools, signal, onRateLimit }) {
+async function call({ model, messages, tools, signal, onRateLimit, reasoningEffort }) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -137,7 +137,12 @@ async function call({ model, messages, tools, signal, onRateLimit }) {
           authorization: `Bearer ${API_KEY}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ model, messages, tools: tools.length ? tools : undefined }),
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: tools.length ? tools : undefined,
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -172,6 +177,20 @@ export async function runTurn({
   appendSystemPrompt = "",
   signal,
   onEvent,
+  /**
+   * How much internal reasoning to spend, when the caller knows it is wasted.
+   *
+   * DeepSeek-V4-Flash thinks before it answers, and on extraction that thinking
+   * IS the latency: one 16k-character conversation produced 13,788 characters
+   * of reasoning to reach 3,454 characters of answer, and took a hundred
+   * seconds doing it. Long enough to hit the request timeout, which returned
+   * nothing at all.
+   *
+   * "none" is advertised by the router and measurably works — zero reasoning
+   * characters returned. Left undefined by default, because a turn that is
+   * genuinely reasoning (a job, a conversation) should keep it.
+   */
+  reasoningEffort,
   /*
     Whether this turn may reach the capability layer.
 
@@ -215,6 +234,7 @@ export async function runTurn({
         messages,
         tools,
         signal,
+        reasoningEffort,
         // Said out loud: a silent pause on a phone reads as a hang, and the
         // event log is the only thing that can say otherwise.
         onRateLimit: (seconds) =>
@@ -253,7 +273,7 @@ export async function runTurn({
           continue;
         }
 
-        onEvent("tool_use", { tool: name, subject: JSON.stringify(params) });
+        onEvent("tool_use", { tool: name, subject: redactParams(name, params) });
         try {
           const result = await runAction(name, params);
           onEvent("tool_result", { ok: true, text: JSON.stringify(result) });

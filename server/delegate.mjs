@@ -55,7 +55,16 @@ import { fileURLToPath } from "node:url";
 const MAX_CHARS = Number(process.env.OPERATOR_DELEGATE_MAX_CHARS || 400_000);
 
 /** Long enough for a big read, short enough that a hang ends. */
-const TIMEOUT_MS = Number(process.env.OPERATOR_DELEGATE_TIMEOUT_MS || 180_000);
+/*
+  Long enough for a big extraction, measured rather than guessed.
+
+  180s was not: one 16k-character conversation took ~100 seconds on its own,
+  and a 45k window is several times that. With `reasoning_effort: "none"` the
+  thinking is gone and most of that latency with it — but the ceiling should
+  still sit well clear of the worst case rather than just above the average,
+  because exceeding it produces silence rather than an error.
+*/
+const TIMEOUT_MS = Number(process.env.OPERATOR_DELEGATE_TIMEOUT_MS || 420_000);
 
 /**
  * Where a delegated read may reach.
@@ -197,11 +206,37 @@ export async function delegate({ task, files = [], worker, model, signal } = {})
         // See the header: a sub-task returns prose. Tools would make it an
         // actor, and would spend ~16KB of declarations it has no use for.
         useTools: false,
+        /*
+          No internal reasoning. A sub-task is extraction or summary, and the
+          thinking is pure latency: one conversation spent 13,788 characters of
+          reasoning to produce 3,454 of answer, took a hundred seconds, and hit
+          the timeout — which came back as silence.
+        */
+        reasoningEffort: "none",
         onEvent: (type, data) => {
           if (type === "text") text += data.text;
         },
       });
       if (result?.error) throw new Error(result.error);
+      /*
+        An empty reply is a FAILURE, and it used to be indistinguishable from a
+        model that had nothing to say.
+
+        `runTurn` reports an abort as `error: null` — deliberately, so pressing
+        Stop is not an error — and a timeout is an abort. So a request that ran
+        out of time returned no text and no error, and the importer logged
+        "no JSON array in the reply (0 chars)" and moved on, losing that window
+        of the conversation without anything saying why.
+
+        A sub-task that produces nothing has failed. Saying so lets the caller
+        retry it instead of silently importing less than it should.
+      */
+      if (!text.trim()) {
+        throw new Error(
+          "the worker returned nothing — usually the request timed out mid-answer; " +
+            "try a smaller window or a longer OPERATOR_DELEGATE_TIMEOUT_MS",
+        );
+      }
     } finally {
       clearTimeout(timer);
     }

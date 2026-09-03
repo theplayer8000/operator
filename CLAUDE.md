@@ -82,11 +82,17 @@ Three hard conditions come with each:
   file is plaintext, served by an API with no auth — a key in it is a key
   published to the tailnet. Environment variables in development; Docker
   secrets or equivalent runtime config in production.
-- **And never type one into Operator's own terminal.** It logs every command it
-  runs — that audit line is the point of ADR 0011 — so `setx SOME_KEY <value>`
-  there writes the secret to the server log in plaintext. The Gemini key had to
-  be reissued for exactly this. Set secrets from a normal shell at the desk;
-  the server reads them from the environment either way.
+- **Set one with the `secret_set` action, never by typing `setx` anywhere.**
+  The terminal logs every command it runs — that audit line is the point of ADR
+  0011 — and `setx SOME_KEY <value>` there wrote the secret to the server log in
+  plaintext. The Gemini key had to be reissued for exactly this.
+  `secret_set` exists so the ergonomics stop fighting the rule: it takes a name
+  and a value, and the value reaches no log, no event, no response body and not
+  the store. It **refuses any `OPERATOR_*` name** — that namespace is the
+  security boundary, not configuration, and a device able to write
+  `OPERATOR_TERMINAL_DEVICES` could grant itself execution. Those stay a
+  desk job. Typing `setx` in the terminal now redacts the value in the audit
+  line as a safety net, but the action is the route.
 - **The embedded terminal runs for named devices** ([ADR 0011](docs/decisions/0011-remote-terminal-for-authorised-devices.md),
   amending ADR 0009's local-only restriction now that authentication exists).
   **Disarmed** on every start (`OPERATOR_TERMINAL=1` starts it armed), and

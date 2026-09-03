@@ -1329,6 +1329,98 @@ async function calendarRange({ from, days = 7 }) {
   return { from: start, to: endKey, count: occurrences.length, events: occurrences };
 }
 
+// --- secrets ----------------------------------------------------------------
+//
+// ## Why this exists at all
+//
+// `CLAUDE.md` says, in as many words: never type a key into Operator's own
+// terminal. It logs every command it runs — that audit line is the point of
+// ADR 0011 — so `setx SOME_KEY <value>` writes the secret to serve.log in
+// plaintext. The Gemini key had to be reissued for exactly that.
+//
+// The rule worked but the ergonomics did not: setting a key meant walking to
+// the desk. The owner asked for it back, with one condition — "just make sure
+// the setx capability does not log info".
+//
+// So this is a named action rather than a shell command, and the VALUE never
+// reaches a log, an event, a response body or the store. Only the name does.
+//
+// ## What it will not set
+//
+// Anything beginning with `OPERATOR_`, refused outright. That namespace is not
+// configuration, it is the security boundary: `OPERATOR_TERMINAL_DEVICES` says
+// which devices may run commands, `OPERATOR_TOKEN` is the bearer token,
+// `OPERATOR_APPS` is what may be restarted. A device that could write those
+// could grant itself execution and then use it — the same reasoning that keeps
+// those variables environment-only in the first place, applied to the one new
+// way of writing them.
+//
+// Third-party keys are the whole use case and are allowed: AIROUTER_API_KEY,
+// GEMINI_API_KEY, RUNWAY_API_KEY, whatever comes next.
+//
+// ## It does not take effect until a restart
+//
+// `setx` writes the registry for FUTURE processes; the running server keeps the
+// environment it booted with. Saying so in the result matters — a key that
+// silently does nothing for an hour is worse than one that says "restart me".
+
+const PROTECTED_PREFIX = /^OPERATOR_/i;
+const VALID_NAME = /^[A-Z][A-Z0-9_]{2,63}$/i;
+
+async function secretSet({ name, value }) {
+  required(name, "name");
+  required(value, "value");
+
+  const key = String(name).trim();
+  if (!VALID_NAME.test(key)) {
+    throw new ActionError(
+      `"${key}" is not a valid environment variable name (letters, digits and underscore, 3-64 chars)`,
+    );
+  }
+  if (PROTECTED_PREFIX.test(key)) {
+    throw new ActionError(
+      `refusing to set ${key}: OPERATOR_* variables are the security boundary — ` +
+        `terminal access, the bearer token, which apps may restart. Set those at the desk.`,
+    );
+  }
+
+  const secret = String(value);
+  if (!secret.trim()) throw new ActionError("value is empty");
+
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+
+  try {
+    /*
+      execFile, not a shell, so the value is passed as an argv element.
+
+      Through a shell it would land in the command line — visible in the
+      process list to anything that cares to look, which is a second copy of
+      the secret nobody asked for. This is the same argv-only reasoning ADR
+      0011 applies to the terminal.
+    */
+    await run("setx", [key, secret], { windowsHide: true, timeout: 15_000 });
+  } catch (err) {
+    // The message is ours; the value is not in it. `err.message` from setx
+    // echoes the command, so it is deliberately not passed through.
+    throw new ActionError(`setx failed for ${key} (exit ${err?.code ?? "?"})`);
+  }
+
+  console.log(`[operator] secret set: ${key} (${secret.length} chars, value not logged)`);
+
+  return {
+    name: key,
+    set: true,
+    characters: secret.length,
+    /*
+      Length, never a prefix. "Starts with sk-ant-" is a genuinely useful
+      confirmation and also a genuinely useful thing to steal half of.
+    */
+    takesEffect: "on the next server restart — setx writes the registry for future processes",
+  };
+}
+
 // --- the work log -----------------------------------------------------------
 //
 // ## The layer that was missing
@@ -1900,6 +1992,12 @@ const ACTIONS = {
     params: "from? (YYYY-MM-DD or \"today\"), days? (default 7, max 90)",
     handler: calendarRange,
   },
+  secret_set: {
+    description:
+      "Store an API key or other secret as a persistent environment variable, WITHOUT it appearing in any log. Use this instead of running setx in the terminal, which logs every command it runs. Refuses OPERATOR_* names, which govern security. Takes effect on the next server restart.",
+    params: "name (e.g. RUNWAY_API_KEY), value",
+    handler: secretSet,
+  },
   work_record: {
     description:
       "Record that a piece of work FINISHED, so Operator can tell the owner about it later. Call this at the end of a turn that changed anything — code, docs, data. This is how work done outside Operator's own job runner becomes visible to it. Set needsOwner true only when he actually has to do something.",
@@ -2260,6 +2358,33 @@ const GROUP_WORDS = {
  * returning null, and for the same reason: silence is an honest answer and the
  * safe fallback is the expensive one, not the wrong one.
  */
+
+/**
+ * A version of an action's parameters that is safe to write down.
+ *
+ * Four workers log `JSON.stringify(params)` into the job event log as the
+ * subject of a `tool_use` event, and that log is shown in the app and read
+ * back by later turns. Without this, one `secret_set` call would put the key
+ * in it — which is the exact failure the action was written to avoid, arriving
+ * by a different door.
+ *
+ * Redaction is by PARAMETER NAME as well as by action, so a secret passed to
+ * something else by mistake is still caught.
+ */
+const SECRET_PARAMS = /^(value|secret|token|key|password|apikey|api_key)$/i;
+
+export function redactParams(action, params) {
+  if (!params || typeof params !== "object") return JSON.stringify(params ?? {});
+  const safe = {};
+  for (const [k, v] of Object.entries(params)) {
+    safe[k] =
+      SECRET_PARAMS.test(k) && typeof v === "string" && v.length > 0
+        ? `«${v.length} chars withheld»`
+        : v;
+  }
+  return JSON.stringify(safe);
+}
+
 export function groupsFor(prompt) {
   const text = String(prompt ?? "");
   if (!text.trim()) return null;

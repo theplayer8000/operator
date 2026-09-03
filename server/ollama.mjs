@@ -35,7 +35,7 @@
 // eventually verification - and genuinely not fine for writing code. The point
 // is not that it competes with Claude. The point is that it is always there.
 
-import { runAction, listActions, groupsFor, ActionError } from "./actions.mjs";
+import { runAction, listActions, groupsFor, ActionError, redactParams } from "./actions.mjs";
 
 /** Loopback only. A remote Ollama would be an external host needing approval. */
 const ENDPOINT = process.env.OPERATOR_OLLAMA_URL ?? "http://127.0.0.1:11434";
@@ -335,7 +335,7 @@ export async function runTurn({
           params = {};
         }
 
-        onEvent("tool_use", { tool: name, subject: JSON.stringify(params) });
+        onEvent("tool_use", { tool: name, subject: redactParams(name, params) });
         try {
           const result = await runAction(name, params);
           onEvent("tool_result", { ok: true, text: JSON.stringify(result) });
