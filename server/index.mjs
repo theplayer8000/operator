@@ -331,6 +331,7 @@ const server = createServer(async (req, res) => {
         const body = await readBody(req);
         try {
           return json(
+            req,
             res,
             202,
             await jobs.create(
@@ -454,6 +455,7 @@ const server = createServer(async (req, res) => {
         if (action === "permission" && req.method === "POST") {
           const body = await readBody(req);
           return json(
+            req,
             res,
             200,
             jobs.answerPermission(
