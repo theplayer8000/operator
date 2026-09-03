@@ -1,8 +1,7 @@
 # Current work
 
-Nothing in flight. **`agent` holds one commit that is not on `main` yet** —
-`64bfc08`, the failed-job reroute below. It is server-only, so merging it needs
-a restart to take effect.
+Nothing in flight. Everything committed and pushed — `origin/main` at `4238b35`,
+`agent` level with it.
 
 ## FIRST THING TO CHECK — it is probably not broken
 
