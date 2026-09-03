@@ -130,6 +130,15 @@ interface Body {
    * an absolute cutoff cannot know that. A rank does.
    */
   landmark: boolean;
+  /**
+   * How many links from the core this node sits.
+   *
+   * 0 is a hub — one of the most connected notes, which is what the core
+   * attaches to. 1 is anything linked to a hub, 2 anything linked to those.
+   * A breadth-first distance over the real link graph, not a guess: the shells
+   * you see are the actual shape of what is connected to what.
+   */
+  tier: number;
 }
 
 interface Edge {
@@ -326,6 +335,15 @@ export default function MissionMap() {
   solidRef.current = solid;
   /** Yaw, carried across frames so the rotation survives a re-render. */
   const spin = useRef(0);
+  /**
+   * Camera pitch, and whether the owner has taken hold of it.
+   *
+   * Right-drag orbits in solid mode. Once he has aimed it, the automatic yaw
+   * stops: a view that keeps turning after you pointed it somewhere is a view
+   * you cannot aim.
+   */
+  const tilt = useRef(0.34);
+  const steered = useRef(false);
 
   const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", false));
   const setAutoSend = (next: boolean) => {
@@ -582,6 +600,8 @@ export default function MissionMap() {
     */
     dragging: null as string | null,
     panning: false,
+    /** A right-drag in solid mode turns the camera rather than sliding it. */
+    orbiting: false,
     lastX: 0,
     lastY: 0,
     moved: 0,
@@ -682,6 +702,53 @@ export default function MissionMap() {
       A rank rather than a threshold, because a threshold has to guess the
       distribution and will be wrong for any vault but the one it was tuned on.
     */
+    /*
+      Which notes the core is attached to, and how far everything else is from
+      those.
+
+      The owner's read of the vault graph: "i thought it would be more circler
+      and constraintive of the core it kinda wraps around it but doesnt
+      represent properly ... maybe im looking for all origin points to come
+      from the core".
+
+      He is right, and the mission map is why: there, missions ORBIT — a push
+      out of the middle and a pull home put them in a ring, so they read as
+      attached to the thing at the centre. The vault had neither, so the core
+      sat in a cloud it was not part of.
+
+      The core attaches to the HUBS — the most connected notes — and everything
+      else is placed by its breadth-first distance from one. That is not a
+      decorative choice: distance-from-a-hub is a real property of the link
+      graph, so the rings mean something rather than merely looking tidy.
+    */
+    const HUBS = 8;
+    const hubs = [...degree.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, HUBS)
+      .map(([id]) => id);
+
+    const tier = new Map<string, number>();
+    const neighbours = new Map<string, string[]>();
+    for (const e of edges) {
+      (neighbours.get(e.from) ?? neighbours.set(e.from, []).get(e.from))!.push(e.to);
+      (neighbours.get(e.to) ?? neighbours.set(e.to, []).get(e.to))!.push(e.from);
+    }
+    let frontier = hubs;
+    for (const id of hubs) tier.set(id, 0);
+    let depth = 0;
+    while (frontier.length > 0 && depth < 12) {
+      depth += 1;
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const other of neighbours.get(id) ?? []) {
+          if (tier.has(other)) continue;
+          tier.set(other, depth);
+          next.push(other);
+        }
+      }
+      frontier = next;
+    }
+
     const LABEL_BUDGET = 24;
     const labelled = new Set(
       [...degree.entries()]
@@ -763,6 +830,15 @@ export default function MissionMap() {
         r: m ? 26 + Math.min(14, d * 3) : 6 + Math.min(9, Math.sqrt(d) * 2.4),
         degree: d,
         landmark: !m ? labelled.has(n.id) : true,
+        /*
+          Unreachable notes get the outer shell rather than tier 0.
+
+          A note with no links at all has no distance from a hub, and defaulting
+          that to zero would park every orphan in the innermost ring — the one
+          place reserved for the most connected things in the vault, which is
+          exactly backwards.
+        */
+        tier: m ? 0 : (tier.get(n.id) ?? 6),
         sx: kept?.sx ?? 0,
         sy: kept?.sy ?? 0,
         sr: kept?.sr ?? 26,
@@ -1032,7 +1108,42 @@ export default function MissionMap() {
           space rather than a node parked on top of it.
         */
         const fromCore = Math.hypot(a.x, a.y) || 1;
-        if (fromCore < MIN_ORBIT) {
+        if (anneals) {
+          /*
+            Every note is pulled onto the ring its tier belongs to.
+
+            This is what makes the vault read as attached to the core instead
+            of merely surrounding it: hubs settle just outside the core, their
+            neighbours in the next shell, and so on outward. Combined with the
+            core-to-hub strands drawn below, the origin points he was looking
+            for are literally there.
+
+            Two-sided, unlike the mission map's push — a node too far OUT is
+            pulled back as firmly as one too far in, which is what turns a
+            cloud into rings. Gentle, so the ordinary repulsion still decides
+            where a node sits along its ring; this only decides which ring.
+          */
+          const ring = MIN_ORBIT * 0.7 + a.tier * 190;
+          /*
+            In solid mode a tier is a SPHERICAL SHELL, not a flat ring.
+
+            The owner: "the render doesnt feel 3d just feels like an object
+            turning" — and he was right. The radial force was measured in x and
+            y only, so every tier was a flat circle and the whole graph was a
+            disc with a little thickness from the repulsion. A disc rotated is
+            an object turning; it is not a volume.
+
+            Using the 3D distance puts each tier on a sphere around the core, so
+            there is as much structure behind and in front as there is left and
+            right. That is the difference between seeing a rotation and seeing
+            depth.
+          */
+          const radius = solid ? Math.hypot(a.x, a.y, a.z) || 1 : fromCore;
+          const pull = (radius - ring) * 0.012;
+          a.vx -= (a.x / radius) * pull;
+          a.vy -= (a.y / radius) * pull;
+          if (solid) a.vz -= (a.z / radius) * pull;
+        } else if (fromCore < MIN_ORBIT) {
           const push = (MIN_ORBIT - fromCore) * 0.035;
           a.vx += (a.x / fromCore) * push;
           a.vy += (a.y / fromCore) * push;
@@ -1125,19 +1236,39 @@ export default function MissionMap() {
       if (solid) {
         // A slow yaw so depth is legible. A static projection of a 3D layout
         // is just a strange 2D one — the rotation is what reveals the shape.
-        spin.current += 0.0022;
+        // Drifts until he takes the wheel, then holds where he left it.
+        if (!steered.current) spin.current += 0.0022;
         const yaw = spin.current;
-        const tilt = 0.34;
         const cy = Math.cos(yaw);
         const sy = Math.sin(yaw);
-        const ct = Math.cos(tilt);
-        const st = Math.sin(tilt);
+        const ct = Math.cos(tilt.current);
+        const st = Math.sin(tilt.current);
         /*
           Deep enough to read as depth, shallow enough that a node at the back
           is still a node rather than a speck. Measured by looking: below about
           900 the near nodes balloon and the far ones vanish.
         */
-        const FOV = 1400;
+        /*
+          The lens is sized to the OBJECT, not fixed.
+
+          A constant field of view cannot be right for both graphs: 1400 against
+          a small layout is nearly orthographic and reads as a flat thing
+          turning, which is what the owner saw — and 780 against a layout that
+          has since expanded past it puts nodes almost on the camera plane,
+          where the divide blows them up to four times size. Both were the same
+          mistake with different numbers.
+
+          Measuring the layout each frame fixes the RATIO instead: the nearest
+          point is always about the same amount larger than the farthest,
+          whatever size the graph has grown to. 1.9 is a real lens — clearly
+          three-dimensional, well short of a fisheye.
+        */
+        let extent = 1;
+        for (const b of bodies) {
+          const r = Math.hypot(b.x, b.y, b.z);
+          if (r > extent) extent = r;
+        }
+        const FOV = Math.max(700, extent * 1.9);
         for (const b of bodies) {
           const x1 = b.x * cy - b.z * sy;
           const z1 = b.x * sy + b.z * cy;
@@ -1324,13 +1455,55 @@ export default function MissionMap() {
         ctx.stroke();
       };
 
+      /*
+        The core's own strands, out to the hubs.
+
+        "Maybe im looking for all origin points to come from the core." This is
+        that, and it is honest rather than cosmetic: the lines go to the notes
+        the tier layout is actually built around, so what radiates is the same
+        structure the layout used.
+      */
+      if (anneals) {
+        ctx.beginPath();
+        for (const b of bodies) {
+          if (b.tier !== 0) continue;
+          ctx.moveTo(0, 0);
+          ctx.lineTo(b.sx, b.sy);
+        }
+        ctx.strokeStyle = rgba(GOLD, 0.13 + lift * 0.25);
+        ctx.lineWidth = Math.max(1, floor(1.1));
+        ctx.stroke();
+      }
+
       if (focus === null) {
-        strand(
-          eds,
-          lift > 0 ? accent : ([90, 118, 158] as Rgb),
-          0.16 + lift * 0.42,
-          1 + lift * 1.2,
-        );
+        /*
+          In solid mode the web is drawn in two depth passes.
+
+          Perspective sizes the NODES, but the strands between them are the
+          bulk of what you look at, and drawn at one alpha they form a flat
+          sheet of light with the nodes floating on it — which is most of why
+          the depth was not reading.
+
+          Splitting at the midpoint costs one extra stroke call and gives the
+          single strongest depth cue there is: things further away are dimmer.
+          Flat mode keeps its single pass, since every edge is at the same
+          depth there by definition.
+        */
+        const base = lift > 0 ? accent : ([90, 118, 158] as Rgb);
+        if (solid) {
+          const far: Edge[] = [];
+          const nearEdges: Edge[] = [];
+          for (const e of eds) {
+            const a = byId.get(e.from);
+            const b = byId.get(e.to);
+            if (!a || !b) continue;
+            ((a.depth + b.depth) / 2 < 0.5 ? far : nearEdges).push(e);
+          }
+          strand(far, base, (0.16 + lift * 0.42) * 0.35, 0.7 + lift * 0.6);
+          strand(nearEdges, base, (0.16 + lift * 0.42) * 1.25, 1.2 + lift * 1.2);
+        } else {
+          strand(eds, base, 0.16 + lift * 0.42, 1 + lift * 1.2);
+        }
       } else {
         /*
           Split once rather than tested twice. With a focus there are exactly
@@ -1542,7 +1715,15 @@ export default function MissionMap() {
           whole graph every time one link changed.
         */
         const landmark = b.landmark;
-        const labelAlpha = solid ? Math.max(0, (b.depth - 0.42) / 0.58) : 1;
+        /*
+          Only the front of the sphere is named.
+
+          0.42 kept the whole near hemisphere, and a hemisphere of labels lands
+          in one crowded patch because perspective squashes them together as
+          they curve away. 0.74 keeps roughly the front cap — the notes
+          genuinely facing you — and everything else answers on hover.
+        */
+        const labelAlpha = solid ? Math.max(0, (b.depth - 0.74) / 0.26) : 1;
         if ((landmark && labelAlpha > 0.02) || isHover) {
           ctx.fillStyle = `rgba(196,205,222,${a * (isHover ? 1 : labelAlpha)})`;
           ctx.font = "13px Inter, system-ui, sans-serif";
@@ -1648,6 +1829,7 @@ export default function MissionMap() {
     */
     if (e.button === 2) {
       pointer.current.panning = true;
+      pointer.current.orbiting = solidRef.current;
       return;
     }
     if (hit) pointer.current.dragging = hit.id;
@@ -1670,6 +1852,7 @@ export default function MissionMap() {
     if (e.buttons === 0 && (pointer.current.dragging || pointer.current.panning)) {
       pointer.current.dragging = null;
       pointer.current.panning = false;
+      pointer.current.orbiting = false;
       pointer.current.down = false;
     }
 
@@ -1696,8 +1879,28 @@ export default function MissionMap() {
       return;
     }
     if (pointer.current.panning) {
-      view.current.panX += dx;
-      view.current.panY += dy;
+      /*
+        Right-drag ORBITS in solid mode, and pans in flat.
+
+        In three dimensions the useful gesture is turning the thing rather than
+        sliding it — which is what every 3D viewer does and what he expected:
+        "i thought it would pan the camera in like the 3d view you know how like
+        u can on maps n stuff". In flat there is nothing to turn, so the same
+        gesture keeps its original job.
+
+        Pitch is clamped short of vertical. Past the pole the scene flips and
+        yaw reverses under your hand, which reads as the controls breaking
+        rather than as the camera going over the top.
+      */
+      if (pointer.current.orbiting) {
+        steered.current = true;
+        spin.current -= dx * 0.006;
+        tilt.current = Math.max(-1.25, Math.min(1.25, tilt.current + dy * 0.006));
+      } else {
+        view.current.panX += dx;
+        view.current.panY += dy;
+        viewTarget.current = { ...view.current };
+      }
       return;
     }
     const hit = bodyAt(e.clientX, e.clientY);
@@ -1837,6 +2040,7 @@ export default function MissionMap() {
     const release = () => {
       pointer.current.dragging = null;
       pointer.current.panning = false;
+      pointer.current.orbiting = false;
       pointer.current.down = false;
     };
     window.addEventListener("blur", release);
@@ -2089,7 +2293,7 @@ export default function MissionMap() {
       </div>
 
       <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden xl:block">
-        drag a node · right-drag to pan · scroll to zoom
+        {`drag a node · right-drag to ${solid ? "turn" : "pan"} · scroll to zoom`}
       </p>
     </div>
   );
