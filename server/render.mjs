@@ -69,7 +69,20 @@ import { randomUUID } from "node:crypto";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RENDER_DIR = resolve(process.env.OPERATOR_RENDER_DIR ?? join(ROOT, "data", "renders"));
-const PROFILE_DIR = join(RENDER_DIR, ".profile");
+/*
+  Where the isolated browser profile lives.
+
+  Overridable, because a corrupted one is otherwise a dead end. A headless Edge
+  killed mid-run leaves locks behind, and every render after that fails with
+  "the isolated profile could not be used" — permanently, with no recovery
+  except deleting the directory. That is a delete, which the agent session is
+  denied by design, so rendering simply stops working and stays stopped.
+
+  One environment variable turns an unrecoverable state into a working one.
+*/
+const PROFILE_DIR = process.env.OPERATOR_RENDER_PROFILE
+  ? resolve(process.env.OPERATOR_RENDER_PROFILE)
+  : join(RENDER_DIR, ".profile");
 
 /** How long a single render may take before the browser is killed. */
 const TIMEOUT_MS = Math.max(2000, Number(process.env.OPERATOR_RENDER_TIMEOUT_MS ?? 20000) || 20000);
