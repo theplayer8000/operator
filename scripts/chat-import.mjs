@@ -233,6 +233,41 @@ function parseNotes(text) {
 const titleKey = (t) =>
   String(t ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter((w) => w.length > 2).sort().join(" ");
 
+/*
+  Which conversations were finished COMPLETELY.
+
+  Resumability keyed on "does the vault hold a note from this chat" is wrong in
+  one specific and silent way: a chat interrupted halfway has notes, so a later
+  run treats it as done and the rest of it is never extracted. Nothing reports
+  that — the chat simply contributes less than it should, forever.
+
+  It matters because interruptions are normal here. The owner asked whether he
+  could restart the server mid-import, which is exactly the case: the writes go
+  through the API, so a restart fails them, and the partial chat would then be
+  skipped for good.
+
+  A conversation id is appended only after ALL of its windows have been
+  extracted. A file rather than the store, because it is a scratch record of a
+  process rather than something Operator holds — and because it must survive
+  the server being down, which is the situation it exists for.
+*/
+const DONE_FILE = join(ROOT, "data/chat-import-done.json");
+
+async function loadDone() {
+  try {
+    const raw = JSON.parse(await readFile(DONE_FILE, "utf8"));
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Set();
+  }
+}
+
+async function markDone(done, id) {
+  done.add(id);
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(DONE_FILE, JSON.stringify([...done], null, 2)).catch(() => {});
+}
+
 // --- main -------------------------------------------------------------------
 
 const { parseConversation, extractConversations } = await loadParser();
@@ -264,9 +299,28 @@ if (!state) {
   process.exit(1);
 }
 const existing = state?.state?.["knowledge.notes"] ?? [];
-const importedIds = new Set(
+/*
+  Two sources of truth, and the stricter one wins.
+
+  The marker file says which chats were finished end to end. Note sources say
+  which chats contributed anything at all — which still matters for a vault
+  imported before the marker file existed, so both are consulted and a chat is
+  skipped only when the MARKER says so.
+
+  The consequence is deliberate: a chat interrupted halfway is re-extracted
+  from the start, and its already-written notes are caught by the title dedupe
+  rather than duplicated. Doing a little work twice is the right trade against
+  losing half a conversation silently.
+*/
+const done = await loadDone();
+const contributed = new Set(
   existing.map((n) => n.source).filter((s) => typeof s === "string" && s.startsWith("chatgpt:")),
 );
+// Anything already in the vault from a run that predates the marker file is
+// treated as finished; there is no way to tell, and re-doing all of them would
+// be worse than trusting the old behaviour for chats it already handled.
+for (const src of contributed) done.add(src.slice("chatgpt:".length));
+const importedIds = new Set([...done].map((id) => `chatgpt:${id}`));
 const seenTitles = new Set(existing.map((n) => titleKey(n.title)));
 const topicCounts = new Map();
 for (const n of existing) for (const t of n.topics ?? []) topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
@@ -297,6 +351,7 @@ let created = 0;
 let skipped = 0;
 
 for (const [index, entry] of todo.entries()) {
+  let windowsFailed = 0;
   const convo = byId.get(entry.id);
   const real = convo.messages.filter((m) => !m.aside);
   const windows = chunk(real);
@@ -313,12 +368,14 @@ for (const [index, entry] of todo.entries()) {
         worker: WORKER,
       });
     } catch (err) {
+      windowsFailed += 1;
       console.warn(`   ! window ${w + 1}: ${String(err?.message ?? err)}`);
       continue;
     }
 
     const notes = parseNotes(reply.text);
     if (!notes) {
+      windowsFailed += 1;
       console.warn(
         `   ! window ${w + 1}: no JSON array in the reply (${reply.text.length} chars): ` +
           JSON.stringify(reply.text.slice(0, 160)),
@@ -351,10 +408,21 @@ for (const [index, entry] of todo.entries()) {
         });
         created++;
       } catch (err) {
+        windowsFailed += 1;
         console.warn(`   ! failed to write: ${String(err?.message ?? err)}`);
       }
     }
   }
+
+  /*
+    Marked finished only when NOTHING failed.
+
+    A chat with a failed window is left unmarked so the next run redoes it —
+    the duplicate notes are caught by the title check, and half a conversation
+    silently missing is the failure worth preventing.
+  */
+  if (WRITE && windowsFailed === 0) await markDone(done, entry.id);
+  else if (windowsFailed > 0) console.warn(`   (${windowsFailed} window(s) failed — will retry next run)`);
 }
 
 console.log(
