@@ -416,14 +416,31 @@ function parseConversation(convo, sourceFile) {
  *   anything else                                 refused loudly rather than
  *                                                 half-parsed into nonsense
  */
+/**
+ * Is this actually a conversation?
+ *
+ * A STRUCTURAL test, not a filename one, and that distinction cost a full
+ * triage pass. The export folder holds several JSON files that are arrays of
+ * objects and are not chats at all — `library_files.json` alone is 317 file
+ * records — and a filename filter let every one of them through as an
+ * "Untitled, 0 message" chat. 322 phantoms in a 288-conversation export,
+ * triaged by hand before anyone noticed.
+ *
+ * `mapping` is the message tree. Nothing but a conversation has one, and a
+ * conversation cannot lack one, so it is the honest test. Filenames change
+ * between export formats; this does not.
+ */
+function isConversation(c) {
+  return !!c && typeof c === "object" && !!c.mapping && typeof c.mapping === "object";
+}
+
 function extractConversations(name, textContent) {
   const lower = name.toLowerCase();
 
   if (lower.endsWith(".json")) {
     const data = JSON.parse(textContent);
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data.conversations)) return data.conversations;
-    return [];
+    const list = Array.isArray(data) ? data : Array.isArray(data.conversations) ? data.conversations : [];
+    return list.filter(isConversation);
   }
 
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
@@ -451,7 +468,10 @@ function extractConversations(name, textContent) {
       if (ch === "[") depth++;
       else if (ch === "]") {
         depth--;
-        if (depth === 0) return JSON.parse(textContent.slice(start, i + 1));
+        if (depth === 0) {
+          const parsed = JSON.parse(textContent.slice(start, i + 1));
+          return Array.isArray(parsed) ? parsed.filter(isConversation) : [];
+        }
       }
     }
     return [];
@@ -501,7 +521,9 @@ async function ingest(files) {
       const text = await file.text();
       const convos = extractConversations(file.name, text);
       for (const c of convos) found.push(parseConversation(c, file.name));
-      notes.push(`${file.name}: ${convos.length}`);
+      // Only files that actually held conversations are worth naming. A list
+      // ending "user_settings.json: 0" is noise that reads like a failure.
+      if (convos.length > 0) notes.push(`${file.name}: ${convos.length}`);
     } catch (err) {
       notes.push(`${file.name}: FAILED (${err.message})`);
     }

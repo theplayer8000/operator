@@ -58,6 +58,21 @@ branch structure that the rendered HTML has already discarded.
 `.dat` files are the attachments. They are not read; triage does not need them,
 and there are several hundred megabytes of them.
 
+**A file is treated as conversations only if its entries have a `mapping`** —
+the message tree. That is a structural test rather than a filename one, and the
+distinction cost a full triage pass: the export folder also contains
+`library_files.json` (317 file records), `shared_conversations.json`,
+`message_feedback.json` and `user_settings.json`. All are arrays of objects, and
+a filename filter let every one through as an "Untitled, 0 message" chat — 322
+phantoms in a 288-conversation export.
+
+Nothing but a conversation has a `mapping`, and no conversation lacks one.
+Filenames change between export formats; that does not.
+
+Run `node parse-test.mjs` to check a parser change against a real export. It
+extracts the page's own functions out of the HTML rather than copying them, so
+it cannot pass while the page fails.
+
 ## What persists, and what does not
 
 **Decisions persist. Conversations do not.**
