@@ -427,6 +427,49 @@ export const ALLOWED_TOOLS = (
     */
     "Bash(node scripts/operator-action.mjs:*)",
     /*
+      Logging a change (scripts/log-update.mjs). Pre-allowed for the same
+      reason operator-action is: CLAUDE.md REQUIRES every shipped change to be
+      logged, so it is the one command every job ends with — and it was the one
+      command that always prompted. A rule that fires on the thing the rules
+      themselves mandate is friction with no safety in it.
+
+      It writes one line to a changelog through the API. There is nothing here
+      a permission prompt is protecting.
+    */
+    /*
+      The FULL-PATH form, which was the actual gap.
+
+      `Bash(node scripts/log-update.mjs:*)` has been allowed for ages — and
+      the agent does not write `node`, it writes the absolute path, because
+      CLAUDE.md tells it to: the `node` on PATH is a broken shim that fails
+      silently. So the one rule that existed could never match the command
+      the rules themselves produce.
+    */
+    'Bash("C:\\Program Files\\nodejs\\node.exe" scripts/log-update.mjs:*)',
+    'Bash("C:/Program Files/nodejs/node.exe" scripts/log-update.mjs:*)',
+    /*
+      The SAME two scripts, prefixed with `cd`.
+
+      This is what actually caused the prompting, and it was not a missing
+      script — `operator-action.mjs` is pre-allowed three ways and was still
+      asked about TWELVE times. The matcher sees the whole command string, and
+      the agent was writing `cd /d/Projects/Operator && node scripts/...`
+      because the worktree it runs in was 183 commits behind and did not HAVE
+      the capability layer. The prefix broke every rule.
+
+      That drift is fixed and the prompt now says not to cd — but the habit
+      will recur, and the honest fix is to allow the shape it actually uses
+      rather than to rely on it never using it.
+
+      Deliberately NOT `Bash(cd:*)`. That would match `cd anywhere && rm -rf`,
+      which is allowing everything with extra steps. Each entry names the
+      script it ends in.
+    */
+    "Bash(cd /d/Projects/Operator && node scripts/operator-action.mjs:*)",
+    "Bash(cd /d/Projects/Operator && node scripts/log-update.mjs:*)",
+    'Bash(cd /d/Projects/Operator && "C:\\Program Files\\nodejs\\node.exe" scripts/operator-action.mjs:*)',
+    'Bash(cd /d/Projects/Operator && "C:\\Program Files\\nodejs\\node.exe" scripts/log-update.mjs:*)',
+    /*
       The same command as the repo tells it to write it.
 
       Measured 2026-09-01: asked the time, the worker ran
@@ -670,9 +713,27 @@ const APPEND_PROMPT = [
     so. A worker that finishes silently is invisible to the surface he actually
     looks at, which is the gap this closes.
   */
+  /*
+    Two habits that came from a broken worktree and outlived it.
+
+    The agent worktree was 183 commits behind, so `scripts/` did not have the
+    capability layer and the agent learned to `cd` to the main checkout. That
+    prefix broke every pre-allow rule, which is why a pre-allowed script was
+    asked about twelve times. The drift is fixed; the habit needs saying.
+  */
+  "You are ALREADY in the right checkout. Do NOT prefix commands with",
+  "`cd /d/Projects/Operator` — it breaks the pre-allow rules and makes ordinary",
+  "work ask permission. Run `node scripts/…` directly.",
+  "Do NOT curl Operator's own API to read its data either. Every read has a",
+  "capability action, they are pre-approved, and they return exactly what you",
+  "need instead of the whole store.",
   "WHEN YOU FINISH work that changed anything, record it:",
   "`node scripts/operator-action.mjs work_record '{\"summary\":\"…\",\"by\":\"Claude Code\",\"files\":[\"…\"]}'`.",
   "One line saying what happened, and `needsOwner: true` ONLY when he actually",
+  "PASS `mission` when the work belongs to one — the id from `missions_list`, or",
+  "its exact name. That writes the same line to the mission's activity, which is",
+  "how the board stays current without anyone remembering to update it. Progress",
+  "percentages stay his: a percentage is a judgement, not a fact you can derive.",
   "has to do something himself. That is how Operator answers \"what did you do\"",
   "and \"did anything happen while I was out\" — it cannot see work it did not",
   "dispatch unless the work says so.",

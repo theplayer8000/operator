@@ -1474,7 +1474,17 @@ const WORK_KEY = "work.handoffs";
 */
 const WORK_LIMIT = 300;
 
-async function workRecord({ summary, detail = "", by, kind = "session", files, nextStep, needsOwner = false, jobId }) {
+async function workRecord({
+  summary,
+  detail = "",
+  by,
+  kind = "session",
+  files,
+  nextStep,
+  needsOwner = false,
+  jobId,
+  mission,
+}) {
   required(summary, "summary");
   oneOf(kind, ["session", "job", "script"], "kind");
 
@@ -1501,7 +1511,53 @@ async function workRecord({ summary, detail = "", by, kind = "session", files, n
   };
 
   await withState(WORK_KEY, (current) => [entry, ...(current ?? [])].slice(0, WORK_LIMIT));
-  return { id: entry.id, at: entry.at, recorded: true };
+
+  /*
+    Naming a mission logs it there too, in the same call.
+
+    The owner kept asking for the board to be updated by hand, and asked for
+    "a rule so it syncs properly". This is that rule, and it is deliberately a
+    PARAMETER rather than a guess: nothing here infers a mission from the words
+    in a summary, because a wrong entry on the wrong mission is worse than no
+    entry — the board is a record he reads to decide what to do next.
+
+    Progress is still his. A percentage is a judgement about how close
+    something is to done, and nothing mechanical can know that. What this
+    removes is the part that WAS mechanical: remembering to write down that a
+    thing happened.
+  */
+  let linked = null;
+  if (mission) {
+    const missions = (await readState("missions.records")) ?? [];
+    const match =
+      missions.find((m) => m.id === mission) ??
+      missions.find((m) => m.name?.toLowerCase() === String(mission).toLowerCase()) ??
+      null;
+    if (!match) {
+      // Named and not found is a mistake worth reporting. Silently skipping it
+      // would make the sync unreliable in exactly the way that stops it being
+      // trusted.
+      throw new ActionError(
+        `recorded the work, but no mission matched "${mission}" — use missions_list to get the id`,
+      );
+    }
+    await withState("missions.records", (current) =>
+      (current ?? []).map((m) =>
+        m.id === match.id
+          ? {
+              ...m,
+              activity: [
+                { id: generateId(), label: entry.summary, timestamp: entry.at },
+                ...(m.activity ?? []),
+              ].slice(0, 200),
+            }
+          : m,
+      ),
+    );
+    linked = { id: match.id, name: match.name };
+  }
+
+  return { id: entry.id, at: entry.at, recorded: true, ...(linked ? { mission: linked } : {}) };
 }
 
 async function workRecent({ limit = 10, by, needsOwner, since }) {
@@ -2018,7 +2074,7 @@ const ACTIONS = {
     description:
       "Record that a piece of work FINISHED, so Operator can tell the owner about it later. Call this at the end of a turn that changed anything — code, docs, data. This is how work done outside Operator's own job runner becomes visible to it. Set needsOwner true only when he actually has to do something.",
     params:
-      "summary (one line, what happened), detail?, by? (who did it, e.g. \"Claude Code (desk)\"), kind? (session|job|script), files? (array of paths), nextStep?, needsOwner? (default false), jobId?",
+      "summary (one line, what happened), detail?, by? (who did it, e.g. \"Claude Code (desk)\"), kind? (session|job|script), files? (array of paths), nextStep?, needsOwner? (default false), jobId?, mission? (id or exact name — also writes this to that mission's activity, so the board stays current without anyone remembering)",
     handler: workRecord,
   },
   work_recent: {

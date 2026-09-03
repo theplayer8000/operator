@@ -5,6 +5,7 @@ import { useEvents } from "./useEvents";
 import { useGym } from "./useGym";
 import { useRoutineData } from "./useRoutineData";
 import { useKnowledge } from "./useKnowledge";
+import { useRemoteStorage } from "./useRemoteStorage";
 import { CONFIDENCE_ORDER } from "@/components/knowledge/knowledgeMeta";
 import { toDateKey } from "@/lib/time";
 import type { KnowledgeConfidence, MissionStatus } from "@/lib/types";
@@ -81,6 +82,23 @@ export interface Statistics {
    * exactly the words you happened to write. It is the vault's equivalent of a
    * mission with no dependencies — not wrong, but worth seeing.
    */
+  /**
+   * Finished work, from the ledger every worker writes to.
+   *
+   * The page already derived everything else from the features live, which is
+   * why it needs no refreshing — but it could not see WORK, because until the
+   * work log existed there was nowhere to see it from. Jobs died with a
+   * restart and outside sessions left no trace at all.
+   *
+   * Counted by WHO, because that is the question a control plane answers:
+   * "what is Operator actually doing, and who is doing it".
+   */
+  work: {
+    total: number;
+    today: number;
+    waitingOnYou: number;
+    byWorker: { by: string; count: number }[];
+  };
   knowledge: {
     total: number;
     byConfidence: { confidence: KnowledgeConfidence; count: number }[];
@@ -105,6 +123,13 @@ function fillDays(from: string, to: string, counts: Map<string, number>): DayCou
   return out;
 }
 
+/** Only the fields this page reads. The ledger itself lives in actions.mjs. */
+interface WorkHandoff {
+  at?: string;
+  by?: string;
+  needsOwner?: boolean;
+}
+
 export function useStatistics(): Statistics {
   const { entries } = useUpdates();
   const { missions } = useMissionBoard();
@@ -114,6 +139,8 @@ export function useStatistics(): Statistics {
   // Reads another feature's hook and mutates nothing, which is what this page
   // is — an aggregator that owns no storage.
   const { active: notes } = useKnowledge();
+  // The work ledger. Read-only here, like everything else on this page.
+  const [handoffs] = useRemoteStorage<WorkHandoff[]>("work.handoffs", []);
 
   return useMemo(() => {
     /* ---- shipped ---------------------------------------------------- */
@@ -201,6 +228,18 @@ export function useStatistics(): Statistics {
           .map(([kind, count]) => ({ kind, count }))
           .sort((a, b) => b.count - a.count),
       },
+      work: {
+        total: handoffs.length,
+        today: handoffs.filter((h) => String(h.at ?? "").slice(0, 10) === today).length,
+        waitingOnYou: handoffs.filter((h) => h.needsOwner).length,
+        byWorker: (() => {
+          const counts = new Map<string, number>();
+          for (const h of handoffs) counts.set(h.by || "unknown", (counts.get(h.by || "unknown") ?? 0) + 1);
+          return [...counts.entries()]
+            .map(([by, count]) => ({ by, count }))
+            .sort((a, b) => b.count - a.count);
+        })(),
+      },
       knowledge: {
         total: notes.length,
         byConfidence: CONFIDENCE_ORDER.map((confidence) => ({
@@ -220,5 +259,5 @@ export function useStatistics(): Statistics {
         ).length,
       },
     };
-  }, [entries, missions, events, gymDone, skipped, routineDone, notes]);
+  }, [entries, missions, events, gymDone, skipped, routineDone, notes, handoffs]);
 }

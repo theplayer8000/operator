@@ -434,6 +434,40 @@ export default function Statistics() {
         </section>
       </div>
 
+      {/* --- what Operator has actually been doing ----------------------- */}
+      <section className="card-base p-4 sm:p-5 animate-fade-up">
+        <h2 className="font-display text-sm text-ink-100 mb-1">Work</h2>
+        {/*
+          Every finished turn, from any session — Operator's own jobs and work
+          run from a terminal. This is the only section that could not exist
+          before today: jobs died with a restart and outside sessions left no
+          trace at all, so there was nowhere to count from.
+        */}
+        <p className="text-[11px] text-ink-700 mb-4">
+          Finished turns, from every session — not only the ones Operator started.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <Figure value={s.work.today} label="today" to="/orchestrator" />
+          <Figure value={s.work.total} label="recorded" to="/orchestrator" />
+          <Figure value={s.work.waitingOnYou} label="waiting on you" to="/orchestrator" />
+        </div>
+        {s.work.byWorker.length > 0 && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-base-600">
+            {s.work.byWorker.slice(0, 6).map((w) => (
+              <span key={w.by} className="text-[11px] text-ink-600">
+                {w.by} <span className="font-mono text-ink-500">{w.count}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {s.work.total === 0 && (
+          <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+            Nothing recorded yet. Workers call `work_record` when they finish; this
+            fills itself.
+          </p>
+        )}
+      </section>
+
       {/* --- the vault, counted by trust rather than by size ------------- */}
       <section className="card-base p-4 sm:p-5 animate-fade-up">
         <h2 className="font-display text-sm text-ink-100 mb-1">Knowledge Vault</h2>
