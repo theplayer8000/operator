@@ -7,6 +7,7 @@ import {
   summonWindow,
 } from "@/lib/desktop";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
+import { useKnowledge } from "@/hooks/useKnowledge";
 import { useSpeech } from "@/hooks/useSpeech";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { readStorage, writeStorage } from "@/lib/storage";
@@ -14,8 +15,8 @@ import { useMicLevel } from "@/hooks/useMicLevel";
 import { registerMic } from "@/lib/micBridge";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
-import type { MissionRecord, MissionStatus } from "@/lib/types";
-import { drawCore, rgba, GOLD, VIOLET } from "@/components/map/operatorCore";
+import type { KnowledgeNote, MissionRecord, MissionStatus } from "@/lib/types";
+import { drawCore, rgba, GOLD, VIOLET, type Rgb } from "@/components/map/operatorCore";
 import OperatorChat from "@/components/map/OperatorChat";
 
 /**
@@ -70,13 +71,56 @@ const MIN_ORBIT = 235;
 
 interface Body {
   id: string;
-  mission: MissionRecord;
+  /*
+    What this node IS, kept source-agnostic on purpose.
+
+    The map draws two graphs now — missions, and the Knowledge Vault — and the
+    renderer must not know which. Everything it needs to paint a node is on
+    these four fields; `mission` and `note` are carried only so a click knows
+    where to navigate. Branching on the source inside the draw loop is how one
+    graph quietly ends up better-looking than the other.
+  */
+  label: string;
+  /** Node colour: mission status, or note confidence. */
+  tint: Rgb;
+  /** 0-1 arc around the node. Mission progress; unused by notes. */
+  ring: number;
+  /** The small text in the middle. A percentage, or a link count. */
+  badge: string;
+  mission: MissionRecord | null;
+  note: KnowledgeNote | null;
   x: number;
   y: number;
+  /**
+   * Depth. Zero in 2D, simulated in 3D.
+   *
+   * The physics treats it exactly like x and y — same repulsion, same springs
+   * — because a graph laid out in three dimensions and then flattened is a
+   * different picture from a flat graph with a z bolted on. In 2D it is eased
+   * back to zero rather than ignored, so switching modes settles rather than
+   * snapping.
+   */
+  z: number;
   vx: number;
   vy: number;
+  vz: number;
   r: number;
   degree: number;
+  /*
+    Where this body actually lands on screen after projection, written once per
+    frame before painting.
+
+    Everything downstream — every arc, every strand, the hit test — reads these
+    rather than x/y/r. In 2D they are copies; in 3D they carry the perspective.
+    One place doing the projection is what stops the drawn position and the
+    clickable position drifting apart, which is the classic way a 3D graph
+    becomes unusable while looking fine.
+  */
+  sx: number;
+  sy: number;
+  sr: number;
+  /** 0 far, 1 near. Drives brightness and draw order. */
+  depth: number;
 }
 
 interface Edge {
@@ -172,6 +216,73 @@ export default function MissionMap() {
     it was off, which reads as the toggle being broken rather than cautious.
     His call, and he has lived with it: "set it so that it remembers".
   */
+  /*
+    Flat or solid, remembered per device.
+
+    A MODE, not a replacement — the owner's own call and the right one. Three
+    dimensions look better in a screenshot and read worse when you are trying
+    to find something: nodes occlude each other and an edge running away from
+    you is indistinguishable from one running towards you. Obsidian ships both
+    and most people use the flat one.
+
+    Per device rather than in the store, like the speech preference: the wall
+    display and a laptop are different arguments about the same graph.
+  */
+  /*
+    WHICH graph, remembered per device.
+
+    Two axes, and they are genuinely independent: this one is the SOURCE and
+    `solid` is the projection. The owner expected them to be one control and
+    they are not — a flat vault graph and a solid mission graph are both
+    sensible things to want, and folding them together would remove two of the
+    four views to make one button.
+
+    Missions is the default because it is what this page was, and a landing
+    page should not change under someone.
+  */
+  const [source, setSourceState] = useState<"missions" | "vault">(() => {
+    const wanted = new URLSearchParams(window.location.search).get("graph");
+    if (wanted === "vault" || wanted === "missions") return wanted;
+    return readStorage<string>("map.source", "missions") === "vault" ? "vault" : "missions";
+  });
+  /** Read by the pointer handlers, which are registered once. */
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const setSource = (next: "missions" | "vault") => {
+    setSourceState(next);
+    writeStorage("map.source", next);
+  };
+  const vault = useKnowledge();
+
+  const [solid, setSolidState] = useState(() => {
+    /*
+      `?solid=1` wins over the stored preference, once, on load.
+
+      Two reasons, and the second is why it is worth the four lines: a view
+      mode you can link to is a view mode you can put in a message or a
+      bookmark, and it is the only way `scripts/render.mjs` can screenshot this
+      mode at all — the renderer drives a fresh browser profile with no
+      localStorage to have set.
+    */
+    const wanted = new URLSearchParams(window.location.search).get("solid");
+    if (wanted !== null) return wanted !== "0" && wanted !== "false";
+    return readStorage("map.solid", false);
+  });
+  const setSolid = (next: boolean) => {
+    setSolidState(next);
+    writeStorage("map.solid", next);
+  };
+  /*
+    Read inside the animation loop, which is registered once and must not be
+    torn down to learn about a toggle — restarting it would reset the
+    simulation, and the whole point of easing between the two modes is that it
+    is visibly the same graph settling.
+  */
+  const solidRef = useRef(solid);
+  solidRef.current = solid;
+  /** Yaw, carried across frames so the rotation survives a re-render. */
+  const spin = useRef(0);
+
   const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", false));
   const setAutoSend = (next: boolean) => {
     setAutoSendState(next);
@@ -432,19 +543,45 @@ export default function MissionMap() {
     moved: 0,
   });
 
+  /*
+    The nodes, from whichever source is showing, reduced to what the graph
+    needs and nothing else.
+
+    Both shapes are already directional edge lists over a set of records with
+    ids, which is why one renderer serves both: a mission's `dependsOn` and a
+    note's `links` are the same structure with different names.
+  */
+  const nodes = useMemo(() => {
+    if (source === "vault") {
+      return vault.active.map((n) => ({
+        id: n.id,
+        label: n.title,
+        links: n.links ?? [],
+        mission: null,
+        note: n,
+      }));
+    }
+    return active.map((m) => ({
+      id: m.id,
+      label: m.name,
+      links: m.dependsOn ?? [],
+      mission: m,
+      note: null,
+    }));
+  }, [source, active, vault.active]);
+
   const edges = useMemo<Edge[]>(() => {
-    const ids = new Set(active.map((m) => m.id));
+    const ids = new Set(nodes.map((n) => n.id));
     const out: Edge[] = [];
-    for (const m of active) {
-      for (const dep of m.dependsOn ?? []) {
-        // A dependency on an archived or deleted mission is not drawn — the
-        // Dashboard card reports those; a wall display should not show a line
-        // going nowhere.
-        if (ids.has(dep)) out.push({ from: dep, to: m.id });
+    for (const n of nodes) {
+      for (const dep of n.links) {
+        // An edge to something archived or deleted is not drawn — a wall
+        // display should not show a line going nowhere.
+        if (ids.has(dep)) out.push({ from: dep, to: n.id });
       }
     }
     return out;
-  }, [active]);
+  }, [nodes]);
 
   /*
     Build bodies when the mission set changes, preserving the position of
@@ -461,26 +598,73 @@ export default function MissionMap() {
       degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
       degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
     }
-    bodiesRef.current = active.map((m, i) => {
-      const kept = previous.get(m.id);
-      const d = degree.get(m.id) ?? 0;
+    bodiesRef.current = nodes.map((n, i) => {
+      const m = n.mission;
+      const kept = previous.get(n.id);
+      const d = degree.get(n.id) ?? 0;
       // Seeded on a ring rather than at random: a random cloud can start with
       // two nodes on top of each other, and the repulsion needed to separate
       // them throws the whole web across the screen on the first frame.
-      const angle = (i / Math.max(1, active.length)) * Math.PI * 2;
+      const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
+      /*
+        A note's colour is its CONFIDENCE, which is the field the vault lives
+        or dies on — a graph where you can see at a glance how much of what you
+        wrote down you have actually checked is worth far more than one where
+        every node is the same gold. Reusing the mission palette on purpose:
+        `vital-down` for unverified, gold for worked, `vital-up` for verified,
+        which is the same red-amber-green the rest of the app already means.
+      */
+      const noteTint: Rgb = n.note
+        ? n.note.confidence === "verified"
+          ? [78, 216, 138]
+          : n.note.confidence === "works"
+            ? [232, 176, 77]
+            : [224, 90, 90]
+        : STATUS_COLOR.not_started;
+
       return {
-        id: m.id,
+        id: n.id,
+        label: n.label,
+        tint: m ? (STATUS_COLOR[m.status] ?? STATUS_COLOR.not_started) : noteTint,
+        // Notes have no progress, so no arc. Their badge is how connected they
+        // are, which is the equivalent question for a vault: a note nothing
+        // links to is one you will never arrive at by accident.
+        ring: m ? Math.max(0, Math.min(100, m.progress)) / 100 : 0,
+        badge: m ? `${Math.round(Math.max(0, Math.min(100, m.progress)))}%` : String(d),
         mission: m,
+        note: n.note,
         x: kept?.x ?? Math.cos(angle) * 240,
         y: kept?.y ?? Math.sin(angle) * 200,
+        /*
+          Seeded off-plane, and not randomly — spread around the same ring the
+          x/y seed uses, so the starting shape is a tilted disc rather than a
+          cloud. Starting everything at z = 0 would give the repulsion nothing
+          to push apart in depth, and the layout would stay flat for the first
+          few hundred frames before slowly inflating, which reads as the 3D
+          toggle not working.
+        */
+        z: kept?.z ?? Math.sin(angle * 2.3) * 120,
         vx: kept?.vx ?? 0,
         vy: kept?.vy ?? 0,
-        r: 26 + Math.min(14, d * 3),
+        vz: kept?.vz ?? 0,
+        /*
+          Smaller in the vault, and it has to be.
+
+          Twelve missions at r=26 fills a wall display; 313 notes at the same
+          size is a solid sheet with no gaps to see structure through. Size
+          still follows degree — the well-connected notes are the landmarks you
+          navigate by — but the floor and the ceiling both come down.
+        */
+        r: m ? 26 + Math.min(14, d * 3) : 9 + Math.min(11, d * 1.4),
         degree: d,
+        sx: kept?.sx ?? 0,
+        sy: kept?.sy ?? 0,
+        sr: kept?.sr ?? 26,
+        depth: 1,
       };
     });
     edgesRef.current = edges;
-  }, [active, edges]);
+  }, [nodes, edges]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -530,6 +714,7 @@ export default function MissionMap() {
       const hearing = m.active ? heard > 0.12 : heard > 0.35;
       const lift = v.speaking ? 1 : hearing ? heard : 0;
       const accent = v.speaking ? VIOLET : GOLD;
+      const solid = solidRef.current;
 
       /* ---- physics ------------------------------------------------------ */
       for (let i = 0; i < bodies.length; i++) {
@@ -539,12 +724,16 @@ export default function MissionMap() {
           const b = bodies[j];
           let dx = b.x - a.x;
           let dy = b.y - a.y;
-          let d2 = dx * dx + dy * dy;
+          // Depth participates in the repulsion, so nodes separate in three
+          // dimensions rather than in two and then getting a z afterwards.
+          let dz = solid ? b.z - a.z : 0;
+          let d2 = dx * dx + dy * dy + dz * dz;
           if (d2 < 1) {
             // Exactly coincident nodes produce a zero-length vector and the
             // force becomes NaN, which silently blanks the entire canvas.
             dx = Math.random() - 0.5;
             dy = Math.random() - 0.5;
+            dz = solid ? Math.random() - 0.5 : 0;
             d2 = 1;
           }
           const d = Math.sqrt(d2);
@@ -552,17 +741,29 @@ export default function MissionMap() {
           const force = (52000 / d2) * (d < min ? 2.4 : 1);
           const fx = (dx / d) * force;
           const fy = (dy / d) * force;
+          const fz = (dz / d) * force;
           a.vx -= fx;
           a.vy -= fy;
+          a.vz -= fz;
           if (pointer.current.dragging !== b.id) {
             b.vx += fx;
             b.vy += fy;
+            b.vz += fz;
           }
         }
         // Gentle pull home so a disconnected mission cannot drift off screen
         // forever — with no edges nothing else would ever bring it back.
         a.vx -= a.x * 0.0016;
         a.vy -= a.y * 0.0016;
+        /*
+          In 3D the same gentle pull home; in 2D a much firmer one, which is
+          what flattens the graph when the toggle goes back.
+
+          Eased rather than zeroed, so switching modes settles over a second or
+          so instead of the whole web snapping onto a plane — the motion is
+          what tells you the two views are the same graph.
+        */
+        a.vz -= a.z * (solid ? 0.0016 : 0.06);
 
         /*
           Nothing sits on the core.
@@ -605,15 +806,68 @@ export default function MissionMap() {
         if (pointer.current.dragging === b.id) continue;
         b.vx *= 0.86;
         b.vy *= 0.86;
-        const speed = Math.hypot(b.vx, b.vy);
+        b.vz *= 0.86;
+        const speed = Math.hypot(b.vx, b.vy, b.vz);
         // Cap velocity. A dragged node flung hard can otherwise inject enough
         // energy to launch its neighbours off the canvas.
         if (speed > 14) {
           b.vx = (b.vx / speed) * 14;
           b.vy = (b.vy / speed) * 14;
+          b.vz = (b.vz / speed) * 14;
         }
         b.x += b.vx;
         b.y += b.vy;
+        b.z += b.vz;
+      }
+
+      /* ---- project -------------------------------------------------------
+         Screen positions, computed ONCE per frame and written onto each body.
+
+         Everything after this reads sx/sy/sr and never x/y/r again — the
+         strands, the motes, the node bodies, the labels and the hit test. That
+         is the whole discipline of this step: the moment two of those compute
+         a position separately, the thing you click stops being the thing you
+         see, and a 3D graph fails that way while still looking correct.
+      */
+      if (solid) {
+        // A slow yaw so depth is legible. A static projection of a 3D layout
+        // is just a strange 2D one — the rotation is what reveals the shape.
+        spin.current += 0.0022;
+        const yaw = spin.current;
+        const tilt = 0.34;
+        const cy = Math.cos(yaw);
+        const sy = Math.sin(yaw);
+        const ct = Math.cos(tilt);
+        const st = Math.sin(tilt);
+        /*
+          Deep enough to read as depth, shallow enough that a node at the back
+          is still a node rather than a speck. Measured by looking: below about
+          900 the near nodes balloon and the far ones vanish.
+        */
+        const FOV = 1400;
+        for (const b of bodies) {
+          const x1 = b.x * cy - b.z * sy;
+          const z1 = b.x * sy + b.z * cy;
+          const y1 = b.y * ct - z1 * st;
+          const z2 = b.y * st + z1 * ct;
+          const p = FOV / (FOV + z2);
+          b.sx = x1 * p;
+          b.sy = y1 * p;
+          b.sr = b.r * p;
+          // Normalised against the layout's own extent rather than a constant,
+          // so a tight cluster still separates front from back.
+          b.depth = Math.max(0, Math.min(1, (z2 + 420) / 840));
+        }
+        // Far first, so near nodes paint over far ones. Sorting the array in
+        // place is safe: the physics above is order-independent.
+        bodies.sort((a, b) => a.depth - b.depth);
+      } else {
+        for (const b of bodies) {
+          b.sx = b.x;
+          b.sy = b.y;
+          b.sr = b.r;
+          b.depth = 1;
+        }
       }
 
       /* ---- paint -------------------------------------------------------- */
@@ -659,8 +913,8 @@ export default function MissionMap() {
         const alpha = dim ? 0.06 : 0.16 + lift * 0.42 + (lit ? 0.4 : 0);
         const colour = lit ? GOLD : lift > 0 ? accent : ([90, 118, 158] as [number, number, number]);
         ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
+        ctx.moveTo(from.sx, from.sy);
+        ctx.lineTo(to.sx, to.sy);
         ctx.strokeStyle = rgba(colour, alpha);
         ctx.lineWidth = (lit ? 2 : 1) + lift * 1.2;
         ctx.stroke();
@@ -678,8 +932,8 @@ export default function MissionMap() {
           mote.t = 0;
           mote.edge = Math.floor(Math.random() * Math.max(1, eds.length));
         }
-        const x = from.x + (to.x - from.x) * mote.t;
-        const y = from.y + (to.y - from.y) * mote.t;
+        const x = from.sx + (to.sx - from.sx) * mote.t;
+        const y = from.sy + (to.sy - from.sy) * mote.t;
         ctx.beginPath();
         ctx.arc(x, y, 1.6 + lift, 0, Math.PI * 2);
         ctx.fillStyle = rgba(lift > 0 ? accent : GOLD, 0.5 + lift * 0.5);
@@ -706,7 +960,7 @@ export default function MissionMap() {
       // Nodes
       for (const b of bodies) {
         const m = b.mission;
-        const colour = STATUS_COLOR[m.status] ?? STATUS_COLOR.not_started;
+        const colour = b.tint;
         const dim = focus !== null && !near.has(b.id);
         const isHover = hoveredRef.current?.id === b.id;
         const a = dim ? 0.22 : 1;
@@ -715,39 +969,57 @@ export default function MissionMap() {
         // into fog; outlines cross each other and stay readable.
         if (lift > 0 && !dim) {
           ctx.beginPath();
-          ctx.arc(b.x, b.y, b.r + 12 + lift * 22, 0, Math.PI * 2);
+          ctx.arc(b.sx, b.sy, b.sr + 12 + lift * 22, 0, Math.PI * 2);
           ctx.strokeStyle = rgba(accent, 0.10 + lift * 0.34);
           ctx.lineWidth = 1.5;
           ctx.stroke();
         }
 
-        const glow = ctx.createRadialGradient(b.x, b.y, b.r * 0.5, b.x, b.y, b.r + 26);
-        glow.addColorStop(0, rgba(colour, 0.30 * a));
-        glow.addColorStop(1, rgba(colour, 0));
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r + 26, 0, Math.PI * 2);
-        ctx.fill();
+        /*
+          The glow is the expensive part, and on the vault graph it has to be
+          rationed.
+
+          `createRadialGradient` allocates a gradient object per call. Twelve
+          missions is twelve of those per frame and free; 313 notes is 313 per
+          frame at 60fps, which is where a graph stops being a display and
+          starts being a fan. Small nodes are the ones whose glow contributes
+          least — at r=9 the halo is most of what you see and none of what you
+          read — so they go without unless they are the one being pointed at.
+
+          Threshold on the PROJECTED radius, not the base one: a small node
+          near the camera in solid mode is big on screen and should glow.
+        */
+        if (b.sr > 16 || isHover || (focus !== null && near.has(b.id))) {
+          const glow = ctx.createRadialGradient(b.sx, b.sy, b.sr * 0.5, b.sx, b.sy, b.sr + 26);
+          glow.addColorStop(0, rgba(colour, 0.30 * a));
+          glow.addColorStop(1, rgba(colour, 0));
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(b.sx, b.sy, b.sr + 26, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         ctx.globalCompositeOperation = "source-over";
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.arc(b.sx, b.sy, b.sr, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(6,9,14,${0.94 * a + 0.06})`;
         ctx.fill();
 
         ctx.globalCompositeOperation = "lighter";
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.arc(b.sx, b.sy, b.sr, 0, Math.PI * 2);
         ctx.strokeStyle = rgba(colour, (isHover ? 1 : 0.8) * a);
         ctx.lineWidth = isHover ? 2.4 : 1.5;
         ctx.stroke();
 
-        // Progress arc
-        const pct = Math.max(0, Math.min(100, m.progress)) / 100;
-        if (pct > 0) {
+        // Progress arc. Notes have none, so `ring` is 0 and this skips.
+        if (b.ring > 0) {
           ctx.beginPath();
-          ctx.arc(b.x, b.y, b.r + 8, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
-          ctx.strokeStyle = rgba(m.status === "blocked" ? STATUS_COLOR.blocked : GOLD, 0.95 * a);
+          ctx.arc(b.sx, b.sy, b.sr + 8, -Math.PI / 2, -Math.PI / 2 + b.ring * Math.PI * 2);
+          ctx.strokeStyle = rgba(
+            b.mission?.status === "blocked" ? STATUS_COLOR.blocked : GOLD,
+            0.95 * a,
+          );
           ctx.lineWidth = 3;
           ctx.lineCap = "round";
           ctx.stroke();
@@ -757,12 +1029,43 @@ export default function MissionMap() {
         ctx.textAlign = "center";
         ctx.fillStyle = `rgba(233,237,245,${a})`;
         ctx.font = "500 13px 'JetBrains Mono', ui-monospace, monospace";
-        ctx.fillText(`${Math.round(pct * 100)}%`, b.x, b.y + 5);
+        ctx.fillText(b.badge, b.sx, b.sy + 5);
 
-        ctx.fillStyle = `rgba(196,205,222,${a})`;
-        ctx.font = "13px Inter, system-ui, sans-serif";
-        const label = m.name.length > 26 ? `${m.name.slice(0, 25)}…` : m.name;
-        ctx.fillText(label, b.x, b.y + b.r + 24);
+        /*
+          Labels fade with depth, and the far half loses them entirely.
+
+          The first solid render showed the cost of three dimensions in one
+          picture: "Job verification" printed straight through "Voice — talk to
+          Operator", and "Gym" through "Operator". Nodes overlapping is fine —
+          you can see which is in front. Two labels in the same place are just
+          illegible, and there is no depth cue in text.
+
+          So the back of the graph keeps its node and drops its name, and
+          hovering brings any label back regardless of where it sits. Flat mode
+          is untouched: depth is 1 for everything, so every label draws exactly
+          as it did.
+        */
+        /*
+          On a big graph, only the landmarks are labelled.
+
+          313 note titles drawn at once is a grey field with no information in
+          it — every label overlaps two others and none is readable. The
+          well-connected notes are what you navigate by, so they keep their
+          names; everything else gets its name on hover, which is when you are
+          actually asking.
+
+          `degree > 3` rather than a top-N: a fixed count would relabel the
+          whole graph every time one link changed.
+        */
+        const crowded = bodies.length > 40;
+        const landmark = !crowded || b.degree > 3;
+        const labelAlpha = solid ? Math.max(0, (b.depth - 0.42) / 0.58) : 1;
+        if ((landmark && labelAlpha > 0.02) || isHover) {
+          ctx.fillStyle = `rgba(196,205,222,${a * (isHover ? 1 : labelAlpha)})`;
+          ctx.font = "13px Inter, system-ui, sans-serif";
+          const label = b.label.length > 26 ? `${b.label.slice(0, 25)}…` : b.label;
+          ctx.fillText(label, b.sx, b.sy + b.sr + 24);
+        }
         ctx.globalCompositeOperation = "lighter";
       }
 
@@ -799,7 +1102,23 @@ export default function MissionMap() {
       why grabbing one felt like it missed.
     */
     const slop = 10 / Math.max(0.3, view.current.zoom);
-    return bodiesRef.current.find((b) => Math.hypot(b.x - x, b.y - y) <= b.r + slop) ?? null;
+    /*
+      Tested against the PROJECTED position, and searched near-to-far.
+
+      In 3D two nodes can overlap on screen while being far apart in the
+      layout, and the one in front is the one being pointed at. `bodies` is
+      sorted far-to-near for painting, so walking it backwards picks whichever
+      was drawn last — the same one the eye picked.
+
+      In 2D nothing changes: sx/sy/sr are copies of x/y/r and the order is
+      irrelevant.
+    */
+    const bodies = bodiesRef.current;
+    for (let i = bodies.length - 1; i >= 0; i -= 1) {
+      const b = bodies[i];
+      if (Math.hypot(b.sx - x, b.sy - y) <= b.sr + slop) return b;
+    }
+    return null;
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -819,6 +1138,24 @@ export default function MissionMap() {
     pointer.current.moved = 0;
     pointer.current.lastX = e.clientX;
     pointer.current.lastY = e.clientY;
+
+    /*
+      Right button always pans; left button drags a node, or pans empty space.
+
+      The owner's ask, and it fixes a real collision rather than adding a
+      shortcut: with only the left button, wanting to pan meant finding a gap
+      between nodes, and on the vault graph — 313 nodes — there frequently is
+      no gap. Grabbing a node when you meant to move the view is then the
+      normal outcome, not the edge case.
+
+      Left-drag on empty space still pans, so nothing anyone already does stops
+      working. The context menu is suppressed on the canvas, or Windows opens
+      one over the graph on every pan.
+    */
+    if (e.button === 2) {
+      pointer.current.panning = true;
+      return;
+    }
     if (hit) pointer.current.dragging = hit.id;
     else pointer.current.panning = true;
   };
@@ -880,7 +1217,18 @@ export default function MissionMap() {
       finishing a drag on top of a node opens that mission — which makes the
       map feel like it is fighting you.
     */
-    if (dragged && pointer.current.moved < 6) navigate(`/missions/${dragged}`);
+    /*
+      A tap opens whatever the node IS. `sourceRef` rather than `source`, for
+      the same reason the animation loop reads a ref: these handlers are passed
+      to the canvas once and a stale closure would send a vault tap to
+      /missions/<a note id>, which 404s in a way that looks like the note being
+      gone.
+    */
+    if (dragged && pointer.current.moved < 6) {
+      navigate(
+        sourceRef.current === "vault" ? `/knowledge/${dragged}` : `/missions/${dragged}`,
+      );
+    }
     pointer.current.down = false;
     pointer.current.dragging = null;
     pointer.current.panning = false;
@@ -1011,6 +1359,8 @@ export default function MissionMap() {
         ref={canvasRef}
         className="w-full h-full touch-none"
         style={{ cursor: pointer.current.dragging ? "grabbing" : hovered ? "pointer" : "grab" }}
+        // Or Windows opens a context menu over the graph on every right-drag.
+        onContextMenu={(e) => e.preventDefault()}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1021,9 +1371,19 @@ export default function MissionMap() {
       {/* HUD */}
       <div className="absolute top-0 left-0 right-0 p-6 flex items-start justify-between pointer-events-none">
         <div>
-          <h1 className="font-display text-lg text-ink-100 tracking-wide">MISSION MAP</h1>
+          {/*
+            The title says which graph you are looking at.
+
+            Not decoration: the two are visually similar enough at a glance —
+            same renderer, same core, same strands — that a heading reading
+            MISSION MAP over 313 notes would be actively misleading.
+          */}
+          <h1 className="font-display text-lg text-ink-100 tracking-wide">
+            {source === "vault" ? "KNOWLEDGE VAULT" : "MISSION MAP"}
+          </h1>
           <p className="font-mono text-[11px] text-ink-600 mt-1">
-            {active.length} active · {edges.length} {edges.length === 1 ? "link" : "links"}
+            {nodes.length} {source === "vault" ? "notes" : "active"} · {edges.length}{" "}
+            {edges.length === 1 ? "link" : "links"}
           </p>
         </div>
 
@@ -1080,6 +1440,53 @@ export default function MissionMap() {
             nobody can see.
           */}
           <MicSource mic={mic} autoSend={autoSend} onAutoSend={setAutoSend} className="pointer-events-auto" />
+          {/*
+            WHICH graph. The owner's words: "show me mission view or show me
+            knowledge view" — so the button says which one you are looking at
+            and tapping it swaps.
+
+            Separate from FLAT/SOLID next to it, because they are separate
+            questions. A flat vault and a solid mission board are both things
+            worth wanting, and one combined control would delete two of the
+            four views to save a button.
+          */}
+          <button
+            onClick={() => setSource(source === "vault" ? "missions" : "vault")}
+            title={
+              source === "vault"
+                ? `${vault.active.length} notes. Tap for the mission board.`
+                : "Tap for the Knowledge Vault graph."
+            }
+            className={`pointer-events-auto font-mono text-[11px] transition-colors border rounded-badge px-3 py-1.5 min-h-[36px] ${
+              source === "vault"
+                ? "border-rank/50 bg-rank/10 text-rank"
+                : "border-base-600 hover:border-base-500 text-ink-500 hover:text-ink-100"
+            }`}
+          >
+            {source === "vault" ? "VAULT" : "MISSIONS"}
+          </button>
+          {/*
+            Flat or solid. Labelled by what you GET, not by what it is called —
+            "3D" is a property of the renderer and "SOLID" is a description of
+            the picture, and the button that says the second one needs no
+            explaining.
+          */}
+          <button
+            onClick={() => setSolid(!solid)}
+            title={
+              solid
+                ? "Flatten the graph. Easier to read; harder to see how much is connected."
+                : "Lay the graph out in three dimensions and turn it slowly."
+            }
+            aria-pressed={solid}
+            className={`pointer-events-auto font-mono text-[11px] transition-colors border rounded-badge px-3 py-1.5 min-h-[36px] ${
+              solid
+                ? "border-xp/50 bg-xp/10 text-xp"
+                : "border-base-600 hover:border-base-500 text-ink-500 hover:text-ink-100"
+            }`}
+          >
+            {solid ? "SOLID" : "FLAT"}
+          </button>
           <button
             onClick={fitView}
             className="pointer-events-auto font-mono text-[11px] text-ink-500 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
@@ -1161,7 +1568,7 @@ export default function MissionMap() {
       </div>
 
       <p className="absolute bottom-6 right-6 font-mono text-[10px] text-ink-700 pointer-events-none hidden xl:block">
-        drag a node · pan · scroll to zoom
+        drag a node · right-drag to pan · scroll to zoom
       </p>
     </div>
   );
