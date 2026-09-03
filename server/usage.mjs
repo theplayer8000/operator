@@ -624,8 +624,28 @@ export function ceilingBlock(
       message:
         `This job has used $${jobUsd.toFixed(2)} of its $${jobLimit.toFixed(2)} per-job ceiling, and the ` +
         `next turn could cost about $${jobReserve.toFixed(2)}. Stopping before the turn rather than part-way ` +
-        `through one. That figure is a ${basis}, not a bill — raise OPERATOR_CEILING_JOB_USD and restart ` +
-        `to continue, or start a new job.`,
+        `through one. That figure is a ${basis}, not a bill.\n\n` +
+        /*
+          Say what to DO, not only what happened.
+
+          A long thread costs more per turn than a short one — every turn
+          resends the whole conversation — so this ceiling bites hardest on the
+          threads that are going best, and it does it as a wall. Two ways
+          through, and neither was mentioned:
+
+          Raising the limit is now possible from a phone (`secret_set` allows
+          OPERATOR_CEILING_*), where before it meant walking to a desk.
+
+          And continuing on a flat-rate worker costs nothing per turn — but it
+          has to be a NEW job, because a job holds one worker's session for life
+          and the two are not interchangeable. Claude Code's resumes from disk;
+          AI Router's is a replayed history in memory. Saying "reroute it" would
+          be offering something that cannot be done to a thread already running.
+        */
+        `Two ways on: raise it with ` +
+        `secret_set {"name":"OPERATOR_CEILING_JOB_USD","value":"10"} and restart, ` +
+        `or continue in a NEW job on a flat-rate worker, which costs nothing per turn. ` +
+        `The same thread cannot change worker — a job holds one worker's session for life.`,
     };
   }
 

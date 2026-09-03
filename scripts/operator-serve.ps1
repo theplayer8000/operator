@@ -56,6 +56,31 @@ if ($gemini) { $env:GEMINI_API_KEY = $gemini }
 $budget = Read-UserEnv "OPERATOR_USAGE_BUDGET_USD"
 if ($budget) { $env:OPERATOR_USAGE_BUDGET_USD = $budget }
 
+# The ADR 0013 ceilings, forwarded as a GROUP rather than one at a time.
+#
+# This file names every variable it passes through, which is deliberate - it is
+# the one place that says what the server runs with. But it made the ceilings
+# unreachable: `secret_set` can now write OPERATOR_CEILING_JOB_USD from a
+# phone, `setx` puts it in the registry, and the server never saw it. A setting
+# that writes successfully and does nothing is worse than one that refuses.
+#
+# Read from the registry rather than trusting $env:, for the same reason
+# everything else here does: Task Scheduler caches the environment it launched
+# with, so a value set after that is invisible until this reads it fresh.
+$ceilings = @()
+try {
+    $envKey = Get-Item -Path "HKCU:\Environment" -ErrorAction Stop
+    foreach ($name in $envKey.GetValueNames()) {
+        if ($name -like "OPERATOR_CEILING_*") {
+            $value = $envKey.GetValue($name)
+            if ($value) {
+                Set-Item -Path "Env:$name" -Value $value
+                $ceilings += "$name=$value"
+            }
+        }
+    }
+} catch { }
+
 # The hosted-app registry (server/apps.mjs). JSON, which is the reason this
 # file is PowerShell at all - see the header.
 $apps = Read-UserEnv "OPERATOR_APPS"
@@ -132,6 +157,14 @@ Add-Content -Path $log -Value "==== GEMINI_API_KEY: $geminiState ===="
 
 if ($budget) { $budgetState = "`$$budget" } else { $budgetState = "none" }
 Add-Content -Path $log -Value "==== usage ceiling: $budgetState ===="
+
+# Logged by NAME AND VALUE, unlike a key. A ceiling is a policy, not a secret,
+# and the whole problem was not being able to tell what the server was using.
+if ($ceilings.Count -gt 0) {
+    Add-Content -Path $log -Value ("==== ceilings: " + ($ceilings -join ", ") + " ====")
+} else {
+    Add-Content -Path $log -Value "==== ceilings: none set ===="
+}
 
 if ($ntfyUrl -and $ntfyTopic) { $ntfyState = $ntfyUrl } else { $ntfyState = "off" }
 Add-Content -Path $log -Value "==== notifications: $ntfyState ===="

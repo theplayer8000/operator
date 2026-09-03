@@ -1365,6 +1365,21 @@ async function calendarRange({ from, days = 7 }) {
 // silently does nothing for an hour is worse than one that says "restart me".
 
 const PROTECTED_PREFIX = /^OPERATOR_/i;
+/*
+  The exception to the OPERATOR_* refusal, and it is a narrow one.
+
+  That refusal exists because the namespace holds the security boundary —
+  who may run commands, the bearer token, which apps may restart. Spending
+  ceilings are not that. They are policy about his own money, and being unable
+  to raise one from a phone means a job stops mid-thought until he is at a
+  desk, which is the failure the ceiling is supposed to prevent a worse version
+  of.
+
+  Nothing else is added here without the same argument: "is this a boundary, or
+  is it a preference?" A ceiling is a preference. `OPERATOR_TERMINAL_DEVICES`
+  is not.
+*/
+const ALLOWED_OPERATOR = /^OPERATOR_CEILING_[A-Z0-9_]+$/i;
 const VALID_NAME = /^[A-Z][A-Z0-9_]{2,63}$/i;
 
 async function secretSet({ name, value }) {
@@ -1377,7 +1392,7 @@ async function secretSet({ name, value }) {
       `"${key}" is not a valid environment variable name (letters, digits and underscore, 3-64 chars)`,
     );
   }
-  if (PROTECTED_PREFIX.test(key)) {
+  if (PROTECTED_PREFIX.test(key) && !ALLOWED_OPERATOR.test(key)) {
     throw new ActionError(
       `refusing to set ${key}: OPERATOR_* variables are the security boundary — ` +
         `terminal access, the bearer token, which apps may restart. Set those at the desk.`,
@@ -1995,7 +2010,8 @@ const ACTIONS = {
   secret_set: {
     description:
       "Store an API key or other secret as a persistent environment variable, WITHOUT it appearing in any log. Use this instead of running setx in the terminal, which logs every command it runs. Refuses OPERATOR_* names, which govern security. Takes effect on the next server restart.",
-    params: "name (e.g. RUNWAY_API_KEY), value",
+    params:
+      "name (e.g. RUNWAY_API_KEY, or OPERATOR_CEILING_JOB_USD to raise a spending limit), value",
     handler: secretSet,
   },
   work_record: {
