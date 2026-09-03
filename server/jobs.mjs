@@ -59,7 +59,7 @@
 
 import { spawn } from "node:child_process";
 import { notify } from "./notify.mjs";
-import { reviewWork } from "./semantic.mjs";
+import { reviewWork, snapshot as workspaceSnapshot } from "./semantic.mjs";
 import { recallFor } from "./memory.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -1057,7 +1057,14 @@ async function runVerification(job) {
         .reverse()
         .find((e) => e.type === "text" && !e.error)?.text ?? "";
 
-      const semantic = await reviewWork({ cwd: JOB_CWD, request, claimed });
+      const semantic = await reviewWork({
+        cwd: JOB_CWD,
+        request,
+        claimed,
+        // Null on a restored job whose turn predates the restart; reviewWork
+        // falls back to HEAD, which is what it always did.
+        since: job.workspaceBefore ?? null,
+      });
       if (semantic && job.task.verification) {
         job.task.verification.semantic = semantic;
         if (job.handoff) job.handoff.verification = job.task.verification;
@@ -1652,6 +1659,24 @@ async function runViaSdk(job, prompt) {
 async function runTurn(job) {
   const prompt = job.pending.shift();
   if (prompt === undefined) return;
+
+  /*
+    Where the workspace stood before this turn touched it.
+
+    Semantic verification used to diff against HEAD, which is "everything
+    uncommitted in the worktree" rather than "what this turn did". Jobs run in
+    a separate worktree, and that worktree sat on branch `agent` for two weeks
+    holding an abandoned attachments feature — so every job in that period got
+    the same verdict describing the same unrelated diff. Six different requests,
+    one identical answer, and it read as a flaky checker rather than as a
+    checker being handed the wrong input.
+
+    Taken here rather than inside reviewWork, because by the time that runs the
+    turn has already happened and the before-state is gone. `git stash create`
+    writes a commit object and touches nothing, so this is safe to do on every
+    turn including concurrent ones.
+  */
+  job.workspaceBefore = await workspaceSnapshot(JOB_CWD).catch(() => null);
 
   /*
     Both early exits below have to restart the queue themselves.

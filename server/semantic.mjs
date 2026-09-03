@@ -110,6 +110,43 @@ const NEWLINE = /\r?\n/;
 const DIFF_META =
   /^(diff --git|index |--- |\+\+\+ |@@|new file|deleted file|similarity|rename |Binary files)/;
 
+/**
+ * A snapshot of the working tree as it is RIGHT NOW, to diff against later.
+ *
+ * ## The bug this exists to fix
+ *
+ * This layer diffed against `HEAD`, which means it saw everything uncommitted
+ * in the worktree — not what the turn just did. Jobs run in a separate git
+ * worktree (`OPERATOR_JOB_CWD`), and that worktree had been sitting on branch
+ * `agent` for two weeks carrying an abandoned attachments feature that was
+ * already merged into `main` by another route.
+ *
+ * So EVERY job got the same verdict. Asked about topic consolidation, about a
+ * stale panel, about whether an importer wrote to the vault — six different
+ * requests, and all six came back "mismatch: the changed lines implement a
+ * file-attachment feature". The model was right every time. It was being shown
+ * a diff that had nothing to do with any of them.
+ *
+ * The owner's read was that it must be a false positive. It was not: it was a
+ * true statement about the wrong input, which is a worse failure because it
+ * looks exactly like the check working.
+ *
+ * ## Why `git stash create`
+ *
+ * It writes a commit object for the current dirty state and does NOT touch the
+ * working tree, the index, or the stash list — nothing to clean up and nothing
+ * a concurrent turn can trip over. Diffing against it afterwards yields
+ * precisely what changed in between.
+ *
+ * Returns `null` on a clean tree (git prints nothing), and the caller then
+ * falls back to `HEAD`, which is correct there: on a clean tree everything
+ * uncommitted IS the turn's work.
+ */
+export async function snapshot(cwd) {
+  const sha = (await git(cwd, ["stash", "create"], 200)).trim();
+  return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
+}
+
 async function git(cwd, args, cap) {
   try {
     const { stdout } = await run("git", args, { cwd, timeout: 15_000, maxBuffer: 4 * 1024 * 1024 });
@@ -159,7 +196,7 @@ function condense(raw, cap) {
  *          run at all, which is the normal case and must never be shown as a
  *          failure.
  */
-export async function reviewWork({ cwd, request, claimed = "" }) {
+export async function reviewWork({ cwd, request, claimed = "", since = null }) {
   if (!enabled) return null;
   if (!cwd || !request?.trim()) return null;
 
@@ -187,13 +224,25 @@ export async function reviewWork({ cwd, request, claimed = "" }) {
   }
   if (!model) return null;
 
-  const stat = await git(cwd, ["diff", "--stat", "HEAD"], MAX_STAT);
+  /*
+    Diff against the snapshot taken before the turn, not against HEAD.
+
+    `HEAD` means "everything uncommitted in this worktree", which is only the
+    same thing as "what this turn did" when the worktree was clean to begin
+    with. It was not, for two weeks — see `snapshot()` above for what that
+    produced.
+
+    `since` is null when the caller did not take one (or the tree was clean),
+    and HEAD is the right fallback there.
+  */
+  const base = since ?? "HEAD";
+  const stat = await git(cwd, ["diff", "--stat", base], MAX_STAT);
   /*
     Read generously, then condense. The useful lines are a small fraction of
     raw diff output, so capping before filtering would throw away content and
     keep envelope — the exact thing that broke this.
   */
-  const rawDiff = await git(cwd, ["diff", "-U0", "HEAD"], MAX_DIFF * 8);
+  const rawDiff = await git(cwd, ["diff", "-U0", base], MAX_DIFF * 8);
   if (!stat.trim() && !rawDiff.trim()) return null; // nothing changed to review
 
   const diff = condense(rawDiff, MAX_DIFF);

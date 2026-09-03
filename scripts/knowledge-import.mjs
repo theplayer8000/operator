@@ -6,7 +6,8 @@
 //   node scripts/knowledge-import.mjs --from reference --write
 //   node scripts/knowledge-import.mjs --file docs/known-issues.md --write
 //   node scripts/knowledge-import.mjs --link --write         # connect what is there
-//   node scripts/knowledge-import.mjs --tidy-topics --write  # fold the topic list back
+//   node scripts/knowledge-import.mjs --tidy-topics --write  # merge spellings
+//   node scripts/knowledge-import.mjs --cluster --write      # consolidate by MEANING
 //
 // ## Extraction, not copying
 //
@@ -464,8 +465,220 @@ async function tidyTopics() {
   console.log(`\n${written} note(s) updated`);
 }
 
+
+/**
+ * Consolidate topics by MEANING — map to a cluster, or drop.
+ *
+ * ## Why this is a model's job when `--tidy-topics` deliberately is not
+ *
+ * That pass merges SPELLINGS: `control-plane` and `controlplane` are the same
+ * word twice, which is string arithmetic and inspectable, and a model asked to
+ * do it would occasionally decide `auth` and `authorization` are different.
+ *
+ * This is a different question. `npmrc` and `lavamoat` are not misspellings of
+ * `tooling`; deciding they belong with it is a judgment about meaning, and no
+ * amount of string comparison reaches it. So the rule from the owner:
+ *
+ *   > a singleton that genuinely belongs nowhere shouldn't be force-merged
+ *   > just to hit a number; the rule should be "maps to an existing cluster,
+ *   > or it dies".
+ *
+ * Both halves matter. Force-merging every rare topic into its nearest neighbour
+ * makes the count look good and quietly files a genuine one-off — `42crunch`,
+ * say — under something it has nothing to do with, which is worse than dropping
+ * it: a wrong topic is followed, a missing one is only absent.
+ *
+ * ## Anchors are the vault's own vocabulary, not a fixed list
+ *
+ * A cluster is a topic the vault ALREADY uses enough to mean something. Nothing
+ * here invents a taxonomy — the candidates move towards what is already there,
+ * or they go. That also makes this safe to re-run: as the vault grows, more
+ * topics qualify as anchors and fewer candidates die.
+ *
+ * ## The cheat sheet is a head start, NOT ground truth
+ *
+ * The vault contains a note mapping vocabulary to clusters. It is worth passing
+ * in — it is a real map of this material and costs a few hundred tokens, so the
+ * model starts from it rather than rediscovering it worse.
+ *
+ * But **Operator wrote it, not the owner**, which was worth getting right: the
+ * first version of this called it "his own judgment about his own material" and
+ * told the model it was authoritative. It is a model's summary of a model's
+ * notes — exactly the class of claim the `unverified` confidence level exists
+ * to mark — and promoting it to ground truth inside a prompt launders a guess
+ * into a rule. It is offered as a starting point and the model may disagree
+ * with it.
+ */
+async function clusterTopics() {
+  const stateRes = await fetch(`${BASE}/api/state`);
+  const state = await stateRes.json();
+  const notes = (state?.state?.["knowledge.notes"] ?? []).filter((n) => !n.archived);
+
+  const count = new Map();
+  for (const note of notes) {
+    for (const topic of note.topics ?? []) count.set(topic, (count.get(topic) ?? 0) + 1);
+  }
+
+  /** Used enough to be a real grouping. */
+  const MIN_ANCHOR = Number(valueOf("--anchor") || 5);
+  /** Rare enough to be worth questioning. */
+  const MAX_CANDIDATE = Number(valueOf("--rare") || 3);
+
+  const anchors = [...count.entries()]
+    .filter(([, n]) => n >= MIN_ANCHOR)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t]) => t);
+  const candidates = [...count.entries()]
+    .filter(([, n]) => n <= MAX_CANDIDATE)
+    .sort((a, b) => a[1] - b[1])
+    .map(([t]) => t);
+
+  if (anchors.length === 0 || candidates.length === 0) {
+    console.log("Nothing to consolidate — the vault has no clear clusters yet.");
+    return;
+  }
+
+  console.log(
+    `${anchors.length} anchor topic(s) (used ${MIN_ANCHOR}+) · ` +
+      `${candidates.length} candidate(s) (used ${MAX_CANDIDATE} or fewer)\n`,
+  );
+
+  // A prior map of this vocabulary, if the vault holds one. A starting point
+  // rather than an authority — see the header. Written by Operator, unverified
+  // like everything else it wrote.
+  const cheatSheet = notes.find((n) => /cheat sheet/i.test(n.title));
+
+  /** candidate → anchor, or null for "belongs nowhere". */
+  const mapping = new Map();
+  const CHUNK = 40;
+
+  for (let i = 0; i < candidates.length; i += CHUNK) {
+    const batch = candidates.slice(i, i + CHUNK);
+    const task = [
+      "You are consolidating the topic tags of a personal knowledge vault.",
+      "",
+      "For each CANDIDATE topic, decide which ANCHOR topic it belongs under.",
+      "",
+      "Return ONLY a JSON object mapping candidate to anchor, no prose, no fence:",
+      '  {"npmrc": "tooling", "42crunch": null}',
+      "",
+      "Rules:",
+      "- The value MUST be one of the anchors listed, spelled exactly, or null.",
+      "- null means it genuinely belongs under none of them. USE IT. A topic filed",
+      "  under something it has nothing to do with is worse than one that is dropped:",
+      "  a wrong tag gets followed, a missing one is merely absent.",
+      "- Map only when the candidate is a NARROWER CASE of the anchor, or a synonym.",
+      "  Do not map two things that merely appear in the same document.",
+      "- Never map a candidate to another candidate.",
+      "",
+      cheatSheet
+        ? `The owner's own vocabulary map, which is authoritative where it applies:\n${cheatSheet.body}\n`
+        : "",
+      `ANCHORS: ${anchors.join(", ")}`,
+      "",
+      `CANDIDATES: ${batch.join(", ")}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    let reply;
+    try {
+      reply = await delegate({ task, worker: WORKER });
+    } catch (err) {
+      console.warn(`! batch ${i / CHUNK + 1}: ${String(err?.message ?? err)}`);
+      continue;
+    }
+
+    const text = String(reply.text ?? "");
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    let parsed = null;
+    try {
+      parsed = start >= 0 && end > start ? JSON.parse(text.slice(start, end + 1)) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!parsed) {
+      /*
+        Print what actually came back.
+
+        "Could not read a JSON object" on its own is the same dead end as every
+        other silent failure this project has been bitten by — it says the
+        parse failed and nothing about why, so the next step is guessing. The
+        head of the reply is almost always enough: a fence, a preamble, or the
+        model having answered a different question entirely.
+      */
+      console.warn(
+        `! batch ${i / CHUNK + 1}: could not read a JSON object out of the reply.
+` +
+          `  got ${text.length} chars: ${JSON.stringify(text.slice(0, 400))}`,
+      );
+      continue;
+    }
+
+    const anchorSet = new Set(anchors);
+    for (const [candidate, target] of Object.entries(parsed)) {
+      if (!count.has(candidate)) continue;
+      /*
+        Validated against the anchor list rather than trusted. A model asked for
+        one of N answers will occasionally invent an N+1th, and an invented
+        anchor would create the exact fragmentation this pass exists to remove.
+      */
+      mapping.set(candidate, anchorSet.has(target) ? target : null);
+    }
+    console.log(`  batch ${i / CHUNK + 1}/${Math.ceil(candidates.length / CHUNK)} — ${reply.ms}ms`);
+  }
+
+  const mapped = [...mapping].filter(([, to]) => to);
+  const dying = [...mapping].filter(([, to]) => !to).map(([from]) => from);
+
+  console.log(`\n${mapped.length} mapped:`);
+  for (const [from, to] of mapped.slice(0, 40)) console.log(`  ${from} → ${to}`);
+  console.log(`\n${dying.length} belong nowhere and will be dropped:`);
+  console.log(`  ${dying.join(", ")}`);
+
+  // Apply.
+  let changed = 0;
+  let bare = 0;
+  for (const note of notes) {
+    const before = note.topics ?? [];
+    const after = [
+      ...new Set(
+        before
+          .map((t) => (mapping.has(t) ? mapping.get(t) : t))
+          .filter((t) => typeof t === "string" && t.length > 0),
+      ),
+    ];
+    if (after.length === before.length && after.every((t, i) => t === before[i])) continue;
+    changed += 1;
+    if (after.length === 0) bare += 1;
+    if (!WRITE) continue;
+    try {
+      await callAction("knowledge_update", { id: note.id, topics: after });
+    } catch (err) {
+      console.warn(`  ! ${note.title}: ${String(err?.message ?? err)}`);
+    }
+  }
+
+  /*
+    Bare notes are reported, not prevented.
+
+    `--tidy-topics` protects against them because at that point topics were the
+    only way to reach a note. They are not any more: the link pass has given the
+    vault 1,600+ edges, so a note with no topic is still reachable by following
+    one. "Or it dies" is the owner's rule and this is where it is allowed to
+    bite — but silently emptying notes is not something to discover later.
+  */
+  console.log(
+    `\n${changed} note(s) change` +
+      (bare ? `, ${bare} left with no topic (reachable by link)` : "") +
+      (WRITE ? "" : " — nothing written (dry run)"),
+  );
+}
+
 async function main() {
   if (has("--link")) return linkPass();
+  if (has("--cluster")) return clusterTopics();
   if (has("--tidy-topics")) return tidyTopics();
 
   const files = (await sources()).slice(0, LIMIT);
