@@ -355,18 +355,41 @@ export default function TerminalPanel() {
       {canManage && armed && (
         <>
           <div className="flex items-center gap-2 mb-2">
-            <input
+            {/*
+              A textarea, not an input, and that is a phone fix rather than a
+              preference.
+
+              A single-line input shows about twenty-five characters on an
+              iPhone and scrolls the rest out of sight. The owner pasted a
+              command with a long Windows path into it twice, both times lost
+              the tail without seeing it happen, and got `fatal: No pathspec was
+              given` — git receiving a flag with no filename. He could not tell
+              from the field that anything was missing.
+
+              Wrapping means the whole command is visible before it runs, which
+              is the difference between a typo and a mystery. It grows to four
+              lines and then scrolls, so an ordinary short command still looks
+              like a prompt rather than a form.
+            */}
+            <textarea
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void run();
+                // Enter runs, Shift+Enter is a newline. A command that spans
+                // lines is rare but `bash -c` heredocs exist, and losing one to
+                // an accidental submit would be worse than the extra key.
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void run();
+                }
               }}
+              rows={command.split("\n").length > 1 ? 3 : 1}
               placeholder={armed ? 'claude -p "what changed today?" · type disarm to lock' : 'claude -p "what changed today?"'}
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
               aria-label="Command to run"
-              className="flex-1 min-w-0 bg-base-700/40 border border-base-600 rounded-badge px-3 min-h-[44px] text-base sm:text-sm font-mono text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors"
+              className="flex-1 min-w-0 bg-base-700/40 border border-base-600 rounded-badge px-3 py-2.5 min-h-[44px] max-h-[7.5rem] text-base sm:text-sm font-mono text-ink-100 placeholder:text-ink-700 outline-none focus:border-xp/50 transition-colors resize-none break-all"
             />
             {streaming ? (
               <button
