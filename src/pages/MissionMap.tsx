@@ -69,6 +69,9 @@ const MIN_ORBIT = 235;
 
 
 
+/** Which graph is on screen. Three, and they share one renderer. */
+type GraphSource = "missions" | "vault" | "agents";
+
 interface Body {
   id: string;
   /*
@@ -139,6 +142,26 @@ interface Body {
    * you see are the actual shape of what is connected to what.
    */
   tier: number;
+}
+
+/**
+ * One job, as `/api/jobs` reports it.
+ *
+ * Only the fields the graph draws. The endpoint returns more — session ids,
+ * costs, resources — and pulling them in here would make this a second,
+ * competing model of a job alongside `useJobs`, which the Orchestrator owns.
+ * This is a VIEW of work in flight, not a place jobs live.
+ */
+interface JobSummary {
+  id: string;
+  title?: string;
+  provider?: string;
+  model?: string;
+  status?: string;
+  turns?: number;
+  asking?: number;
+  queued?: number;
+  error?: string | null;
 }
 
 interface Edge {
@@ -258,10 +281,11 @@ export default function MissionMap() {
     Missions is the default because it is what this page was, and a landing
     page should not change under someone.
   */
-  const [source, setSourceState] = useState<"missions" | "vault">(() => {
+  const [source, setSourceState] = useState<GraphSource>(() => {
     const wanted = new URLSearchParams(window.location.search).get("graph");
-    if (wanted === "vault" || wanted === "missions") return wanted;
-    return readStorage<string>("map.source", "missions") === "vault" ? "vault" : "missions";
+    if (wanted === "vault" || wanted === "missions" || wanted === "agents") return wanted;
+    const saved = readStorage<string>("map.source", "missions");
+    return saved === "vault" || saved === "agents" ? saved : "missions";
   });
   /** Which graph the view was last fitted to, so a resync does not re-fit. */
   const fittedFor = useRef<string | null>(null);
@@ -301,7 +325,7 @@ export default function MissionMap() {
   /** Read by the pointer handlers, which are registered once. */
   const sourceRef = useRef(source);
   sourceRef.current = source;
-  const setSource = (next: "missions" | "vault") => {
+  const setSource = (next: GraphSource) => {
     setSourceState(next);
     writeStorage("map.source", next);
   };
@@ -546,6 +570,16 @@ export default function MissionMap() {
   */
   const busyRef = useRef(0);
   const [busyCount, setBusyCount] = useState(0);
+  /*
+    The jobs themselves, not merely how many.
+
+    The same poll already ran for the heartbeat; keeping its result costs
+    nothing and is what the AGENTS graph draws. State rather than a ref,
+    because unlike the heartbeat this has to rebuild the node list — and the
+    rebuild preserves positions by id, so a job appearing does not move
+    everything else.
+  */
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
   useEffect(() => {
     let stopped = false;
     const poll = async () => {
@@ -554,7 +588,18 @@ export default function MissionMap() {
         const res = await fetch("/api/jobs", { headers: { accept: "application/json" } });
         const body = await res.json();
         if (stopped) return;
-        const jobs: { status?: string }[] = Array.isArray(body?.jobs) ? body.jobs : [];
+        const jobs: JobSummary[] = Array.isArray(body?.jobs) ? body.jobs : [];
+        /*
+          Replaced only when something actually differs.
+
+          A three-second poll that sets state unconditionally re-renders the
+          page twenty times a minute forever, and every one of those rebuilds
+          the node list. Comparing the shape that is drawn — id, status, turns,
+          questions waiting — means an idle Operator costs nothing.
+        */
+        const shape = (list: JobSummary[]) =>
+          list.map((j) => `${j.id}:${j.status}:${j.turns}:${j.asking}`).join("|");
+        setJobs((prev) => (shape(prev) === shape(jobs) ? prev : jobs));
         /*
           `runningIds` where the server offers it, falling back to counting
           statuses. Queued jobs count too: from here "Operator has work" is the
@@ -571,6 +616,9 @@ export default function MissionMap() {
         if (!stopped) {
           busyRef.current = 0;
           setBusyCount(0);
+          // Unreachable or unauthorised is not "no jobs" — but an empty graph
+          // is the honest picture of what this page can currently see.
+          setJobs((prev) => (prev.length ? [] : prev));
         }
       }
     };
@@ -616,6 +664,65 @@ export default function MissionMap() {
     note's `links` are the same structure with different names.
   */
   const nodes = useMemo(() => {
+    if (source === "agents") {
+      /*
+        What Operator is doing right now.
+
+        Two kinds of node, and the WORKER nodes are what make this a graph
+        rather than a list. A job on its own says "something is running"; a job
+        attached to claude-code, next to three attached to airouter, says where
+        the work actually is — which is the question a control plane exists to
+        answer and the reason the owner asked for a graph rather than a table.
+
+        The workers are hardcoded rather than fetched. `providers.mjs` decides
+        which are registered and there is no endpoint that lists them; a worker
+        with no jobs simply draws no node, which is the honest picture anyway.
+      */
+      const workers = new Map<string, { id: string; label: string; count: number }>();
+      const jobNodes = jobs.map((j) => {
+        const provider = j.provider || "unknown";
+        const wid = `worker:${provider}`;
+        const w = workers.get(wid) || { id: wid, label: provider, count: 0 };
+        w.count += 1;
+        workers.set(wid, w);
+        return {
+          id: `job:${j.id}`,
+          label: j.title || j.id,
+          // The job hangs off its worker; the worker hangs off the core.
+          links: [wid],
+          mission: null,
+          note: null,
+          job: j,
+          worker: null,
+          // One ring out from the worker running it.
+          tier: 1,
+        };
+      });
+
+      return [
+        ...Array.from(workers.values()).map((w) => ({
+          id: w.id,
+          label: `${w.label} · ${w.count}`,
+          links: [] as string[],
+          mission: null,
+          note: null,
+          job: null,
+          worker: w,
+          /*
+            Agents state their ring rather than having it inferred.
+
+            The tier maths derives rings from degree, which is right for the
+            vault — the hubs genuinely are the most connected notes. It is
+            wrong here: with one worker and one job both have degree 1, so both
+            landed in ring 0 and the edge between them cut straight through the
+            core. The structure is known in advance, so it should be declared.
+          */
+          tier: 0,
+        })),
+        ...jobNodes,
+      ];
+    }
+
     if (source === "vault") {
       /*
         A ceiling on how many notes the graph draws.
@@ -652,6 +759,9 @@ export default function MissionMap() {
         links: n.links ?? [],
         mission: null,
         note: n,
+        job: null,
+        worker: null,
+        tier: undefined as number | undefined,
       }));
     }
     return active.map((m) => ({
@@ -660,8 +770,11 @@ export default function MissionMap() {
       links: m.dependsOn ?? [],
       mission: m,
       note: null,
+      job: null,
+      worker: null,
+      tier: undefined as number | undefined,
     }));
-  }, [source, active, vault.active]);
+  }, [source, active, vault.active, jobs]);
 
   const edges = useMemo<Edge[]>(() => {
     const ids = new Set(nodes.map((n) => n.id));
@@ -773,6 +886,27 @@ export default function MissionMap() {
         `vital-down` for unverified, gold for worked, `vital-up` for verified,
         which is the same red-amber-green the rest of the app already means.
       */
+      /*
+        A job's colour is its STATUS, and the one that matters most is amber.
+
+        `asking` means a turn is suspended on a permission question and will
+        die after thirty minutes if nobody answers (ADR 0012). On a display
+        whose whole job is telling him what Operator is doing, that is the one
+        state worth interrupting for — so it takes the accent, and running
+        takes violet like the speaking core does.
+      */
+      const jobTint: Rgb = n.job
+        ? (n.job.asking ?? 0) > 0
+          ? [232, 176, 77]
+          : n.job.status === "running"
+            ? [141, 127, 224]
+            : n.job.status === "queued"
+              ? [122, 134, 158]
+              : n.job.error || n.job.status === "failed"
+                ? [224, 90, 90]
+                : [78, 216, 138]
+        : STATUS_COLOR.not_started;
+
       const noteTint: Rgb = n.note
         ? n.note.confidence === "verified"
           ? [78, 216, 138]
@@ -784,12 +918,35 @@ export default function MissionMap() {
       return {
         id: n.id,
         label: n.label,
-        tint: m ? (STATUS_COLOR[m.status] ?? STATUS_COLOR.not_started) : noteTint,
+        tint: m
+          ? (STATUS_COLOR[m.status] ?? STATUS_COLOR.not_started)
+          : n.job
+            ? jobTint
+            : n.worker
+              // A worker is scaffolding, not a result. Neutral, so the jobs
+              // hanging off it are what the eye goes to.
+              ? ([122, 134, 158] as Rgb)
+              : noteTint,
         // Notes have no progress, so no arc. Their badge is how connected they
         // are, which is the equivalent question for a vault: a note nothing
         // links to is one you will never arrive at by accident.
-        ring: m ? Math.max(0, Math.min(100, m.progress)) / 100 : 0,
-        badge: m ? `${Math.round(Math.max(0, Math.min(100, m.progress)))}%` : String(d),
+        /*
+          A job has no percentage — nothing knows how far through a turn is —
+          so the arc is used for something it CAN say: a full ring while
+          running, nothing otherwise. Motion in the strands carries the rest.
+        */
+        ring: m
+          ? Math.max(0, Math.min(100, m.progress)) / 100
+          : n.job && n.job.status === "running"
+            ? 1
+            : 0,
+        badge: m
+          ? `${Math.round(Math.max(0, Math.min(100, m.progress)))}%`
+          : n.job
+            ? String(n.job.turns ?? 0)
+            : n.worker
+              ? String(n.worker.count)
+              : String(d),
         mission: m,
         note: n.note,
         x: kept?.x ?? Math.cos(angle) * 240,
@@ -827,9 +984,22 @@ export default function MissionMap() {
           the well-connected notes read as landmarks rather than as everything
           being the same.
         */
-        r: m ? 26 + Math.min(14, d * 3) : 6 + Math.min(9, Math.sqrt(d) * 2.4),
+        /*
+          Workers are big because they are landmarks; jobs are mid-sized
+          because there are rarely many and each one is worth reading. Only the
+          vault needs the small end — see the note on its density.
+        */
+        r: m
+          ? 26 + Math.min(14, d * 3)
+          : n.worker
+            ? 30
+            : n.job
+              ? 18
+              : 6 + Math.min(9, Math.sqrt(d) * 2.4),
         degree: d,
-        landmark: !m ? labelled.has(n.id) : true,
+        // Agents are never crowded — a handful of nodes, every one of which
+        // you want named. Only the vault has to ration labels.
+        landmark: n.note ? labelled.has(n.id) : true,
         /*
           Unreachable notes get the outer shell rather than tier 0.
 
@@ -838,7 +1008,7 @@ export default function MissionMap() {
           place reserved for the most connected things in the vault, which is
           exactly backwards.
         */
-        tier: m ? 0 : (tier.get(n.id) ?? 6),
+        tier: n.tier ?? (m ? 0 : (tier.get(n.id) ?? 6)),
         sx: kept?.sx ?? 0,
         sy: kept?.sy ?? 0,
         sr: kept?.sr ?? 26,
@@ -898,7 +1068,9 @@ export default function MissionMap() {
         all, which is what it did before any of this.
       */
       if (source === "vault") follow.current = 900;
-      else if (!firstEver) follow.current = 40;
+      // Agents and missions settle in under a second; a short fit frames them
+      // without the camera hovering over a picture that has stopped moving.
+      else if (!firstEver) follow.current = 60;
     }
   }, [nodes, edges, source]);
 
@@ -1027,7 +1199,31 @@ export default function MissionMap() {
         units out — only exists once the centring has been weakened to keep
         hundreds of nodes from collapsing into a hairball.
       */
-      const anneals = bodies.length > 40;
+      /*
+        Density rules are for the VAULT, and gating them on node count was
+        always a proxy for that. Naming it directly stops a busy day — twenty
+        jobs across four workers — accidentally crossing a threshold meant for
+        three hundred notes and freezing the layout the owner is watching for
+        movement.
+      */
+      const anneals = sourceRef.current === "vault" && bodies.length > 40;
+      /*
+        Two different questions, and they were sharing one flag.
+
+        ANNEALS is "does this layout need cooling to converge" — only the vault,
+        because only the vault weakened its centring enough to need it.
+
+        RADIAL is "are these nodes arranged in rings around the core" — the
+        vault AND agents, because for agents it is the whole point: workers are
+        the highest-degree nodes so they land in ring 0 attached to the core,
+        and each job lands one ring out from the worker running it. That is
+        exactly the picture asked for, and it falls out of the tier maths that
+        already exists rather than needing its own layout.
+
+        Missions keep their original push-out-of-the-middle, which is what that
+        view has always done.
+      */
+      const radial = sourceRef.current !== "missions";
       if (anneals) {
         if (pointer.current.dragging) heat.current = Math.max(heat.current, 0.34);
         heat.current = Math.max(0.06, heat.current * 0.994);
@@ -1108,7 +1304,7 @@ export default function MissionMap() {
           space rather than a node parked on top of it.
         */
         const fromCore = Math.hypot(a.x, a.y) || 1;
-        if (anneals) {
+        if (radial) {
           /*
             Every note is pulled onto the ring its tier belongs to.
 
@@ -1463,7 +1659,7 @@ export default function MissionMap() {
         the tier layout is actually built around, so what radiates is the same
         structure the layout used.
       */
-      if (anneals) {
+      if (radial) {
         ctx.beginPath();
         for (const b of bodies) {
           if (b.tier !== 0) continue;
@@ -1922,9 +2118,12 @@ export default function MissionMap() {
       gone.
     */
     if (dragged && pointer.current.moved < 6) {
-      navigate(
-        sourceRef.current === "vault" ? `/knowledge/${dragged}` : `/missions/${dragged}`,
-      );
+      const src = sourceRef.current;
+      if (src === "vault") navigate(`/knowledge/${dragged}`);
+      // Every agent node leads to the same place: the thread it belongs to.
+      // Job ids are prefixed so they cannot collide with a mission id.
+      else if (src === "agents") navigate("/orchestrator");
+      else navigate(`/missions/${dragged}`);
     }
     pointer.current.down = false;
     pointer.current.dragging = null;
@@ -2104,12 +2303,29 @@ export default function MissionMap() {
             MISSION MAP over 313 notes would be actively misleading.
           */}
           <h1 className="font-display text-lg text-ink-100 tracking-wide">
-            {source === "vault" ? "KNOWLEDGE VAULT" : "MISSION MAP"}
+            {source === "vault" ? "KNOWLEDGE VAULT" : source === "agents" ? "AGENTS" : "MISSION MAP"}
           </h1>
-          <p className="font-mono text-[11px] text-ink-600 mt-1">
-            {nodes.length} {source === "vault" ? "notes" : "active"} · {edges.length}{" "}
-            {edges.length === 1 ? "link" : "links"}
-          </p>
+          {source === "agents" ? (
+            /*
+              Counted by STATE, because that is the question. "Nine jobs" says
+              nothing; "two running, one waiting on you" is the whole reason to
+              look at this screen.
+            */
+            <p className="font-mono text-[11px] text-ink-600 mt-1">
+              {jobs.filter((j) => j.status === "running").length} running ·{" "}
+              {jobs.filter((j) => j.status === "queued").length} queued
+              {jobs.some((j) => (j.asking ?? 0) > 0) && (
+                <span className="text-xp">
+                  {" "}· {jobs.reduce((n, j) => n + (j.asking ?? 0), 0)} waiting on you
+                </span>
+              )}
+            </p>
+          ) : (
+            <p className="font-mono text-[11px] text-ink-600 mt-1">
+              {nodes.length} {source === "vault" ? "notes" : "active"} · {edges.length}{" "}
+              {edges.length === 1 ? "link" : "links"}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
@@ -2175,20 +2391,34 @@ export default function MissionMap() {
             worth wanting, and one combined control would delete two of the
             four views to save a button.
           */}
+          {/*
+            Three graphs, cycled by one button.
+
+            A row of three would be clearer and is the wrong trade here: this
+            HUD floats over a wall display and every control is one more thing
+            between him and the picture. Cycling costs at most two taps and the
+            label always says where you are.
+          */}
           <button
-            onClick={() => setSource(source === "vault" ? "missions" : "vault")}
+            onClick={() =>
+              setSource(source === "missions" ? "vault" : source === "vault" ? "agents" : "missions")
+            }
             title={
               source === "vault"
-                ? `${vault.active.length} notes. Tap for the mission board.`
-                : "Tap for the Knowledge Vault graph."
+                ? `${vault.active.length} notes. Tap for what Operator is running.`
+                : source === "agents"
+                  ? `${jobs.length} job(s). Tap for the mission board.`
+                  : "Tap for the Knowledge Vault graph."
             }
             className={`pointer-events-auto font-mono text-[11px] transition-colors border rounded-badge px-3 py-1.5 min-h-[36px] ${
               source === "vault"
                 ? "border-rank/50 bg-rank/10 text-rank"
-                : "border-base-600 hover:border-base-500 text-ink-500 hover:text-ink-100"
+                : source === "agents"
+                  ? "border-xp/50 bg-xp/10 text-xp"
+                  : "border-base-600 hover:border-base-500 text-ink-500 hover:text-ink-100"
             }`}
           >
-            {source === "vault" ? "VAULT" : "MISSIONS"}
+            {source === "vault" ? "VAULT" : source === "agents" ? "AGENTS" : "MISSIONS"}
           </button>
           {/*
             Flat or solid. Labelled by what you GET, not by what it is called —

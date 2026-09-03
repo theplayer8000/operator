@@ -164,6 +164,8 @@ body.dragging #drop { border-color:var(--xp); }
   <button class="btn unsure" id="bUnsure">unsure ▸</button>
   <button class="btn" id="bUndo" disabled>undo (z)</button>
   <button class="btn" id="bRandom">surprise me (r)</button>
+  <label class="btn" for="mfile" title="Re-apply decisions from a manifest you exported before">load manifest</label>
+  <input type="file" id="mfile" accept="application/json,.json" style="display:none" />
   <button class="btn on" id="bExport">export manifest.json</button>
 </div>
 
@@ -367,7 +369,27 @@ function parseConversation(convo, sourceFile) {
   const times = real.map((m) => m.at).filter(Boolean);
 
   return {
-    id: convo.conversation_id || convo.id || `${sourceFile}:${convo.title}:${convo.create_time}`,
+    /*
+      The strongest key the export offers, in order.
+
+      `conversation_id` when there is one — every conversation in the current
+      export format has it, and it is stable across re-exports, which is what
+      makes triaging today's copy carry over to next month's.
+
+      Falling back to TITLE ALONE would be a trap: ten chats called "help with
+      code" would collapse into one and real conversations would be lost to a
+      false match. So the fallback pairs the title with the creation timestamp,
+      which two genuinely different chats will not share.
+
+      The source FILE is deliberately not part of the key. It was, and that was
+      wrong: shard names change between exports (`conversations-001.json` today
+      is not the same hundred chats next month), so including it would make
+      every fallback id churn on re-export and lose the decision attached to it.
+    */
+    id:
+      convo.conversation_id ||
+      convo.id ||
+      `t:${(convo.title || "untitled").trim().toLowerCase()}:${convo.create_time || 0}`,
     title: (convo.title || "Untitled").trim(),
     created: convo.create_time || (times.length ? Math.min.apply(null, times) : null),
     updated: convo.update_time || (times.length ? Math.max.apply(null, times) : null),
@@ -447,6 +469,15 @@ async function ingest(files) {
            !n.includes("manifest") && !n.includes("asset_file_names");
   });
 
+  /*
+    A dropped manifest.json is a decision file, not an export. Recognised by
+    name and by shape, because dropping it in with the export is the obvious
+    gesture and failing on it would be perverse.
+  */
+  const manifest = Array.from(files).find((f) => /manifest.*\.json$/i.test(f.name));
+  // Dropped on its own, with an export already loaded: apply it now.
+  if (manifest && wanted.length === 0 && chats.length > 0) { importManifest(manifest); return; }
+
   if (wanted.length === 0) {
     alert("No conversations-*.json or chat.html found in what you dropped.");
     return;
@@ -495,6 +526,15 @@ async function ingest(files) {
 
   document.getElementById("drop").classList.add("hide");
   render();
+
+  /*
+    A manifest dropped WITH the export is applied once the chats exist.
+
+    Dropping the whole folder is the obvious gesture, and if last month's
+    manifest is sitting in it, silently ignoring it would mean re-triaging
+    everything — the exact thing this is for.
+  */
+  if (manifest) importManifest(manifest);
 }
 
 // --- filtering --------------------------------------------------------------
@@ -754,6 +794,78 @@ function surprise() {
   render();
 }
 
+/**
+ * Re-apply decisions from a manifest exported earlier.
+ *
+ * This is what makes it one triage forever rather than one triage per export.
+ * localStorage already carries decisions between sessions on this machine, but
+ * it cannot survive a cleared browser, a different laptop, or a browser that
+ * refuses storage on `file://` — and the manifest is a file, so it survives all
+ * three.
+ *
+ * Matched on id first. Anything whose id is not recognised is tried again on
+ * title + first date, which is the same pairing the fallback key uses: it
+ * rescues a chat whose id changed between export formats without letting ten
+ * chats called "help with code" collapse into one.
+ *
+ * Existing decisions are NOT overwritten. If you have already judged something
+ * in this session, that is the newer judgement and the file is the older one.
+ */
+function importManifest(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let manifest;
+    try {
+      manifest = JSON.parse(reader.result);
+    } catch (err) {
+      alert("That does not look like a manifest.json: " + err.message);
+      return;
+    }
+    const entries = Array.isArray(manifest.chats) ? manifest.chats : [];
+    if (entries.length === 0) { alert("No chats in that manifest."); return; }
+
+    // Secondary index for the id-changed case. Date is truncated to the day so
+    // a timestamp rounded differently by an older export still matches.
+    const byTitleDate = new Map();
+    for (const e of entries) {
+      const key = `${(e.title || "").trim().toLowerCase()}|${(e.firstDate || "").slice(0, 10)}`;
+      byTitleDate.set(key, e);
+    }
+    const byId = new Map(entries.map((e) => [e.id, e]));
+
+    pushUndo(`load ${entries.length} from manifest`);
+    let byIdHits = 0, byTitleHits = 0, skipped = 0;
+
+    for (const c of chats) {
+      if (decisions[c.id] && decisions[c.id].decision) { skipped++; continue; }
+      let e = byId.get(c.id);
+      if (e) byIdHits++;
+      else {
+        const key = `${c.title.trim().toLowerCase()}|${
+          c.created ? new Date(c.created * 1000).toISOString().slice(0, 10) : ""
+        }`;
+        e = byTitleDate.get(key);
+        if (e) byTitleHits++;
+      }
+      if (!e || !e.decision || e.decision === "unreviewed") continue;
+      decisions[c.id] = {
+        decision: e.decision,
+        note: e.note || "",
+        at: e.decidedAt ? Date.parse(e.decidedAt) : Date.now(),
+        atCount: typeof e.messageCount === "number" ? e.messageCount : null,
+      };
+    }
+    save();
+    render();
+    alert(
+      `Applied ${byIdHits + byTitleHits} decisions.\n` +
+      `${byIdHits} matched by conversation id, ${byTitleHits} by title + date.\n` +
+      (skipped ? `${skipped} left alone — already decided this session.` : "")
+    );
+  };
+  reader.readAsText(file);
+}
+
 function exportManifest() {
   const manifest = {
     schema: "vault-triage/1",
@@ -815,6 +927,10 @@ document.getElementById("bUnsure").onclick = () => bulk("unsure");
 document.getElementById("bUndo").onclick = undo;
 document.getElementById("bRandom").onclick = surprise;
 document.getElementById("bExport").onclick = exportManifest;
+document.getElementById("mfile").onchange = (e) => {
+  if (e.target.files[0]) importManifest(e.target.files[0]);
+  e.target.value = "";
+};
 
 document.getElementById("picker").onchange = (e) => ingest(e.target.files);
 document.getElementById("picker2").onchange = (e) => ingest(e.target.files);

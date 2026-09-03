@@ -73,6 +73,22 @@ export next month keeps everything you have already decided.
 Export the manifest when you finish a session. It is the durable copy, and the
 only one if your browser refuses localStorage on `file://` — some do.
 
+### One triage, forever
+
+**`load manifest` re-applies an earlier manifest's decisions**, and a
+`manifest.json` dropped in with the export is picked up automatically. That is
+what makes this one triage rather than one triage per export: localStorage
+carries decisions between sessions on this machine, but only a file survives a
+cleared browser, a different laptop, or a browser that will not store anything
+on `file://`.
+
+Matching is by `conversation_id` first. Anything unrecognised is tried again on
+**title + first date**, which rescues a chat whose id changed between export
+formats without letting unrelated chats with the same title merge.
+
+Decisions you have already made this session are never overwritten — those are
+the newer judgement, and the file is the older one.
+
 ## The manifest
 
 `manifest.json` is the contract with the import step. One file, written by the
@@ -107,7 +123,7 @@ only one if your browser refuses localStorage on `file://` — some do.
 
 | Field | Meaning |
 |---|---|
-| `id` | ChatGPT's `conversation_id`. Stable across exports — this is the join key |
+| `id` | ChatGPT's `conversation_id`. Stable across exports — this is the join key. When an export carries none, it falls back to `t:<title>:<created>` — **title plus creation time, never title alone**, or ten chats called "help with code" collapse into one and real conversations are lost to a false match |
 | `firstDate` / `lastDate` | ISO 8601. From the conversation's own timestamps |
 | `messageCount` | User and assistant turns. **Excludes** the model's internal reasoning (`thoughts`, `reasoning_recap`), which would otherwise make a two-question chat look substantial |
 | `userMessageCount` | How many times *you* spoke. The best single signal of whether a chat went anywhere |
