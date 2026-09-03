@@ -1,88 +1,99 @@
 # Current work
 
-Nothing in flight. **`main` is 37 commits ahead of `origin` and needs pushing by
-hand** — see the bottom of this file.
+Nothing in flight. Everything committed and pushed — `origin/main` at `bc47c60`.
 
 ## FIRST THING TO CHECK — it is probably not broken
 
 Speech is **off by default and stored per device**, and the Tauri window is its
 own storage profile from the browser. Symptom: Operator answers correctly on
-screen and says nothing, which reads exactly like the feature failing.
+screen and says nothing. The map prints the reply in gold with `muted — tap the
+speaker in the chat to hear replies` underneath; if that line is showing, that
+is the answer.
 
-The map prints the reply in gold with `muted — tap the speaker in the chat to
-hear replies` underneath. If that line is showing, that is the answer.
+## Landed 2026-09-03
 
-## Landed 2026-09-02 (evening) — Claude dispatches, the others do the reading
+**The Knowledge Vault is real and full.** 692 notes · 4,124 links · 7 adrift ·
+133 topics. 320 extracted from this repo's own docs, 372 from the ChatGPT
+export. 682 are `unverified`, which is correct — every one is a model's reading
+of something, two removes from checked. Raising confidence is a human act, and
+the Statistics bar measures trust rather than volume so it will actually move.
 
-The owner's ask: *"claude opus 5 as the main bit taking in everything and
-dispatching and the other models helping so claude doesnt have to be the heavy
-worker anymore but it can be if needed."*
+**The pipeline that filled it**, in order:
 
-`routing.mjs` already did half of that — it picks which worker takes a JOB. What
-was missing is the other half: once Claude has a job, it read everything itself,
-at Claude's price, into Claude's context.
+- `tools/vault-triage/index.html` — offline, no build, no network. Drag the
+  export in, triage by keyboard, export a manifest. 288 conversations, 67 kept.
+- `scripts/chat-import.mjs` — reads `keep` and nothing else. Idempotent on
+  `conversation_id`, NOT on title: extraction is non-deterministic and a
+  title-keyed importer would silently double the vault on a re-run.
+- `scripts/knowledge-import.mjs --link --cluster --tidy-topics` — connect,
+  consolidate by meaning, merge spellings. Run all three after any import.
 
-- **`server/delegate.mjs` + `scripts/delegate.mjs`** — the dispatching worker
-  hands one piece of work down and gets prose back. Measured on its own source:
-  local 3B **101.7s**, two of five environment variables found; AI Router
-  **6.8s**, all five.
-- **Two refusals are structural, not advisory.** The sub-task gets `useTools:
-  false`, so it cannot write anything; and a path outside the project is
-  refused by name (verified against `~/.gitconfig`).
-- **NOT a capability action.** `actions.mjs` is Operator's own data;
-  worker-to-worker is a different thing wearing the same shape. It also settles
-  "can a delegated worker delegate?" as a plain no.
-- Pre-allowed in `jobs.mjs` and named in the system prompt — a gate would defeat
-  it, and a tool that is merely mentioned does not get used.
+**The layer that was missing.** `work.handoffs` — a durable ledger every
+finisher writes to. `jobs.mjs` records its own turns; an outside session calls
+`work_record`. Operator can now answer "did you get anything from Claude?",
+which it previously could not.
 
-**Semantic verification is now ON and on AI Router.**
-`OPERATOR_SEMANTIC_VERIFY=1` was already set; `OPERATOR_SEMANTIC_PROVIDER` was
-not, so it had been silently running on the 3B. Both set now.
+**`secret_set`** — set an API key without it reaching any log, event, response
+or the store. Refuses `OPERATOR_*`: that namespace is the security boundary,
+not configuration.
 
-**[ADR 0016](decisions/0016-ai-router.md) amended** — source diffs and project
-files named explicitly rather than inherited from "prompt and job context".
-Audio of him is still outside it; moving Whisper or TTS there needs its own
-clause written first.
+**The map draws three graphs** — MISSIONS / VAULT / AGENTS — flat or solid,
+right-drag turns the camera in solid.
 
-## What is NOT changed, and why
+## Two silent failures worth remembering
 
-**Routing still classifies with Qwen3.8, not Opus.** Making Opus the literal
-front door means paying an Opus turn to answer "which worker?" for every message
-the rules do not settle — the exact cost `routing.mjs` was built to avoid ($0.58
-for "what time is it", measured 2026-08-31). Claude is the dispatcher for WORK,
-not for triage. Raise it if he wants it the other way.
+Both cost hours and neither announced itself.
+
+**The agent worktree was 183 commits behind main.** Every job ran against a
+copy of Operator from two weeks earlier — Operator worked that out itself after
+failing to find its own capability layer. It also caused every semantic
+verification to be run against that worktree's stale diff, days earlier, which
+read as a flaky checker. `server/worktree.mjs` now fast-forwards before a turn
+when safe and tells the worker in its prompt when it cannot.
+
+**A timed-out delegation returned nothing, not an error.** `runTurn` reports an
+abort as `error: null` — deliberately, so Stop is not an error — and a timeout
+is an abort. The chat importer logged "0 chars" and moved on, losing whole
+windows. Delegated work now asks for `reasoning_effort: "none"` (DeepSeek spent
+13,788 characters of reasoning to produce 3,454 of answer), an empty reply is an
+error, and the timeout is 420s.
 
 ## Next
 
-**Hosted Whisper + TTS through AI Router, local as the fallback.** Approved in
-principle 2026-09-02 for RAM reasons — Kokoro holds ~300MB resident on a machine
-that hit 2.33GB free during the Rust build. Local Whisper is already 287ms warm,
-so this buys memory, not speed. **Write the ADR 0016 audio clause first.**
+**Runway, for GENERATING video** — his ask, and a new external host, so it needs
+a named row in CLAUDE.md's approvals table first: the endpoint, and that an
+image-to-video call sends an image he supplies. Likely a capability action
+rather than a `runTurn` worker, since generation takes minutes and is not a
+conversation. Key goes in with `secret_set`.
 
-**`runner.mjs` still discards the SDK's token counts** — a five-line change, and
+**`runner.mjs` still discards the SDK's token counts** — five lines, and still
 the highest-value follow-up in the accounting. Claude's records read `reported`
 where they should read `derived`.
 
+**RAM.** 2×8GB DDR4-3000 for £40 was checked and is compatible — DDR4 board,
+2 free slots of 4, takes him to 32GB. It will run at 2400 (mixed speeds drop to
+the slowest) so it buys capacity, not speed. That is the point: 32GB means
+Kokoro and Whisper stay local and **ADR 0016 never needs an audio clause**.
+
 ## Environment
 
-- `AIROUTER_API_KEY` set. `OPERATOR_SEMANTIC_PROVIDER=airouter`,
-  `OPERATOR_SEMANTIC_VERIFY=1`, `OPERATOR_TTS_IDLE_MS=14400000`,
-  `OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`.
-- Four workers registered: claude-code, gemini, airouter, ollama.
-- **`OperatorShell` scheduled task added** — the desktop shell now launches the
-  same hidden way the server and both Vite instances do.
+`AIROUTER_API_KEY`, `OPERATOR_SEMANTIC_PROVIDER=airouter`,
+`OPERATOR_SEMANTIC_VERIFY=1`, `OPERATOR_TTS_IDLE_MS=14400000`,
+`OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`,
+`OPERATOR_DEVICE_NAME="Tosin's PC"`.
+
+Four workers: claude-code, gemini, airouter, ollama.
 
 ## The restart trap, still true
 
 `POST /api/restart` and `schtasks /End` do NOT reload the environment while the
-supervisor survives. **The new `OPERATOR_SEMANTIC_PROVIDER` needs a full stop:**
-kill all three node PIDs, then `schtasks /Run /TN OperatorServe`.
+supervisor survives. Stop all three node PIDs, then
+`schtasks /Run /TN OperatorServe`.
 
-## For the owner to run by hand
+## Loose ends
 
-Both denied to the agent session by design:
-
-```
-git push origin main
-rm scratch-also.mjs scratch-chain.mjs scratch-undo.mjs scratch-air.mjs scratch-sem.mjs
-```
+- `stash@{0}` in the agent worktree holds its old `AGENTS.md`, kept rather than
+  deleted when the worktree was fast-forwarded. It will conflict with main's
+  copy if popped.
+- `data/chat-import-done.json` records which conversations were extracted end to
+  end. Deleting it makes the next import redo everything.
