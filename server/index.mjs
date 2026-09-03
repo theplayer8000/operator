@@ -77,7 +77,12 @@ import { matchIntent } from "./intent.mjs";
 import { runIntent } from "./intentrun.mjs";
 import { matchVoiceCommand, VOICE_ARM_MS } from "./voicecommand.mjs";
 
-import { synthesize, available as ttsAvailable, state as ttsState } from "./tts.mjs";
+import {
+  synthesize,
+  available as ttsAvailable,
+  state as ttsState,
+  warm as warmVoice,
+} from "./tts.mjs";
 
 const gzip = promisify(gzipCb);
 
@@ -1376,4 +1381,33 @@ server.listen(PORT, HOST, () => {
   } else if (listenState.reason && process.env.OPERATOR_LISTEN) {
     console.warn(`[operator] not listening: ${listenState.reason}`);
   }
+
+  /*
+    Load the voice now, rather than when he first speaks to it.
+
+    `warm()` has existed in tts.mjs since Kokoro landed and was NEVER CALLED,
+    so the model loaded lazily on the first `/api/speak` of each server run.
+    Measured 2026-09-03, immediately after a restart: **17.8 seconds** for the
+    first sentence, then 1.2s for every one after it.
+
+    That is the "still very slow" the owner kept reporting, and it hid behind
+    every other measurement taken today — each of those was made on a warm
+    server, minutes after the restart that had already paid the cost.
+
+    It also explains why the streaming change felt like it had not helped: 1.4s
+    against 5.6s is a real improvement and completely invisible when the number
+    in front of both is eighteen seconds.
+
+    Deliberately not awaited. A server that will not answer `/api/state` for
+    eighteen seconds because it is loading a speech model has traded a worse
+    problem for a better one, and the app must come up whether or not there is
+    a voice.
+  */
+  void warmVoice()
+    .then((ok) => {
+      if (ok) console.log("[operator] voice warm — the first reply will not pay for the load");
+    })
+    .catch(() => {
+      // Never fatal. No voice is a degraded Operator; no server is no Operator.
+    });
 });
