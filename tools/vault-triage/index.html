@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vault Triage</title>
+<style>
+/* ---------------------------------------------------------------------------
+   One file, no build step, no dependencies. Everything here is plain CSS and
+   plain JS so it can be opened, read and changed without a toolchain.
+
+   Colours are Operator's own tokens, hardcoded rather than imported — this
+   file has to work by double-clicking it from anywhere, including a USB stick
+   with no server and no network.
+--------------------------------------------------------------------------- */
+:root {
+  --base-950:#05070b; --base-900:#0a0e15; --base-800:#111722; --base-700:#1a2130;
+  --base-600:#252d3d; --base-500:#39435a;
+  --ink-100:#e9edf5; --ink-300:#c4cdde; --ink-500:#8d99b0; --ink-700:#5c6880;
+  --xp:#e8b04d; --rank:#8d7fe0; --up:#4ed88a; --down:#e05a5a;
+  --mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;
+}
+* { box-sizing:border-box; }
+html,body { height:100%; margin:0; }
+body {
+  background:var(--base-950); color:var(--ink-300);
+  font:14px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+button, input, select, textarea { font:inherit; color:inherit; }
+button { cursor:pointer; background:none; border:none; }
+
+/* --- header ------------------------------------------------------------- */
+header { padding:14px 18px 10px; border-bottom:1px solid var(--base-600); flex:none; }
+.title { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+h1 { font-size:16px; letter-spacing:.14em; margin:0; color:var(--ink-100); font-weight:600; }
+.sub { font-family:var(--mono); font-size:11px; color:var(--ink-700); }
+
+.stats { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; align-items:center; }
+.stat {
+  display:flex; align-items:baseline; gap:6px; padding:4px 10px;
+  border:1px solid var(--base-600); border-radius:10px; background:var(--base-800);
+  font-family:var(--mono); font-size:11px;
+}
+.stat b { font-size:14px; font-weight:600; }
+.stat.keep b{color:var(--up)} .stat.trash b{color:var(--down)}
+.stat.unsure b{color:var(--xp)} .stat.todo b{color:var(--ink-300)}
+.bar { flex:1 1 200px; height:6px; min-width:140px; border-radius:99px; background:var(--base-700); overflow:hidden; display:flex; }
+.bar span { height:100%; }
+
+/* --- toolbar ------------------------------------------------------------ */
+.toolbar { display:flex; gap:8px; padding:10px 18px; border-bottom:1px solid var(--base-600); flex-wrap:wrap; align-items:center; flex:none; }
+.toolbar input[type=search], .toolbar input[type=date], .toolbar select {
+  background:var(--base-800); border:1px solid var(--base-600); border-radius:9px;
+  padding:7px 10px; min-height:34px;
+}
+.toolbar input[type=search] { flex:1 1 220px; min-width:160px; }
+.btn {
+  border:1px solid var(--base-600); background:var(--base-800); border-radius:9px;
+  padding:7px 11px; min-height:34px; font-family:var(--mono); font-size:11px; color:var(--ink-500);
+}
+.btn:hover { color:var(--ink-100); border-color:var(--base-500); }
+.btn.on { border-color:var(--xp); background:rgba(232,176,77,.12); color:var(--xp); }
+.btn.keep:hover{color:var(--up);border-color:var(--up)}
+.btn.trash:hover{color:var(--down);border-color:var(--down)}
+.btn.unsure:hover{color:var(--xp);border-color:var(--xp)}
+.btn:disabled { opacity:.4; cursor:default; }
+
+/* --- layout ------------------------------------------------------------- */
+main { flex:1; display:grid; grid-template-columns:minmax(320px,42%) 1fr; min-height:0; }
+@media (max-width:900px){ main { grid-template-columns:1fr; } #preview{display:none} }
+#list { overflow-y:auto; border-right:1px solid var(--base-600); }
+#preview { overflow-y:auto; padding:22px 26px 60px; }
+
+/* --- rows --------------------------------------------------------------- */
+.row { display:flex; gap:10px; padding:9px 14px; border-bottom:1px solid var(--base-800); cursor:pointer; align-items:flex-start; }
+.row:hover { background:var(--base-800); }
+.row.current { background:var(--base-700); }
+.row.sel { box-shadow:inset 3px 0 0 var(--rank); }
+.dot { width:8px; height:8px; border-radius:99px; margin-top:6px; flex:none; background:var(--base-500); }
+.dot.keep{background:var(--up)} .dot.trash{background:var(--down)} .dot.unsure{background:var(--xp)}
+.row .body { min-width:0; flex:1; }
+.row .t { color:var(--ink-100); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row.trash .t { text-decoration:line-through; color:var(--ink-700); }
+.row .m { font-size:12px; color:var(--ink-700); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+.row .meta { font-family:var(--mono); font-size:10px; color:var(--ink-700); margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
+.tag { color:var(--rank); }
+
+/* --- preview ------------------------------------------------------------ */
+#preview h2 { margin:0 0 4px; font-size:19px; color:var(--ink-100); font-weight:600; }
+.pmeta { font-family:var(--mono); font-size:11px; color:var(--ink-700); margin-bottom:14px; }
+.pactions { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center; }
+#note { width:100%; background:var(--base-800); border:1px solid var(--base-600); border-radius:9px; padding:8px 10px; margin-bottom:18px; resize:vertical; min-height:38px; }
+.msg { margin:0 0 16px; padding:11px 14px; border-radius:12px; max-width:760px; }
+.msg.user { background:var(--base-700); margin-left:auto; }
+.msg.assistant { background:var(--base-800); border:1px solid var(--base-600); }
+.msg .who { font-family:var(--mono); font-size:10px; color:var(--ink-700); margin-bottom:5px; letter-spacing:.08em; }
+.msg .text { white-space:pre-wrap; word-wrap:break-word; color:var(--ink-300); }
+.msg pre { background:var(--base-950); border:1px solid var(--base-600); border-radius:8px; padding:10px; overflow-x:auto; font-family:var(--mono); font-size:12px; }
+.msg code { font-family:var(--mono); font-size:12px; background:var(--base-950); padding:1px 4px; border-radius:4px; }
+.msg.hidden-kind { opacity:.5; }
+.attach { font-family:var(--mono); font-size:11px; color:var(--rank); }
+
+/* --- drop zone ---------------------------------------------------------- */
+#drop { position:fixed; inset:0; background:rgba(5,7,11,.94); display:flex; align-items:center; justify-content:center; z-index:20; }
+#drop.hide { display:none; }
+.dropcard { max-width:620px; padding:34px 38px; border:1px dashed var(--base-500); border-radius:16px; text-align:center; }
+.dropcard h2 { color:var(--ink-100); margin:0 0 10px; font-size:20px; }
+.dropcard p { color:var(--ink-500); margin:0 0 8px; }
+.dropcard code { font-family:var(--mono); font-size:12px; color:var(--xp); }
+body.dragging #drop { border-color:var(--xp); }
+.empty { padding:40px 20px; text-align:center; color:var(--ink-700); }
+.hint { position:fixed; bottom:10px; right:14px; font-family:var(--mono); font-size:10px; color:var(--ink-700); pointer-events:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">
+    <h1>VAULT TRIAGE</h1>
+    <span class="sub" id="source">no export loaded</span>
+  </div>
+  <div class="stats">
+    <div class="stat keep"><b id="nKeep">0</b> keep</div>
+    <div class="stat trash"><b id="nTrash">0</b> trash</div>
+    <div class="stat unsure"><b id="nUnsure">0</b> unsure</div>
+    <div class="stat todo"><b id="nTodo">0</b> unreviewed</div>
+    <div class="bar" title="reviewed / total chats">
+      <span id="barKeep" style="background:var(--up)"></span>
+      <span id="barTrash" style="background:var(--down)"></span>
+      <span id="barUnsure" style="background:var(--xp)"></span>
+    </div>
+    <div class="stat"><b id="pctChats">0%</b> chats done</div>
+    <div class="stat"><b id="pctBytes">0%</b> text done</div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="Search titles and message text…  ( / )" />
+  <input type="date" id="from" title="from date" />
+  <input type="date" id="to" title="to date" />
+  <select id="file"><option value="">all files</option></select>
+  <select id="status">
+    <option value="">any status</option>
+    <option value="unreviewed">unreviewed</option>
+    <option value="keep">keep</option>
+    <option value="trash">trash</option>
+    <option value="unsure">unsure</option>
+  </select>
+  <select id="preset">
+    <option value="">no preset</option>
+    <option value="thin">thin — 1 exchange or fewer</option>
+    <option value="starred">starred in ChatGPT</option>
+    <option value="archived">archived in ChatGPT</option>
+    <option value="long">substantial — 10+ messages</option>
+  </select>
+  <button class="btn" id="selAll">select all shown</button>
+  <button class="btn keep" id="bKeep">keep ▸</button>
+  <button class="btn trash" id="bTrash">trash ▸</button>
+  <button class="btn unsure" id="bUnsure">unsure ▸</button>
+  <button class="btn" id="bUndo" disabled>undo (z)</button>
+  <button class="btn" id="bRandom">surprise me (r)</button>
+  <button class="btn on" id="bExport">export manifest.json</button>
+</div>
+
+<main>
+  <div id="list"></div>
+  <div id="preview"><div class="empty">Pick a chat to read it.</div></div>
+</main>
+
+<div id="drop">
+  <div class="dropcard">
+    <h2>Drop your ChatGPT export here</h2>
+    <p>Drag in the whole export <b>folder</b>, or just the
+       <code>conversations-*.json</code> files.</p>
+    <p class="sub">Prefer the JSON over <code>chat.html</code> — it carries dates,
+       roles and starred/archived flags the HTML throws away.</p>
+    <p><input type="file" id="picker" multiple webkitdirectory /></p>
+    <p><input type="file" id="picker2" multiple /> <span class="sub">(individual files)</span></p>
+    <p class="sub">Nothing is uploaded. This page makes no network requests at all —
+       open it offline and check if you like.</p>
+  </div>
+</div>
+
+<div class="hint">k keep · t trash · u unsure · ↑↓ move · / search · r random · z undo</div>
+
+<script>
+"use strict";
+/* ===========================================================================
+   Vault Triage — decide which ChatGPT conversations become vault notes.
+
+   ## Why the decisions live apart from the conversations
+
+   localStorage is about 5MB. This export is 12.7MB of HTML or ~17MB of JSON,
+   so the conversations CANNOT be cached there — and a tool that appears to
+   remember your work and then silently loses it at chat 300 is worse than one
+   that never claimed to.
+
+   So localStorage holds decisions only, keyed by ChatGPT's own
+   `conversation_id`. You re-drop the export each session and your triage
+   rejoins it. That id is stable across exports, so a fresh export next month
+   keeps everything you already decided.
+
+   ## Everything is local
+
+   No fetch, no XHR, no script tags pointing anywhere. FileReader reads what
+   you drop and nothing leaves the page. That is checkable: search this file
+   for "http" and you will find only comments.
+   =========================================================================== */
+
+const STORE_KEY = "vaultTriage.v1";
+
+/** Everything parsed out of the export. Rebuilt on every load. */
+let chats = [];
+/** id -> {decision, note, at}. The only thing that persists. */
+let decisions = {};
+/** Ids ticked for a bulk action. */
+let selected = new Set();
+/** Snapshots of `decisions` for undo. Bounded — see push(). */
+let undoStack = [];
+/** Index into the currently filtered view. */
+let cursor = 0;
+/** The filtered, sorted list currently on screen. */
+let view = [];
+
+// --- persistence ------------------------------------------------------------
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      decisions = saved.decisions || {};
+    }
+  } catch (err) {
+    // A corrupt or unavailable store must not stop the tool opening. Some
+    // browsers refuse localStorage on file:// entirely; the manifest export is
+    // the fallback there, and it is why it exists as a file rather than only
+    // as state.
+    console.warn("could not read saved decisions:", err);
+  }
+}
+
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ decisions, savedAt: Date.now() }));
+  } catch (err) {
+    console.warn("could not save decisions:", err);
+  }
+}
+
+/*
+  One undo step per ACTION, not per chat.
+
+  Marking 80 chats in a bulk operation is one thing you did and should be one
+  press of undo. Snapshotting the whole decision map is crude and completely
+  adequate: 288 entries of three short fields is a few kilobytes.
+*/
+function pushUndo(label) {
+  undoStack.push({ label, snapshot: JSON.stringify(decisions) });
+  if (undoStack.length > 50) undoStack.shift();
+  document.getElementById("bUndo").disabled = false;
+  document.getElementById("bUndo").textContent = `undo ${label} (z)`;
+}
+
+function undo() {
+  const step = undoStack.pop();
+  if (!step) return;
+  decisions = JSON.parse(step.snapshot);
+  save();
+  const btn = document.getElementById("bUndo");
+  btn.disabled = undoStack.length === 0;
+  btn.textContent = undoStack.length ? `undo ${undoStack[undoStack.length - 1].label} (z)` : "undo (z)";
+  render();
+}
+
+// --- parsing ----------------------------------------------------------------
+
+/**
+ * Flatten ChatGPT's message tree into the conversation you actually had.
+ *
+ * `mapping` is a TREE, not a list — every edit or regeneration branches it, so
+ * reading the values in object order interleaves abandoned drafts with the real
+ * thread. `current_node` is the leaf of the branch that survived, so walking
+ * parents from there and reversing gives exactly what was on screen.
+ */
+function linearise(convo) {
+  const map = convo.mapping || {};
+  const out = [];
+  let id = convo.current_node;
+  const seen = new Set();
+
+  while (id && map[id] && !seen.has(id)) {
+    seen.add(id);
+    out.push(map[id]);
+    id = map[id].parent;
+  }
+  out.reverse();
+
+  // Fallback for exports with no current_node: take everything, in whatever
+  // order the object gives, sorted by time. Worse, but never empty.
+  if (out.length <= 1 && Object.keys(map).length > 1) {
+    return Object.values(map)
+      .filter((n) => n.message)
+      .sort((a, b) => (a.message.create_time || 0) - (b.message.create_time || 0));
+  }
+  return out;
+}
+
+/*
+  Which message kinds are part of the conversation.
+
+  `thoughts` and `reasoning_recap` are the model's internal reasoning. They are
+  real content and worth being able to see, but they are not what you said to
+  each other — counting them would inflate every chat's message count and make
+  a two-question chat look substantial.
+*/
+const CONTENT_KINDS = { text: true, multimodal_text: true };
+const ASIDE_KINDS = { thoughts: true, reasoning_recap: true };
+
+/** Text out of a content block, whatever shape its parts are in. */
+function partsToText(content) {
+  const parts = content && content.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((p) => {
+      if (typeof p === "string") return p;
+      // Non-string parts are attachments — images, files, audio. 1,067 of them
+      // in this export. Name them rather than dropping them silently, or a
+      // chat that was entirely about a screenshot reads as empty.
+      if (p && typeof p === "object") {
+        if (p.text) return p.text;
+        const kind = p.content_type || p.asset_pointer ? "image" : "attachment";
+        return `【${kind}】`;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseConversation(convo, sourceFile) {
+  const nodes = linearise(convo);
+  const messages = [];
+  let bytes = 0;
+
+  for (const node of nodes) {
+    const msg = node && node.message;
+    if (!msg || !msg.content) continue;
+    const kind = msg.content.content_type;
+    if (!CONTENT_KINDS[kind] && !ASIDE_KINDS[kind]) continue;
+
+    const role = (msg.author && msg.author.role) || "unknown";
+    if (role === "system") continue; // hidden instructions, never displayed
+    const text = partsToText(msg.content).trim();
+    if (!text) continue;
+
+    bytes += text.length;
+    messages.push({ role, text, at: msg.create_time || null, aside: !!ASIDE_KINDS[kind] });
+  }
+
+  const real = messages.filter((m) => !m.aside);
+  const times = real.map((m) => m.at).filter(Boolean);
+
+  return {
+    id: convo.conversation_id || convo.id || `${sourceFile}:${convo.title}:${convo.create_time}`,
+    title: (convo.title || "Untitled").trim(),
+    created: convo.create_time || (times.length ? Math.min.apply(null, times) : null),
+    updated: convo.update_time || (times.length ? Math.max.apply(null, times) : null),
+    messages,
+    msgCount: real.length,
+    userCount: real.filter((m) => m.role === "user").length,
+    firstUser: (real.find((m) => m.role === "user") || {}).text || "",
+    bytes,
+    sourceFile,
+    starred: !!convo.is_starred,
+    archived: !!convo.is_archived,
+  };
+}
+
+/**
+ * Pull conversations out of one dropped file.
+ *
+ * Three shapes, because ChatGPT has used all three and an export from any
+ * month should work:
+ *
+ *   conversations.json / conversations-000.json   a bare array — the good one
+ *   chat.html                                     the same array embedded in a
+ *                                                 script tag as `jsonData`
+ *   anything else                                 refused loudly rather than
+ *                                                 half-parsed into nonsense
+ */
+function extractConversations(name, textContent) {
+  const lower = name.toLowerCase();
+
+  if (lower.endsWith(".json")) {
+    const data = JSON.parse(textContent);
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.conversations)) return data.conversations;
+    return [];
+  }
+
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+    /*
+      The HTML export is the JSON with a viewer wrapped round it. Finding the
+      array by bracket-matching rather than by regex, because a regex over
+      12.7MB with backtracking is how a browser tab stops responding — and the
+      conversation text is full of brackets and quotes that would break a lazy
+      pattern anyway.
+    */
+    const marker = textContent.indexOf("jsonData");
+    if (marker === -1) return [];
+    const start = textContent.indexOf("[", marker);
+    if (start === -1) return [];
+
+    let depth = 0;
+    let inStr = false;
+    let escape = false;
+    for (let i = start; i < textContent.length; i++) {
+      const ch = textContent[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "[") depth++;
+      else if (ch === "]") {
+        depth--;
+        if (depth === 0) return JSON.parse(textContent.slice(start, i + 1));
+      }
+    }
+    return [];
+  }
+
+  return [];
+}
+
+async function ingest(files) {
+  const wanted = Array.from(files).filter((f) => {
+    const n = f.name.toLowerCase();
+    // .dat files are the attachments — hundreds of megabytes of images that
+    // triage does not need and reading would only make this slow.
+    return (n.endsWith(".json") || n.endsWith(".html") || n.endsWith(".htm")) &&
+           !n.includes("manifest") && !n.includes("asset_file_names");
+  });
+
+  if (wanted.length === 0) {
+    alert("No conversations-*.json or chat.html found in what you dropped.");
+    return;
+  }
+
+  /*
+    Prefer JSON and ignore the HTML when both are present.
+
+    They contain the SAME conversations, so loading both would double every
+    chat. The JSON is also strictly better: it carries create/update times,
+    starred and archived flags, and the branch structure, all of which the
+    rendered HTML has already thrown away.
+  */
+  const json = wanted.filter((f) => f.name.toLowerCase().endsWith(".json"));
+  const use = json.length ? json : wanted;
+
+  const found = [];
+  const notes = [];
+  for (const file of use) {
+    try {
+      const text = await file.text();
+      const convos = extractConversations(file.name, text);
+      for (const c of convos) found.push(parseConversation(c, file.name));
+      notes.push(`${file.name}: ${convos.length}`);
+    } catch (err) {
+      notes.push(`${file.name}: FAILED (${err.message})`);
+    }
+  }
+
+  // The same conversation can appear in two shards of a re-export. Last wins,
+  // which is the newer copy.
+  const byId = new Map();
+  for (const c of found) byId.set(c.id, c);
+  chats = Array.from(byId.values()).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+
+  document.getElementById("source").textContent =
+    `${chats.length} chats · ${notes.join(" · ")}`;
+
+  const sel = document.getElementById("file");
+  sel.innerHTML = '<option value="">all files</option>';
+  for (const f of Array.from(new Set(chats.map((c) => c.sourceFile))).sort()) {
+    const o = document.createElement("option");
+    o.value = o.textContent = f;
+    sel.appendChild(o);
+  }
+
+  document.getElementById("drop").classList.add("hide");
+  render();
+}
+
+// --- filtering --------------------------------------------------------------
+
+const decisionOf = (id) => (decisions[id] && decisions[id].decision) || "";
+
+function currentView() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const from = document.getElementById("from").value;
+  const to = document.getElementById("to").value;
+  const file = document.getElementById("file").value;
+  const status = document.getElementById("status").value;
+  const preset = document.getElementById("preset").value;
+
+  const fromT = from ? new Date(from + "T00:00:00").getTime() / 1000 : -Infinity;
+  const toT = to ? new Date(to + "T23:59:59").getTime() / 1000 : Infinity;
+
+  return chats.filter((c) => {
+    if (file && c.sourceFile !== file) return false;
+
+    const d = decisionOf(c.id);
+    if (status === "unreviewed" && d) return false;
+    if (status && status !== "unreviewed" && d !== status) return false;
+
+    const when = c.updated || c.created || 0;
+    if (when < fromT || when > toT) return false;
+
+    if (preset === "thin" && c.userCount > 1) return false;
+    if (preset === "starred" && !c.starred) return false;
+    if (preset === "archived" && !c.archived) return false;
+    if (preset === "long" && c.msgCount < 10) return false;
+
+    if (q) {
+      // Title first — it is the cheap check and the common hit. Message text is
+      // only searched when the title misses, which keeps typing responsive on
+      // several hundred chats without an index.
+      if (c.title.toLowerCase().includes(q)) return true;
+      return c.messages.some((m) => m.text.toLowerCase().includes(q));
+    }
+    return true;
+  });
+}
+
+// --- rendering --------------------------------------------------------------
+
+const fmtDate = (t) =>
+  t ? new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "2-digit" }) : "—";
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+/**
+ * Just enough markdown to read a conversation.
+ *
+ * Deliberately small: fenced code, inline code, and bold. A full markdown
+ * renderer is a dependency, and this is a triage view — you are deciding
+ * whether a chat is worth keeping, not reading it for pleasure.
+ */
+function renderText(text) {
+  const escaped = esc(text);
+  return escaped
+    .replace(/```([\s\S]*?)```/g, (_, code) => `<pre>${code.replace(/^\n/, "")}</pre>`)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+}
+
+function stats() {
+  let keep = 0, trash = 0, unsure = 0, doneBytes = 0, totalBytes = 0;
+  for (const c of chats) {
+    totalBytes += c.bytes;
+    const d = decisionOf(c.id);
+    if (d) doneBytes += c.bytes;
+    if (d === "keep") keep++;
+    else if (d === "trash") trash++;
+    else if (d === "unsure") unsure++;
+  }
+  const total = chats.length || 1;
+  document.getElementById("nKeep").textContent = keep;
+  document.getElementById("nTrash").textContent = trash;
+  document.getElementById("nUnsure").textContent = unsure;
+  document.getElementById("nTodo").textContent = chats.length - keep - trash - unsure;
+  document.getElementById("barKeep").style.width = (keep / total) * 100 + "%";
+  document.getElementById("barTrash").style.width = (trash / total) * 100 + "%";
+  document.getElementById("barUnsure").style.width = (unsure / total) * 100 + "%";
+  document.getElementById("pctChats").textContent = Math.round(((keep + trash + unsure) / total) * 100) + "%";
+  document.getElementById("pctBytes").textContent =
+    Math.round((doneBytes / (totalBytes || 1)) * 100) + "%";
+}
+
+function render() {
+  view = currentView();
+  if (cursor >= view.length) cursor = Math.max(0, view.length - 1);
+
+  const list = document.getElementById("list");
+  if (view.length === 0) {
+    list.innerHTML = '<div class="empty">Nothing matches those filters.</div>';
+  } else {
+    const frag = document.createDocumentFragment();
+    view.forEach((c, i) => {
+      const d = decisionOf(c.id);
+      const row = document.createElement("div");
+      row.className = `row ${d} ${i === cursor ? "current" : ""} ${selected.has(c.id) ? "sel" : ""}`;
+      row.innerHTML =
+        `<div class="dot ${d}"></div><div class="body">` +
+        `<div class="t">${esc(c.title)}</div>` +
+        `<div class="m">${esc(c.firstUser.slice(0, 120))}</div>` +
+        `<div class="meta"><span>${fmtDate(c.created)}</span>` +
+        `<span>${c.msgCount} msg</span>` +
+        `<span>${(c.bytes / 1024).toFixed(0)}k</span>` +
+        (c.starred ? '<span class="tag">starred</span>' : "") +
+        (c.archived ? '<span class="tag">archived</span>' : "") +
+        (decisions[c.id] && decisions[c.id].note ? '<span class="tag">note</span>' : "") +
+        `</div></div>`;
+      row.onclick = (e) => {
+        // Ctrl/Cmd or shift toggles selection; a plain click just opens it.
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id);
+        }
+        cursor = i;
+        render();
+      };
+      frag.appendChild(row);
+    });
+    list.innerHTML = "";
+    list.appendChild(frag);
+  }
+
+  stats();
+  renderPreview();
+
+  const cur = list.querySelector(".row.current");
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+function renderPreview() {
+  const el = document.getElementById("preview");
+  const c = view[cursor];
+  if (!c) { el.innerHTML = '<div class="empty">Pick a chat to read it.</div>'; return; }
+
+  const d = decisions[c.id] || {};
+  el.innerHTML =
+    `<h2>${esc(c.title)}</h2>` +
+    `<div class="pmeta">${fmtDate(c.created)} → ${fmtDate(c.updated)} · ${c.msgCount} messages · ` +
+    `${(c.bytes / 1024).toFixed(0)}k · ${esc(c.sourceFile)}<br>${esc(c.id)}</div>` +
+    `<div class="pactions">
+       <button class="btn keep ${d.decision === "keep" ? "on" : ""}" data-set="keep">keep (k)</button>
+       <button class="btn trash ${d.decision === "trash" ? "on" : ""}" data-set="trash">trash (t)</button>
+       <button class="btn unsure ${d.decision === "unsure" ? "on" : ""}" data-set="unsure">unsure (u)</button>
+       <button class="btn" data-set="">clear</button>
+       <label class="sub"><input type="checkbox" id="showAsides"> show model reasoning</label>
+     </div>` +
+    `<textarea id="note" placeholder="Why? (saved with the manifest)">${esc(d.note || "")}</textarea>` +
+    c.messages
+      .map((m) =>
+        `<div class="msg ${m.role} ${m.aside ? "hidden-kind aside" : ""}"${m.aside ? ' style="display:none"' : ""}>` +
+        `<div class="who">${esc(m.role)}${m.aside ? " · reasoning" : ""}</div>` +
+        `<div class="text">${renderText(m.text)}</div></div>`)
+      .join("");
+
+  el.querySelectorAll("[data-set]").forEach((b) => {
+    b.onclick = () => mark([c.id], b.dataset.set);
+  });
+  const note = document.getElementById("note");
+  note.onchange = () => {
+    decisions[c.id] = Object.assign({}, decisions[c.id], { note: note.value, at: Date.now() });
+    save();
+    render();
+  };
+  const toggle = document.getElementById("showAsides");
+  toggle.onchange = () => {
+    el.querySelectorAll(".aside").forEach((a) => { a.style.display = toggle.checked ? "" : "none"; });
+  };
+  el.scrollTop = 0;
+}
+
+// --- actions ----------------------------------------------------------------
+
+function mark(ids, decision) {
+  if (ids.length === 0) return;
+  pushUndo(`${decision || "clear"} ${ids.length}`);
+  for (const id of ids) {
+    if (!decision) delete decisions[id];
+    else decisions[id] = Object.assign({}, decisions[id], { decision, at: Date.now() });
+  }
+  save();
+  render();
+}
+
+/** Mark the chat under the cursor and step to the next one. */
+function markCurrent(decision) {
+  const c = view[cursor];
+  if (!c) return;
+  mark([c.id], decision);
+  if (cursor < view.length - 1) { cursor++; render(); }
+}
+
+function bulk(decision) {
+  const ids = selected.size ? Array.from(selected) : view.map((c) => c.id);
+  const what = selected.size ? `${ids.length} selected` : `all ${ids.length} shown`;
+  if (!confirm(`Mark ${what} as ${decision}?`)) return;
+  mark(ids, decision);
+  selected.clear();
+  render();
+}
+
+function surprise() {
+  const todo = view.filter((c) => !decisionOf(c.id));
+  if (todo.length === 0) { alert("Nothing unreviewed in this view."); return; }
+  const pick = todo[Math.floor(Math.random() * todo.length)];
+  cursor = view.indexOf(pick);
+  render();
+}
+
+function exportManifest() {
+  const manifest = {
+    schema: "vault-triage/1",
+    generatedAt: new Date().toISOString(),
+    totals: {
+      chats: chats.length,
+      keep: chats.filter((c) => decisionOf(c.id) === "keep").length,
+      trash: chats.filter((c) => decisionOf(c.id) === "trash").length,
+      unsure: chats.filter((c) => decisionOf(c.id) === "unsure").length,
+      unreviewed: chats.filter((c) => !decisionOf(c.id)).length,
+    },
+    chats: chats.map((c) => ({
+      id: c.id,
+      title: c.title,
+      firstDate: c.created ? new Date(c.created * 1000).toISOString() : null,
+      lastDate: c.updated ? new Date(c.updated * 1000).toISOString() : null,
+      messageCount: c.msgCount,
+      userMessageCount: c.userCount,
+      characters: c.bytes,
+      sourceFile: c.sourceFile,
+      starred: c.starred,
+      archived: c.archived,
+      decision: decisionOf(c.id) || "unreviewed",
+      note: (decisions[c.id] && decisions[c.id].note) || "",
+      decidedAt: decisions[c.id] && decisions[c.id].at
+        ? new Date(decisions[c.id].at).toISOString() : null,
+    })),
+  };
+  const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "manifest.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// --- wiring -----------------------------------------------------------------
+
+const rerender = () => { cursor = 0; selected.clear(); render(); };
+["q", "from", "to", "file", "status", "preset"].forEach((id) => {
+  const el = document.getElementById(id);
+  el.addEventListener(el.tagName === "SELECT" ? "change" : "input", rerender);
+});
+
+document.getElementById("selAll").onclick = () => {
+  const all = view.every((c) => selected.has(c.id));
+  view.forEach((c) => (all ? selected.delete(c.id) : selected.add(c.id)));
+  render();
+};
+document.getElementById("bKeep").onclick = () => bulk("keep");
+document.getElementById("bTrash").onclick = () => bulk("trash");
+document.getElementById("bUnsure").onclick = () => bulk("unsure");
+document.getElementById("bUndo").onclick = undo;
+document.getElementById("bRandom").onclick = surprise;
+document.getElementById("bExport").onclick = exportManifest;
+
+document.getElementById("picker").onchange = (e) => ingest(e.target.files);
+document.getElementById("picker2").onchange = (e) => ingest(e.target.files);
+
+// Drag and drop, including a dropped FOLDER — which is what people actually do.
+["dragenter", "dragover"].forEach((ev) =>
+  document.addEventListener(ev, (e) => { e.preventDefault(); document.body.classList.add("dragging"); }));
+["dragleave", "drop"].forEach((ev) =>
+  document.addEventListener(ev, (e) => { e.preventDefault(); document.body.classList.remove("dragging"); }));
+
+document.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const items = Array.from(e.dataTransfer.items || []);
+  const entries = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (entries.length && entries.some((x) => x.isDirectory)) {
+    const files = [];
+    // Depth-first walk of a dropped directory. The export is one flat folder,
+    // so this does not need to be clever — only to not miss the shards.
+    const walk = (entry) => new Promise((done) => {
+      if (entry.isFile) return entry.file((f) => { files.push(f); done(); });
+      const reader = entry.createReader();
+      reader.readEntries(async (kids) => { for (const k of kids) await walk(k); done(); });
+    });
+    for (const entry of entries) await walk(entry);
+    return ingest(files);
+  }
+  ingest(e.dataTransfer.files);
+});
+
+document.addEventListener("keydown", (e) => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if (e.key === "/" && !typing) { e.preventDefault(); document.getElementById("q").focus(); return; }
+  if (typing) { if (e.key === "Escape") document.activeElement.blur(); return; }
+
+  if (e.key === "k") markCurrent("keep");
+  else if (e.key === "t") markCurrent("trash");
+  else if (e.key === "u") markCurrent("unsure");
+  else if (e.key === "z") undo();
+  else if (e.key === "r") surprise();
+  else if (e.key === "ArrowDown" || e.key === "j") { if (cursor < view.length - 1) { cursor++; render(); } }
+  else if (e.key === "ArrowUp") { if (cursor > 0) { cursor--; render(); } }
+  else if (e.key === " ") {
+    const c = view[cursor];
+    if (c) { selected.has(c.id) ? selected.delete(c.id) : selected.add(c.id); render(); }
+  } else return;
+  e.preventDefault();
+});
+
+load();
+render();
+</script>
+</body>
+</html>
