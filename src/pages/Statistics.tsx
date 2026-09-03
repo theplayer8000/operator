@@ -2,7 +2,21 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { BarChart3, ArrowUpRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useStatistics, type DayCount } from "@/hooks/useStatistics";
-import type { MissionStatus } from "@/lib/types";
+import type { KnowledgeConfidence, MissionStatus } from "@/lib/types";
+import { CONFIDENCE_META } from "@/components/knowledge/knowledgeMeta";
+
+/**
+ * The bar's fills, separate from `CONFIDENCE_META`.
+ *
+ * That file's `className` is a whole chip — border, translucent background and
+ * text colour — which is right on a pill and wrong on a solid segment, where a
+ * 10% background reads as empty. Same three colours, used as fills.
+ */
+const CONFIDENCE_BAR: Record<KnowledgeConfidence, string> = {
+  unverified: "bg-vital-down/70",
+  works: "bg-xp/80",
+  verified: "bg-vital-up/80",
+};
 
 /**
  * What Operator knows about itself, counted.
@@ -419,6 +433,75 @@ export default function Statistics() {
           )}
         </section>
       </div>
+
+      {/* --- the vault, counted by trust rather than by size ------------- */}
+      <section className="card-base p-4 sm:p-5 animate-fade-up">
+        <h2 className="font-display text-sm text-ink-100 mb-1">Knowledge Vault</h2>
+        {/*
+          The size of a vault is not a statistic about a vault.
+
+          Two hundred unverified notes is a worse vault than thirty checked
+          ones, because a note you never re-checked should not be trusted like
+          one you did — that is the entire reason the confidence field exists.
+          So the SPLIT is the number here and the total is context, which is
+          also the only arrangement that can get worse as the vault grows.
+        */}
+        <p className="text-[11px] text-ink-700 mb-4">
+          Counted by how much each note can be trusted, not by how many there are.
+        </p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Figure value={s.knowledge.total} label="notes" to="/knowledge" />
+          <Figure value={s.knowledge.topics} label="topics" to="/knowledge" />
+          <Figure value={s.knowledge.links} label="links" to="/knowledge" />
+          <Figure value={s.knowledge.unlinked} label="adrift" to="/knowledge" />
+        </div>
+
+        {s.knowledge.total > 0 && (
+          <>
+            {/*
+              A stacked bar rather than three numbers, because the QUESTION is
+              a proportion — "how much of what I have written down have I
+              actually checked" — and a proportion read off three separate
+              counts is arithmetic the reader has to do.
+
+              A 2px gap between segments, per the design system: adjacent fills
+              need a surface gap or they read as one shape.
+            */}
+            <div className="mt-4 flex gap-[2px] h-2.5 rounded-full overflow-hidden">
+              {s.knowledge.byConfidence.map(({ confidence, count }) =>
+                count === 0 ? null : (
+                  <div
+                    key={confidence}
+                    className={CONFIDENCE_BAR[confidence]}
+                    style={{ width: `${(count / s.knowledge.total) * 100}%` }}
+                    title={`${count} ${CONFIDENCE_META[confidence].label}`}
+                  />
+                ),
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5">
+              {s.knowledge.byConfidence.map(({ confidence, count }) => (
+                <span key={confidence} className="text-[11px] text-ink-600 flex items-center gap-1.5">
+                  <span
+                    className={`h-2 w-2 rounded-full ${CONFIDENCE_META[confidence].dot}`}
+                    aria-hidden
+                  />
+                  {CONFIDENCE_META[confidence].label}{" "}
+                  <span className="font-mono text-ink-500">{count}</span>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+
+        {s.knowledge.total === 0 && (
+          <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+            Nothing in the vault yet. `node scripts/knowledge-import.mjs --write` fills it
+            from the documents this repository already holds.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

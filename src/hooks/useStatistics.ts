@@ -4,8 +4,10 @@ import { useMissionBoard } from "./useMissionBoard";
 import { useEvents } from "./useEvents";
 import { useGym } from "./useGym";
 import { useRoutineData } from "./useRoutineData";
+import { useKnowledge } from "./useKnowledge";
+import { CONFIDENCE_ORDER } from "@/components/knowledge/knowledgeMeta";
 import { toDateKey } from "@/lib/time";
-import type { MissionStatus } from "@/lib/types";
+import type { KnowledgeConfidence, MissionStatus } from "@/lib/types";
 
 /**
  * Everything Operator knows about itself, counted.
@@ -65,6 +67,27 @@ export interface Statistics {
     upcoming: number;
     byKind: { kind: string; count: number }[];
   };
+  /**
+   * The vault, counted by CONFIDENCE rather than by size.
+   *
+   * A note count on its own says nothing useful — a vault of two hundred
+   * unverified notes is worse than one of thirty checked ones, because the
+   * whole point of the confidence field is that a note you never re-checked
+   * should not be trusted like one you did. So the split is the statistic and
+   * the total is the context.
+   *
+   * `unlinked` is the other honest number: a note nothing points at and which
+   * points at nothing is one you will never find again except by searching for
+   * exactly the words you happened to write. It is the vault's equivalent of a
+   * mission with no dependencies — not wrong, but worth seeing.
+   */
+  knowledge: {
+    total: number;
+    byConfidence: { confidence: KnowledgeConfidence; count: number }[];
+    topics: number;
+    links: number;
+    unlinked: number;
+  };
 }
 
 /** Every date from `from` to `to` inclusive, so gaps render as gaps. */
@@ -88,6 +111,9 @@ export function useStatistics(): Statistics {
   const { events } = useEvents();
   const { completions: gymDone, skipped } = useGym();
   const { completions: routineDone } = useRoutineData();
+  // Reads another feature's hook and mutates nothing, which is what this page
+  // is — an aggregator that owns no storage.
+  const { active: notes } = useKnowledge();
 
   return useMemo(() => {
     /* ---- shipped ---------------------------------------------------- */
@@ -175,6 +201,24 @@ export function useStatistics(): Statistics {
           .map(([kind, count]) => ({ kind, count }))
           .sort((a, b) => b.count - a.count),
       },
+      knowledge: {
+        total: notes.length,
+        byConfidence: CONFIDENCE_ORDER.map((confidence) => ({
+          confidence,
+          count: notes.filter((n) => n.confidence === confidence).length,
+        })),
+        topics: new Set(notes.flatMap((n) => n.topics)).size,
+        links: notes.reduce((sum, n) => sum + n.links.length, 0),
+        /*
+          Counted in BOTH directions, which is why this is not just
+          `links.length === 0`. A note nothing points at is still reachable if
+          it points somewhere itself — you arrive at it by following a link
+          backwards. Only a note with no edge at all is genuinely adrift.
+        */
+        unlinked: notes.filter(
+          (n) => n.links.length === 0 && !notes.some((other) => other.links.includes(n.id)),
+        ).length,
+      },
     };
-  }, [entries, missions, events, gymDone, skipped, routineDone]);
+  }, [entries, missions, events, gymDone, skipped, routineDone, notes]);
 }
