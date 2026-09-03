@@ -272,6 +272,23 @@ export default function MissionMap() {
   const viewTarget = useRef({ zoom: 1, panX: 0, panY: 0 });
   /** Frames of automatic following left. Any manual gesture zeroes it. */
   const follow = useRef(0);
+  /*
+    How hard the layout is still allowed to move. 1 when a graph is new,
+    decaying to a floor.
+
+    This is annealing, and without it a force-directed layout of this size never
+    settles: repulsion pushes outward, the pull home is deliberately weak so the
+    graph does not collapse into a hairball, and the balance between them sits
+    tens of thousands of units out. So it expands for as long as you watch it —
+    the owner's "the chart spangles / spazzes" after the camera stopped
+    following, which was the layout still growing under a camera that had
+    stopped keeping up.
+
+    Cooling is how every force-directed layout converges. The floor is not zero
+    on purpose: a graph frozen solid stops responding to a dragged node, and
+    being able to grab one and have the web reorganise is the point of the map.
+  */
+  const heat = useRef(1);
   /** Read by the pointer handlers, which are registered once. */
   const sourceRef = useRef(source);
   sourceRef.current = source;
@@ -776,7 +793,14 @@ export default function MissionMap() {
         315 mutually repelling nodes take to stop growing. It ends on its own
         and any manual gesture ends it sooner.
       */
-      follow.current = 240;
+      /*
+        Follow until the layout is cool rather than for a fixed count. The old
+        240 frames was a guess at how long 315 nodes take to spread, and being
+        wrong in either direction is visible: too short and the camera stops
+        over a graph still growing, too long and it hovers over a settled one.
+      */
+      heat.current = 1;
+      follow.current = 900;
     }
   }, [nodes, edges, source]);
 
@@ -880,6 +904,19 @@ export default function MissionMap() {
       */
       const CUTOFF2 = bodies.length > 40 ? 620 * 620 : Infinity;
 
+      /*
+        Cool by about half a percent a frame, so a graph is most of the way
+        settled inside ten seconds and completely settled shortly after.
+
+        Dragging reheats it — you are asking the layout to reorganise, which is
+        exactly what heat is for — but only to a third, so grabbing a node in a
+        settled graph nudges its neighbourhood rather than relaunching the whole
+        web across the screen.
+      */
+      if (pointer.current.dragging) heat.current = Math.max(heat.current, 0.34);
+      heat.current = Math.max(0.06, heat.current * 0.994);
+      const hot = heat.current;
+
       for (let i = 0; i < bodies.length; i++) {
         const a = bodies[i];
         if (pointer.current.dragging === a.id) continue;
@@ -902,7 +939,10 @@ export default function MissionMap() {
           if (d2 > CUTOFF2) continue;
           const d = Math.sqrt(d2);
           const min = a.r + b.r + 78;
-          const force = (52000 / d2) * (d < min ? 2.4 : 1);
+          // Scaled by heat, so the thing pushing the graph outward is also the
+          // thing that stops. Damping alone cannot settle a system that keeps
+          // having energy added to it every frame.
+          const force = (52000 / d2) * (d < min ? 2.4 : 1) * hot;
           const fx = (dx / d) * force;
           const fy = (dy / d) * force;
           const fz = (dz / d) * force;
@@ -983,12 +1023,17 @@ export default function MissionMap() {
         b.vy *= 0.86;
         b.vz *= 0.86;
         const speed = Math.hypot(b.vx, b.vy, b.vz);
-        // Cap velocity. A dragged node flung hard can otherwise inject enough
-        // energy to launch its neighbours off the canvas.
-        if (speed > 14) {
-          b.vx = (b.vx / speed) * 14;
-          b.vy = (b.vy / speed) * 14;
-          b.vz = (b.vz / speed) * 14;
+        /*
+          Cap velocity, and let the cap cool too. A dragged node flung hard can
+          otherwise inject enough energy to launch its neighbours off the
+          canvas — and a settled graph should not be able to move fast at all,
+          which is what stops the drift the owner watched.
+        */
+        const maxSpeed = 14 * Math.max(0.12, hot);
+        if (speed > maxSpeed) {
+          b.vx = (b.vx / speed) * maxSpeed;
+          b.vy = (b.vy / speed) * maxSpeed;
+          b.vz = (b.vz / speed) * maxSpeed;
         }
         b.x += b.vx;
         b.y += b.vy;
@@ -1108,8 +1153,21 @@ export default function MissionMap() {
       /* ---- paint -------------------------------------------------------- */
       ctx.globalCompositeOperation = "source-over";
       const bg = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) * 0.75);
-      bg.addColorStop(0, "#0D1119");
-      bg.addColorStop(1, "#04060A");
+      /*
+        Absolute black, asked for.
+
+        It is the right ground for this specifically: the map is additive light
+        on a dark field, and any lift in the background is a floor the faintest
+        strands cannot get under — a #04060A background makes a 6%-alpha edge
+        almost invisible while a true black lets it read. The starfield needs it
+        for the same reason.
+
+        The subtle radial lift is kept, at a fraction of its old strength, so
+        the centre still reads as having something behind it rather than being
+        a hole.
+      */
+      bg.addColorStop(0, "#05070B");
+      bg.addColorStop(1, "#000000");
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, width, height);
 
@@ -1127,6 +1185,10 @@ export default function MissionMap() {
       */
       if (follow.current > 0) {
         follow.current -= 1;
+        // Stop early once the layout has stopped moving; there is nothing left
+        // to keep up with, and a camera that keeps adjusting a still picture
+        // reads as drift.
+        if (heat.current < 0.12) follow.current = 0;
         // Every fourth frame: fitting is a pass over every body, and the target
         // does not move fast enough to need it more often than that.
         if (follow.current % 4 === 0) fitView(false);
