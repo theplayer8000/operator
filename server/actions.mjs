@@ -1329,6 +1329,95 @@ async function calendarRange({ from, days = 7 }) {
   return { from: start, to: endKey, count: occurrences.length, events: occurrences };
 }
 
+// --- the work log -----------------------------------------------------------
+//
+// ## The layer that was missing
+//
+// Operator knows about jobs it DISPATCHED: `jobs.mjs` owns them, `/api/jobs`
+// reports them, the AGENTS graph draws them. It knows nothing about work done
+// by a session it did not start — a Claude Code window at the desk, a script,
+// a person editing by hand.
+//
+// So asked "did you get anything from Claude?", Operator had no way to answer.
+// The owner spotted it mid-sentence: *"the persistence layer needs to know when
+// a job has been handed off ... thats a layer weve missed"*. He is right, and
+// it is a gap rather than a bug — nothing was ever responsible for closing it.
+//
+// This is one durable ledger every finisher writes to. `jobs.mjs` records its
+// own turns; an outside session calls `work_record`; both come back out of
+// `work_recent`. Operator can then say what happened without having been the
+// one it happened to.
+//
+// ## Why it is not the changelog
+//
+// `updates.entries` is curated — one entry per thing someone would want to know
+// shipped, written for a reader in a month. This is turn-level and mechanical:
+// every finished piece of work, including the ones not worth announcing. A
+// question like "what did you do in the last hour" is answerable from this and
+// not from that.
+
+const WORK_KEY = "work.handoffs";
+/*
+  How many turns to keep.
+
+  Enough to answer "what happened today" and "what did that session do" without
+  the slice growing forever inside a JSON file that is read whole on every
+  request. Older entries are not history worth paying for — the changelog and
+  git are the history.
+*/
+const WORK_LIMIT = 300;
+
+async function workRecord({ summary, detail = "", by, kind = "session", files, nextStep, needsOwner = false, jobId }) {
+  required(summary, "summary");
+  oneOf(kind, ["session", "job", "script"], "kind");
+
+  const entry = {
+    id: generateId(),
+    at: new Date().toISOString(),
+    // Who finished it. Free text on purpose: "Claude Code (desk)", "airouter",
+    // "the intent digest" are all legitimate and no fixed list would hold them.
+    by: String(by || "unknown").slice(0, 80),
+    kind,
+    summary: String(summary).slice(0, 300),
+    detail: String(detail || "").slice(0, 4000),
+    files: Array.isArray(files) ? files.slice(0, 40).map((f) => String(f).slice(0, 200)) : [],
+    ...(nextStep ? { nextStep: String(nextStep).slice(0, 400) } : {}),
+    /*
+      Whether this needs him, which is the field that earns the notification.
+
+      A log nobody reads is a log; a log that says "this one is waiting on you"
+      is a handoff. Defaults false, because most finished work does not need
+      anything and a ledger that always pings is one he mutes.
+    */
+    needsOwner: Boolean(needsOwner),
+    ...(jobId ? { jobId: String(jobId) } : {}),
+  };
+
+  await withState(WORK_KEY, (current) => [entry, ...(current ?? [])].slice(0, WORK_LIMIT));
+  return { id: entry.id, at: entry.at, recorded: true };
+}
+
+async function workRecent({ limit = 10, by, needsOwner, since }) {
+  const all = (await readState(WORK_KEY)) ?? [];
+  let list = all;
+  if (by) {
+    const needle = String(by).toLowerCase();
+    list = list.filter((e) => String(e.by || "").toLowerCase().includes(needle));
+  }
+  if (needsOwner === true) list = list.filter((e) => e.needsOwner);
+  if (since) {
+    const from = new Date(since).getTime();
+    if (Number.isFinite(from)) list = list.filter((e) => new Date(e.at).getTime() >= from);
+  }
+  const capped = Math.max(1, Math.min(50, Number(limit) || 10));
+  return {
+    count: Math.min(list.length, capped),
+    of: all.length,
+    waitingOnYou: all.filter((e) => e.needsOwner).length,
+    entries: list.slice(0, capped),
+  };
+}
+
 // --- Knowledge Vault --------------------------------------------------------
 //
 // The READ actions here matter more than the writes, and that is not the usual
@@ -1811,6 +1900,19 @@ const ACTIONS = {
     params: "from? (YYYY-MM-DD or \"today\"), days? (default 7, max 90)",
     handler: calendarRange,
   },
+  work_record: {
+    description:
+      "Record that a piece of work FINISHED, so Operator can tell the owner about it later. Call this at the end of a turn that changed anything — code, docs, data. This is how work done outside Operator's own job runner becomes visible to it. Set needsOwner true only when he actually has to do something.",
+    params:
+      "summary (one line, what happened), detail?, by? (who did it, e.g. \"Claude Code (desk)\"), kind? (session|job|script), files? (array of paths), nextStep?, needsOwner? (default false), jobId?",
+    handler: workRecord,
+  },
+  work_recent: {
+    description:
+      "What has been finished lately, by any session — Operator's own jobs and work done from a terminal. Use this to answer \"what did you do\", \"did anything happen while I was out\", or \"did you get anything from Claude\".",
+    params: "limit? (default 10, max 50), by? (filter by who), needsOwner? (only what is waiting on him), since? (ISO date)",
+    handler: workRecent,
+  },
   knowledge_search: {
     description:
       "Search the Knowledge Vault - the owner's own notes, commands and resources. Use this BEFORE working something out from scratch or reading source: if he has solved it before, the answer is here with a confidence level attached. Ranks by words rather than meaning, so try different vocabulary before concluding nothing is written down.",
@@ -2127,6 +2229,14 @@ const GROUP_WORDS = {
     /\b(calendar|event|events|schedule|scheduled|appointment|meeting|shift|shifts|book(ed|ing)?|diary|recurring|occurrence|next week|this week|tomorrow|today)\b/i,
   routine: /\b(routine|daily|habit|habits|morning|evening|night|checklist|step|steps|tick|ticked)\b/i,
   jobs: /\b(job|jobs|turn|turns|conversation|thread|tab|tabs|event log|transcript)\b/i,
+  /*
+    "What happened", in every phrasing he actually uses.
+
+    Wide because the question is almost never asked with the word "handoff" in
+    it — it is "did you get anything from claude", "what did you do", "anything
+    happen while i was out".
+  */
+  work: /\b(what did (you|u) do|what happened|anything happen|did (you|u) get|finish(ed)?|handoff|handed off|progress|while i was (out|away|asleep)|catch me up|update me|status)\b/i,
   /*
     Wider than the others, deliberately.
 

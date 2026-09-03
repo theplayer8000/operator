@@ -65,6 +65,7 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "gym.completions": {},
   "gym.skipped": [],
   "knowledge.notes": [],
+  "work.handoffs": [],
   "theme.accent": "gold",
 };
 
@@ -108,6 +109,12 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     description:
       "Session templates, every exercise you've ticked off, and which days you skipped. Clearing loses your training history.",
     keys: ["gym.sessions", "gym.completions", "gym.skipped"],
+  },
+  {
+    label: "Work log",
+    description:
+      "Every finished turn, from any session — Operator's own jobs and the ones run from a terminal. Clearing it does not undo any work; it only makes Operator unable to tell you what happened.",
+    keys: ["work.handoffs"],
   },
   {
     label: "Knowledge Vault",

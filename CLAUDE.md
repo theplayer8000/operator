@@ -329,6 +329,14 @@ server/
                           the project. Deliberately NOT a capability action —
                           worker-to-worker is not a data operation, and keeping it
                           out means a delegated worker cannot delegate onward
+  (work log)            — `work.handoffs`, written through actions.mjs. The layer
+                          that was missing: Operator knew about jobs it
+                          DISPATCHED and nothing about work done by a session it
+                          did not start, so "did you get anything from Claude?"
+                          had no answer. jobs.mjs records its own turns; an
+                          outside session calls `work_record`. One ledger, every
+                          finisher. NOT the changelog — that is curated for a
+                          reader in a month; this is every finished turn
   routing.mjs           — picks the worker for a new job. Rules first (they work
                           with no network and no quota), a Flash call only for
                           genuinely ambiguous phrasing. Uncertain → Claude Code

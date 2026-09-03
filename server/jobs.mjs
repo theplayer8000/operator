@@ -60,6 +60,7 @@
 import { spawn } from "node:child_process";
 import { notify } from "./notify.mjs";
 import { reviewWork, snapshot as workspaceSnapshot } from "./semantic.mjs";
+import { runAction } from "./actions.mjs";
 import { recallFor } from "./memory.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -661,6 +662,19 @@ const APPEND_PROMPT = [
     So the prompt names the shapes where delegating is the right call, and says
     plainly which half of the job stays here.
   */
+  /*
+    Recording what you finished, stated as an obligation.
+
+    Operator can only tell him what happened if the thing that happened said
+    so. A worker that finishes silently is invisible to the surface he actually
+    looks at, which is the gap this closes.
+  */
+  "WHEN YOU FINISH work that changed anything, record it:",
+  "`node scripts/operator-action.mjs work_record '{\"summary\":\"…\",\"by\":\"Claude Code\",\"files\":[\"…\"]}'`.",
+  "One line saying what happened, and `needsOwner: true` ONLY when he actually",
+  "has to do something himself. That is how Operator answers \"what did you do\"",
+  "and \"did anything happen while I was out\" — it cannot see work it did not",
+  "dispatch unless the work says so.",
   "YOU ARE THE ONE DISPATCHING, not the one who has to do everything.",
   "`node scripts/delegate.mjs \"<task>\" --file <path> --file <path>` hands one",
   "piece of work to a cheaper model (AI Router, flat rate) and prints its answer.",
@@ -988,6 +1002,31 @@ function setStatus(job, status, detail = null) {
       ...(detail ? { detail } : {}),
     };
     emit(job, "handoff", { handoff: job.handoff });
+
+    /*
+      And into the durable work log, so this survives a restart and sits
+      alongside work done by sessions Operator did not dispatch.
+
+      `job.handoff` above is in memory and dies with the process — which was
+      fine while it was bookkeeping for a future verifier, and is not fine now
+      that the owner asks Operator what happened. One ledger, every finisher.
+
+      Fire-and-forget and never fatal: failing to write the log must not fail
+      the turn that already succeeded.
+    */
+    void runAction("work_record", {
+      summary: `${job.title || job.id} — ${status}`,
+      detail: detail || "",
+      by: `${attempt.provider}${attempt.model ? ` (${attempt.model})` : ""}`,
+      kind: "job",
+      jobId: job.id,
+      /*
+        Blocked means a permission question is waiting and the turn is
+        suspended; failed means it needs looking at. Complete does not need
+        him, which is the whole point of the flag.
+      */
+      needsOwner: status === "blocked" || status === "failed",
+    }).catch((err) => console.warn(`[operator] work log: ${err?.message ?? err}`));
   }
 }
 
