@@ -655,7 +655,20 @@ export default function MissionMap() {
           still follows degree — the well-connected notes are the landmarks you
           navigate by — but the floor and the ceiling both come down.
         */
-        r: m ? 26 + Math.min(14, d * 3) : 9 + Math.min(11, d * 1.4),
+        /*
+          Notes are small, and the numbers matter.
+
+          The first attempt was `9 + min(11, d * 1.4)`. With 1,651 links over
+          313 notes the average degree is 10.5, so d * 1.4 clears the cap for
+          almost every node and they ALL came out at exactly 20 — no size
+          variation at all, and a minimum separation of 20 + 20 + 78 that the
+          repulsion could never satisfy in the space available.
+
+          Scaled to the real distribution instead, and capped low enough that
+          the well-connected notes read as landmarks rather than as everything
+          being the same.
+        */
+        r: m ? 26 + Math.min(14, d * 3) : 6 + Math.min(9, Math.sqrt(d) * 2.4),
         degree: d,
         sx: kept?.sx ?? 0,
         sy: kept?.sy ?? 0,
@@ -692,6 +705,38 @@ export default function MissionMap() {
     // Particles travelling along the strands, from a mission to the ones that
     // wait on it. Direction is the information: it shows which way the board
     // actually flows, which a plain line cannot.
+    /*
+      A starfield, generated once and never regenerated.
+
+      The owner asked for "starry black space so it has the density feel on
+      solid", and it earns its place rather than being decoration: a rotating
+      3D layout has no fixed reference, so the eye has nothing to measure the
+      motion against and the whole graph reads as drifting rather than turning.
+      Stars are that reference.
+
+      They carry their own depth and PARALLAX with the yaw — near ones sweep
+      further than far ones, which is the cue that makes the rotation legible.
+      Generated at mount because a field that changed every frame would twinkle
+      like static, and a field regenerated on re-render would jump.
+
+      220 is enough to read as a sky at 1440p and cheap enough to draw as plain
+      arcs. No gradients here — that is the mistake that made the vault graph
+      unusable.
+    */
+    const stars = Array.from({ length: 220 }, () => {
+      const depth = 0.25 + Math.random() * 0.75;
+      return {
+        // Spread over a generous area so panning does not run out of sky.
+        x: (Math.random() - 0.5) * 3600,
+        y: (Math.random() - 0.5) * 2600,
+        depth,
+        r: 0.4 + depth * 1.1,
+        // Slightly cool, slightly varied — a field of identical dots reads as
+        // a texture rather than as distance.
+        alpha: 0.12 + depth * 0.4,
+      };
+    });
+
     const motes = Array.from({ length: 90 }, () => ({
       edge: Math.floor(Math.random() * Math.max(1, edgesRef.current.length)),
       t: Math.random(),
@@ -717,6 +762,23 @@ export default function MissionMap() {
       const solid = solidRef.current;
 
       /* ---- physics ------------------------------------------------------ */
+      /*
+        Beyond this, two nodes stop pushing each other.
+
+        The repulsion is all-pairs, which is 66 comparisons for twelve missions
+        and about 49,000 for 313 notes — and every one of those far pairs
+        contributes a force of 52000/d², which at d = 2000 is 0.013. Summing
+        fifty thousand numbers that small to move nothing is the entire cost.
+
+        A cutoff makes the layout O(n²) in the loop but O(neighbours) in the
+        work, and changes the result almost not at all: what actually shapes a
+        force-directed graph is local separation plus the springs.
+
+        Uncapped when the graph is small, because there the sum is free and the
+        long-range term does help a dozen nodes spread evenly.
+      */
+      const CUTOFF2 = bodies.length > 40 ? 620 * 620 : Infinity;
+
       for (let i = 0; i < bodies.length; i++) {
         const a = bodies[i];
         if (pointer.current.dragging === a.id) continue;
@@ -736,6 +798,7 @@ export default function MissionMap() {
             dz = solid ? Math.random() - 0.5 : 0;
             d2 = 1;
           }
+          if (d2 > CUTOFF2) continue;
           const d = Math.sqrt(d2);
           const min = a.r + b.r + 78;
           const force = (52000 / d2) * (d < min ? 2.4 : 1);
@@ -882,9 +945,31 @@ export default function MissionMap() {
       ctx.translate(width / 2 + view.current.panX, height / 2 + view.current.panY);
       ctx.scale(view.current.zoom, view.current.zoom);
 
+      ctx.globalCompositeOperation = "lighter";
+
+      /*
+        The sky, drawn first and furthest.
+
+        Parallax by depth against the same yaw the nodes use, so the field
+        turns with the graph instead of sitting on the glass in front of it.
+        In flat mode there is no yaw, so they simply sit still — which is
+        correct: a flat graph is a diagram and a diagram does not need a sky
+        moving behind it.
+      */
+      for (const star of stars) {
+        const drift = solid ? Math.sin(spin.current) * star.depth * 180 : 0;
+        const x = star.x + drift;
+        // Wrapped rather than clipped, so panning never reaches an edge of the
+        // field and finds nothing.
+        const wrapped = ((x + 1800) % 3600) - 1800;
+        ctx.beginPath();
+        ctx.arc(wrapped, star.y, star.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(184,204,236,${star.alpha * (solid ? 1 : 0.55)})`;
+        ctx.fill();
+      }
+
       // Faint concentric rings — a horizon for the web to sit in, so the nodes
       // read as being somewhere rather than floating on nothing.
-      ctx.globalCompositeOperation = "lighter";
       for (let i = 1; i <= 4; i++) {
         ctx.beginPath();
         ctx.arc(0, 0, i * 165, 0, Math.PI * 2);
@@ -961,6 +1046,7 @@ export default function MissionMap() {
       for (const b of bodies) {
         const m = b.mission;
         const colour = b.tint;
+        const crowded = bodies.length > 40;
         const dim = focus !== null && !near.has(b.id);
         const isHover = hoveredRef.current?.id === b.id;
         const a = dim ? 0.22 : 1;
@@ -989,7 +1075,17 @@ export default function MissionMap() {
           Threshold on the PROJECTED radius, not the base one: a small node
           near the camera in solid mode is big on screen and should glow.
         */
-        if (b.sr > 16 || isHover || (focus !== null && near.has(b.id))) {
+        /*
+          On a crowded graph the glow is for what you are POINTING AT, nothing
+          else.
+
+          The first guard was `sr > 16`, which never fired: every note came out
+          at radius 20 (see the note on `r` above), so all 313 allocated a
+          gradient every frame. `crowded` is the honest test — it asks how many
+          nodes there are rather than inferring it from a size that turned out
+          to be constant.
+        */
+        if (crowded ? isHover || (focus !== null && near.has(b.id)) : true) {
           const glow = ctx.createRadialGradient(b.sx, b.sy, b.sr * 0.5, b.sx, b.sy, b.sr + 26);
           glow.addColorStop(0, rgba(colour, 0.30 * a));
           glow.addColorStop(1, rgba(colour, 0));
@@ -1057,7 +1153,6 @@ export default function MissionMap() {
           `degree > 3` rather than a top-N: a fixed count would relabel the
           whole graph every time one link changed.
         */
-        const crowded = bodies.length > 40;
         const landmark = !crowded || b.degree > 3;
         const labelAlpha = solid ? Math.max(0, (b.depth - 0.42) / 0.58) : 1;
         if ((landmark && labelAlpha > 0.02) || isHover) {
