@@ -85,6 +85,8 @@ main { flex:1; display:grid; grid-template-columns:minmax(320px,42%) 1fr; min-he
 .row .m { font-size:12px; color:var(--ink-700); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
 .row .meta { font-family:var(--mono); font-size:10px; color:var(--ink-700); margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
 .tag { color:var(--rank); }
+/* Warm, because it is asking for attention rather than reporting a fact. */
+.grew { color:var(--xp); }
 
 /* --- preview ------------------------------------------------------------ */
 #preview h2 { margin:0 0 4px; font-size:19px; color:var(--ink-100); font-weight:600; }
@@ -132,6 +134,7 @@ body.dragging #drop { border-color:var(--xp); }
     </div>
     <div class="stat"><b id="pctChats">0%</b> chats done</div>
     <div class="stat"><b id="pctBytes">0%</b> text done</div>
+    <div class="stat" id="grewStat" style="display:none"><b id="nGrew">0</b> grew since judged</div>
   </div>
 </header>
 
@@ -153,6 +156,7 @@ body.dragging #drop { border-color:var(--xp); }
     <option value="starred">starred in ChatGPT</option>
     <option value="archived">archived in ChatGPT</option>
     <option value="long">substantial — 10+ messages</option>
+    <option value="grew">grew since you decided</option>
   </select>
   <button class="btn" id="selAll">select all shown</button>
   <button class="btn keep" id="bKeep">keep ▸</button>
@@ -497,6 +501,24 @@ async function ingest(files) {
 
 const decisionOf = (id) => (decisions[id] && decisions[id].decision) || "";
 
+/**
+ * Has this conversation grown since it was judged?
+ *
+ * Only meaningful across exports: within one session the count cannot change.
+ * The threshold is any growth at all — one more exchange can be the one that
+ * made a chat worth keeping, and this only surfaces it for a second look
+ * rather than undoing anything.
+ *
+ * Decisions made before this field existed have no `atCount`; those are left
+ * alone rather than flagged, since "unknown" is not "changed".
+ */
+function grewSince(chat) {
+  const d = decisions[chat.id];
+  if (!d || !d.decision) return 0;
+  if (typeof d.atCount !== "number") return 0;
+  return Math.max(0, chat.msgCount - d.atCount);
+}
+
 function currentView() {
   const q = document.getElementById("q").value.trim().toLowerCase();
   const from = document.getElementById("from").value;
@@ -522,6 +544,7 @@ function currentView() {
     if (preset === "starred" && !c.starred) return false;
     if (preset === "archived" && !c.archived) return false;
     if (preset === "long" && c.msgCount < 10) return false;
+    if (preset === "grew" && grewSince(c) === 0) return false;
 
     if (q) {
       // Title first — it is the cheap check and the common hit. Message text is
@@ -579,6 +602,12 @@ function stats() {
   document.getElementById("pctChats").textContent = Math.round(((keep + trash + unsure) / total) * 100) + "%";
   document.getElementById("pctBytes").textContent =
     Math.round((doneBytes / (totalBytes || 1)) * 100) + "%";
+
+  // Only shown when there are any — a permanent zero is noise, and this only
+  // ever appears after a second, fresher export has been dropped in.
+  const grew = chats.filter((c) => grewSince(c) > 0).length;
+  document.getElementById("nGrew").textContent = grew;
+  document.getElementById("grewStat").style.display = grew ? "" : "none";
 }
 
 function render() {
@@ -604,6 +633,7 @@ function render() {
         (c.starred ? '<span class="tag">starred</span>' : "") +
         (c.archived ? '<span class="tag">archived</span>' : "") +
         (decisions[c.id] && decisions[c.id].note ? '<span class="tag">note</span>' : "") +
+        (grewSince(c) ? `<span class="grew">+${grewSince(c)} since you decided</span>` : "") +
         `</div></div>`;
       row.onclick = (e) => {
         // Ctrl/Cmd or shift toggles selection; a plain click just opens it.
@@ -674,7 +704,26 @@ function mark(ids, decision) {
   pushUndo(`${decision || "clear"} ${ids.length}`);
   for (const id of ids) {
     if (!decision) delete decisions[id];
-    else decisions[id] = Object.assign({}, decisions[id], { decision, at: Date.now() });
+    else {
+      /*
+        The decision remembers HOW BIG the chat was when it was made.
+
+        Decisions key on conversation_id so they survive re-exporting, which is
+        the point — but a conversation can keep growing after you have judged
+        it. Trash a three-message chat in a stale export, continue it for
+        another forty messages, re-drop next month's export, and the old
+        verdict silently still applies to something that is no longer the same
+        conversation.
+
+        Storing the count is what lets the tool notice. See `grewSince`.
+      */
+      const chat = chats.find((c) => c.id === id);
+      decisions[id] = Object.assign({}, decisions[id], {
+        decision,
+        at: Date.now(),
+        atCount: chat ? chat.msgCount : null,
+      });
+    }
   }
   save();
   render();
@@ -731,6 +780,12 @@ function exportManifest() {
       note: (decisions[c.id] && decisions[c.id].note) || "",
       decidedAt: decisions[c.id] && decisions[c.id].at
         ? new Date(decisions[c.id].at).toISOString() : null,
+      /*
+        How much longer the conversation is now than when it was judged. The
+        importer can use it to skip a `keep` whose decision predates most of
+        its content, rather than trusting a verdict about a third of a chat.
+      */
+      grewSinceDecision: grewSince(c),
     })),
   };
   const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });

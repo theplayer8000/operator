@@ -114,6 +114,23 @@ only one if your browser refuses localStorage on `file://` — some do.
 | `characters` | Conversation text only, no attachments. Used for the "text done" figure |
 | `decision` | `keep` · `trash` · `unsure` · `unreviewed` |
 | `note` | Free text, yours. Carried through so the importer can use it as a hint |
+| `grewSinceDecision` | How many messages longer the chat is now than when you judged it. `0` normally |
+
+### Re-exporting, and decisions that go stale
+
+Decisions key on `conversation_id`, so dropping a **newer** export keeps
+everything you already decided and leaves only the new chats unreviewed. That
+is the point, and it means triaging a stale export today is not wasted work.
+
+One thing it cannot know on its own: a conversation you judged may have
+**continued** since. Trash a three-message chat, carry it on for another forty,
+re-drop next month's export, and the old verdict silently still applies to
+something that is no longer the same conversation.
+
+So a decision records how long the chat was when it was made. Anything that has
+grown since is badged in the list, counted in the header, and reachable with the
+`grew since you decided` preset. Nothing is undone automatically — it is asking
+for a second look, not overruling you.
 
 **The importer should read `decision === "keep"` and nothing else.**
 `unreviewed` is not a decision and must not be treated as one — that is the
