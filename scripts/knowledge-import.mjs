@@ -5,7 +5,8 @@
 //   node scripts/knowledge-import.mjs --write
 //   node scripts/knowledge-import.mjs --from reference --write
 //   node scripts/knowledge-import.mjs --file docs/known-issues.md --write
-//   node scripts/knowledge-import.mjs --link --write   # connect what is already there
+//   node scripts/knowledge-import.mjs --link --write         # connect what is there
+//   node scripts/knowledge-import.mjs --tidy-topics --write  # fold the topic list back
 //
 // ## Extraction, not copying
 //
@@ -318,8 +319,154 @@ async function linkPass() {
   );
 }
 
+
+/**
+ * Fold the topic list back into something that groups.
+ *
+ * ## The number that says it is broken
+ *
+ * Measured after the full import: 313 notes carrying 408 topics, 252 of them
+ * used exactly ONCE. A topic used once groups nothing — it is a word attached
+ * to a note, indistinguishable from the note's own text, and 252 of them in
+ * the filter row is a wall you cannot read past. More topics than notes is the
+ * signal; it can only mean each document invented its own vocabulary.
+ *
+ * ## Two passes, in this order, and the order matters
+ *
+ * **Merge variants first.** `commands` and `command`, `control-plane` and
+ * `controlplane`, `apis` and `api` are the same topic spelled differently, and
+ * merging them can lift a singleton into a real group. Doing the drop first
+ * would delete exactly those before they had the chance.
+ *
+ * The winner is the MORE COMMON spelling, not the shorter one — the vault's
+ * own usage decides, rather than a rule about plurals that gets `status` wrong.
+ *
+ * **Then drop what is still used once**, and only from a note that keeps at
+ * least one topic. A note stripped bare is worse than a note with a useless
+ * tag: it drops out of every topic filter entirely, and the link pass reads
+ * topics too.
+ *
+ * ## Why not ask a model
+ *
+ * Because this is arithmetic on strings and a model would occasionally decide
+ * `auth` and `authorization` are different, or that two genuinely distinct
+ * topics are one. The rules below are dull and inspectable, and `--dry-run` is
+ * the default so the merge list is read before it is applied.
+ */
+async function tidyTopics() {
+  const stateRes = await fetch(`${BASE}/api/state`);
+  const state = await stateRes.json();
+  const notes = (state?.state?.["knowledge.notes"] ?? []).filter((n) => !n.archived);
+
+  const count = new Map();
+  for (const note of notes) {
+    for (const topic of note.topics ?? []) count.set(topic, (count.get(topic) ?? 0) + 1);
+  }
+
+  /*
+    The shape two spellings of one topic share. Hyphens and underscores go,
+    and a trailing "s" goes — crude, and right far more often than not on a
+    vocabulary of single technical words.
+  */
+  const shape = (topic) => {
+    const joined = topic.replace(/[-_\s]/g, "");
+    /*
+      The plural rule only applies to words long enough for it to be safe.
+
+      Caught in a dry run: `https` and `http` are not two spellings of one
+      topic, and a blanket trailing-s strip merged them. Requiring five
+      characters before the "s" blocks that (http is four) while keeping every
+      case worth having — token/tokens, agent/agents, provider/providers.
+
+      The cost is that bug/bugs stay separate. That is the right side to err
+      on: two topics that should be one is untidy, one topic that should be two
+      is wrong.
+    */
+    return joined.length >= 6 && joined.endsWith("s") ? joined.slice(0, -1) : joined;
+  };
+
+  const byShape = new Map();
+  for (const [topic, n] of count) {
+    const key = shape(topic);
+    const list = byShape.get(key) ?? [];
+    list.push([topic, n]);
+    byShape.set(key, list);
+  }
+
+  /** topic → what it should become. */
+  const merge = new Map();
+  for (const variants of byShape.values()) {
+    if (variants.length < 2) continue;
+    /*
+      The vault's own usage picks the winner. Ties break towards the HYPHENATED
+      spelling, not the shorter one — shortest-wins turned `control-plane` into
+      `controlplane` and `threat-model` into `threatmodel`, which is nobody's
+      preferred spelling and reads as a typo in the filter row.
+    */
+    const hyphenated = (t) => (/[-_]/.test(t) ? 0 : 1);
+    variants.sort(
+      (a, b) => b[1] - a[1] || hyphenated(a[0]) - hyphenated(b[0]) || a[0].length - b[0].length,
+    );
+    const [winner] = variants[0];
+    for (const [topic] of variants.slice(1)) merge.set(topic, winner);
+  }
+
+  // Recount as if the merges had happened, so a topic that only reaches two
+  // uses BY merging is correctly kept.
+  const merged = new Map();
+  for (const [topic, n] of count) {
+    const target = merge.get(topic) ?? topic;
+    merged.set(target, (merged.get(target) ?? 0) + n);
+  }
+
+  const changes = [];
+  for (const note of notes) {
+    const before = note.topics ?? [];
+    const remapped = [...new Set(before.map((t) => merge.get(t) ?? t))];
+    /*
+      Keep anything used more than once. Then, if that emptied the note, keep
+      its single most common original topic rather than leaving it bare — a
+      note with no topics falls out of every filter and out of the link pass.
+    */
+    let kept = remapped.filter((t) => (merged.get(t) ?? 0) > 1);
+    if (kept.length === 0 && remapped.length > 0) {
+      kept = [remapped.sort((a, b) => (merged.get(b) ?? 0) - (merged.get(a) ?? 0))[0]];
+    }
+    if (kept.length !== before.length || kept.some((t, i) => t !== before[i])) {
+      changes.push({ id: note.id, title: note.title, before, after: kept });
+    }
+  }
+
+  const survivors = new Set(changes.flatMap((c) => c.after));
+  for (const note of notes) for (const t of note.topics ?? []) if ((merged.get(t) ?? 0) > 1) survivors.add(t);
+
+  console.log(
+    `${count.size} topics → about ${survivors.size} · ${merge.size} merged · ` +
+      `${changes.length} note(s) change` +
+      (WRITE ? "" : " — nothing written (dry run)"),
+  );
+  if (merge.size > 0) {
+    console.log("\nmerges:");
+    for (const [from, to] of [...merge].slice(0, 30)) console.log(`  ${from} → ${to}`);
+  }
+
+  if (!WRITE) return;
+
+  let written = 0;
+  for (const change of changes) {
+    try {
+      await callAction("knowledge_update", { id: change.id, topics: change.after });
+      written += 1;
+    } catch (err) {
+      console.warn(`  ! ${change.title}: ${String(err?.message ?? err)}`);
+    }
+  }
+  console.log(`\n${written} note(s) updated`);
+}
+
 async function main() {
   if (has("--link")) return linkPass();
+  if (has("--tidy-topics")) return tidyTopics();
 
   const files = (await sources()).slice(0, LIMIT);
   if (files.length === 0) {
