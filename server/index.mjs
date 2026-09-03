@@ -1403,6 +1403,31 @@ server.listen(PORT, HOST, () => {
     problem for a better one, and the app must come up whether or not there is
     a voice.
   */
+  /*
+    Say where the agent worktree stands, at boot.
+
+    It drifted 183 commits behind without anything noticing, and the first
+    thing to notice was Operator failing to find its own capability layer. A
+    line in serve.log at startup is the cheapest possible early warning, and
+    the one place someone debugging "why did the agent say that action does not
+    exist" will actually look.
+  */
+  void import("./worktree.mjs")
+    .then(({ state }) => state(process.env.OPERATOR_JOB_CWD))
+    .then((tree) => {
+      if (!tree?.ok) return;
+      if (tree.behind > 0) {
+        console.warn(
+          `[operator] agent worktree is ${tree.behind} commit(s) BEHIND main` +
+            (tree.dirty.length ? ` and dirty (${tree.dirty.length} file(s))` : "") +
+            " — jobs will run against stale code until it is synced",
+        );
+      } else {
+        console.log("[operator] agent worktree is level with main");
+      }
+    })
+    .catch(() => {});
+
   void warmVoice()
     .then((ok) => {
       if (ok) console.log("[operator] voice warm — the first reply will not pay for the load");

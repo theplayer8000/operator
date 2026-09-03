@@ -61,6 +61,7 @@ import { spawn } from "node:child_process";
 import { notify } from "./notify.mjs";
 import { reviewWork, snapshot as workspaceSnapshot } from "./semantic.mjs";
 import { runAction } from "./actions.mjs";
+import { state as worktreeState, sync as syncWorktree, warningFor } from "./worktree.mjs";
 import { recallFor } from "./memory.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -1549,7 +1550,15 @@ async function runViaSdk(job, prompt) {
       // The SDK's own ceiling. The only one that can stop a runaway *inside* a
       // turn rather than refusing the next one.
       budgetUsd: jobCeilingUsd(),
-      appendSystemPrompt: await systemPromptFor(),
+      /*
+        The drift warning rides along with the prompt.
+
+        Being told is cheaper than discovering, and far cheaper than the wrong
+        conclusion — that the missing action does not exist at all.
+      */
+      appendSystemPrompt: [await systemPromptFor(), warningFor(job.worktree)]
+        .filter(Boolean)
+        .join("\n\n"),
       /*
         Option C. `default` is the only mode that consults the callback —
         `bypassPermissions` decides for itself and would make every line of the
@@ -1715,6 +1724,32 @@ async function runTurn(job) {
     writes a commit object and touches nothing, so this is safe to do on every
     turn including concurrent ones.
   */
+  /*
+    Bring the worktree up to date before the turn, if that is safe.
+
+    On 2026-09-03 it was 183 commits behind, so every job ran against a copy of
+    Operator from two weeks earlier — no work log, no vault actions, no
+    delegate. Operator diagnosed that itself, after spending turns and
+    permission prompts finding out.
+
+    Fast-forward only, and only on a clean tree with nothing else running in
+    there. Anything else is refused and reported: losing an agent's uncommitted
+    work to an automatic sync would be worse than the drift.
+
+    Before the snapshot, deliberately — the snapshot is what semantic
+    verification diffs against, and taking it first would make the sync itself
+    look like this turn's work.
+  */
+  const treeBefore = await syncWorktree(JOB_CWD, running.size > 0).catch(() => null);
+  if (treeBefore?.synced) {
+    console.log(`[operator] worktree fast-forwarded to main (was ${treeBefore.behind} behind)`);
+  } else if (treeBefore?.behind) {
+    console.warn(
+      `[operator] worktree is ${treeBefore.behind} commit(s) behind main — ${treeBefore.reason}`,
+    );
+  }
+  job.worktree = treeBefore ?? null;
+
   job.workspaceBefore = await workspaceSnapshot(JOB_CWD).catch(() => null);
 
   /*

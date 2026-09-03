@@ -49,15 +49,45 @@ const val = (f) => {
 };
 
 const WRITE = has("--write");
-const MANIFEST = val("--manifest");
+/*
+  A default manifest path, because the useful one is buried.
+
+  The manifest comes out of a browser download and ends up wherever the browser
+  puts it — a long path nobody types correctly. `data/` is gitignored and is
+  already where this project keeps things that are his rather than the code's.
+*/
+const MANIFEST = val("--manifest") || join(ROOT, "data/chatgpt-manifest.json");
 const EXPORT = val("--export");
 const LIMIT = Number(val("--limit") || 0) || Infinity;
 const WORKER = val("--worker");
 
-if (!MANIFEST || !EXPORT) {
+const usage =
+  "usage: node scripts/chat-import.mjs --export <export folder> [--manifest <manifest.json>] [--write] [--limit N]" +
+  `\n       --manifest defaults to ${join(ROOT, "data/chatgpt-manifest.json")}`;
+
+if (!EXPORT) {
+  console.error("Missing --export (the folder holding conversations-*.json).\n\n" + usage);
+  process.exit(2);
+}
+
+/*
+  Check both paths BEFORE doing anything, and say which one is wrong.
+
+  The first version let `readFile` throw, which printed a Node stack trace with
+  the bad path buried in it — and the bad path was an ellipsis, because the
+  command had been abbreviated in chat and pasted literally. A tool that is
+  going to be handed a wrong path should say so in one line.
+*/
+const { existsSync, statSync } = await import("node:fs");
+if (!existsSync(MANIFEST)) {
   console.error(
-    "usage: node scripts/chat-import.mjs --manifest <manifest.json> --export <export folder> [--write] [--limit N]",
+    `No manifest at:\n  ${MANIFEST}\n\nExport one from tools/vault-triage/index.html.` +
+      `\n\n${usage}`,
   );
+  process.exit(2);
+}
+if (!existsSync(EXPORT) || !statSync(EXPORT).isDirectory()) {
+  console.error(`Not a folder:\n  ${EXPORT}\n\n${usage}`);
   process.exit(2);
 }
 
