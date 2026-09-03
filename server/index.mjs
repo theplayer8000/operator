@@ -102,13 +102,48 @@ const SERVE_DIST =
 
 // --- http helpers ---------------------------------------------------------
 
-function json(res, status, body) {
+/*
+  Compress API responses, not just static files.
+
+  `serveStatic` has gzipped the bundle since the phone was slow to load it —
+  "over 4G that is most of the wait" — and every JSON response went out raw the
+  whole time. That was fine while the store was small. It stopped being fine
+  when the Knowledge Vault arrived: `knowledge.notes` is now 78% of the store
+  and `/api/state` ships **627 KB on every poll**, which gzips to 189 KB.
+
+  The server itself is not slow — it answers in 7ms. The wait was the wire, and
+  the owner felt it as "why is Operator being so slow" with pages not loading.
+
+  Only above a threshold. Gzipping a 50-byte `{"ok":true}` costs a compression
+  pass to make the payload bigger, and the health check runs constantly.
+*/
+const COMPRESS_OVER = 1400;
+
+async function json(req, res, status, body) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
+  const headers = {
     "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(payload),
     "cache-control": "no-store",
-  });
+  };
+
+  const wantsGzip = /\bgzip\b/.test(req?.headers?.["accept-encoding"] ?? "");
+  if (wantsGzip && Buffer.byteLength(payload) > COMPRESS_OVER) {
+    try {
+      const compressed = await gzip(payload);
+      res.writeHead(status, {
+        ...headers,
+        "content-encoding": "gzip",
+        "content-length": compressed.length,
+        vary: "Accept-Encoding",
+      });
+      return res.end(compressed);
+    } catch {
+      // Compression failing must never fail the response. Fall through and
+      // send it raw, which is exactly what happened before this existed.
+    }
+  }
+
+  res.writeHead(status, { ...headers, "content-length": Buffer.byteLength(payload) });
   res.end(payload);
 }
 
@@ -152,7 +187,7 @@ async function serveStatic(req, res, pathname) {
     filePath = join(DIST_DIR, "index.html");
   }
   if (!existsSync(filePath)) {
-    return json(res, 404, { error: "not built — run `npm run build` first" });
+    return json(req, res, 404, { error: "not built — run `npm run build` first" });
   }
 
   const ext = extname(filePath);
@@ -219,7 +254,7 @@ const server = createServer(async (req, res) => {
       noteIdentity(req, who);
 
       if (pathname === "/api/auth/whoami") {
-        return json(res, who.ok ? 200 : 401, {
+        return json(req, res, who.ok ? 200 : 401, {
           ...who,
           tokenConfigured: tokenConfigured(),
         });
@@ -232,7 +267,7 @@ const server = createServer(async (req, res) => {
         console.warn(
           `[operator] refused ${req.method} ${pathname} from ${who.client ?? who.peer}: ${who.reason}`
         );
-        return json(res, 401, {
+        return json(req, res, 401, {
           error: "not authorised",
           reason: who.reason,
           hint: "Operator answers to devices on the owner's tailnet, or to a request carrying OPERATOR_TOKEN as a bearer token.",
@@ -249,7 +284,7 @@ const server = createServer(async (req, res) => {
     if (pathname === "/api/terminal/runs") {
       const manage = deviceMayManage(identity);
       const allowed = deviceAuthorised(identity);
-      return json(res, 200, {
+      return json(req, res, 200, {
         ...listRuns(),
         authorised: allowed.ok,
         // Whether this device may arm/disarm — the client shows the switch on
@@ -291,7 +326,7 @@ const server = createServer(async (req, res) => {
         */
         const mayUse = deviceMayUseCapabilities(identity);
         if (!mayUse.ok) {
-          return json(res, 403, { error: "not authorised", reason: mayUse.reason });
+          return json(req, res, 403, { error: "not authorised", reason: mayUse.reason });
         }
         const body = await readBody(req);
         try {
@@ -312,7 +347,7 @@ const server = createServer(async (req, res) => {
           // 409 rather than 400 when another device holds the runner: it isn't a
           // bad request, it's a busy one, and the client shows it differently.
           const busy = /busy on/.test(err.message);
-          return json(res, busy ? 409 : 400, { error: err.message });
+          return json(req, res, busy ? 409 : 400, { error: err.message });
         }
       }
       /*
@@ -330,7 +365,7 @@ const server = createServer(async (req, res) => {
         nothing.
       */
       const mayRead = deviceMayUseCapabilities(identity);
-      return json(res, 200, {
+      return json(req, res, 200, {
         ...(mayRead.ok ? jobs.list() : { jobs: [], running: null }),
         authorised: allowed.ok,
         canManage: deviceMayManage(identity).ok,
@@ -341,30 +376,30 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/api/jobs/allow" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       const body = await readBody(req);
       try {
-        return json(res, 200, await jobs.allowRule(body?.rule, identity));
+        return json(req, res, 200, await jobs.allowRule(body?.rule, identity));
       } catch (err) {
-        return json(res, 400, { error: err.message });
+        return json(req, res, 400, { error: err.message });
       }
     }
 
     if (pathname === "/api/jobs/clear" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
-      return json(res, 200, jobs.clear(identity));
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
+      return json(req, res, 200, jobs.clear(identity));
     }
 
     // Raw local files are staged before a first job exists, then claimed by
     // jobs.create()/input(). This remains behind the same device gate as chat.
     if (pathname === "/api/jobs/resources" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       try {
-        return json(res, 201, { resource: await stageUpload(req), maxBytes: resourceLimit() });
+        return json(req, res, 201, { resource: await stageUpload(req), maxBytes: resourceLimit() });
       } catch (err) {
-        return json(res, 400, { error: err.message });
+        return json(req, res, 400, { error: err.message });
       }
     }
 
@@ -381,30 +416,30 @@ const server = createServer(async (req, res) => {
       const allowed =
         req.method === "GET" ? deviceMayUseCapabilities(identity) : deviceAuthorised(identity);
       if (!allowed.ok) {
-        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       }
       const [id, action] = pathname.slice("/api/jobs/".length).split("/");
-      if (!id) return json(res, 404, { error: "no such job" });
+      if (!id) return json(req, res, 404, { error: "no such job" });
 
       try {
         if (!action && req.method === "GET") {
           const found = jobs.detail(id, Number(url.searchParams.get("since") ?? 0));
-          if (!found) return json(res, 404, { error: "no such job" });
-          return json(res, 200, found);
+          if (!found) return json(req, res, 404, { error: "no such job" });
+          return json(req, res, 200, found);
         }
         if (!action && req.method === "DELETE") {
-          return json(res, 200, jobs.remove(id, identity));
+          return json(req, res, 200, jobs.remove(id, identity));
         }
         if (action === "input" && req.method === "POST") {
           const body = await readBody(req);
-          return json(res, 202, await jobs.input(id, body, identity));
+          return json(req, res, 202, await jobs.input(id, body, identity));
         }
         if (action === "model" && req.method === "POST") {
           const body = await readBody(req);
-          return json(res, 200, jobs.setModel(id, body?.model));
+          return json(req, res, 200, jobs.setModel(id, body?.model));
         }
         if (action === "retry" && req.method === "POST") {
-          return json(res, 202, jobs.retry(id, identity));
+          return json(req, res, 202, jobs.retry(id, identity));
         }
         /*
           Answering a permission the running turn is suspended on (ADR 0012).
@@ -431,9 +466,9 @@ const server = createServer(async (req, res) => {
         }
       } catch (err) {
         const busy = /busy on/.test(err.message);
-        return json(res, busy ? 409 : 400, { error: err.message });
+        return json(req, res, busy ? 409 : 400, { error: err.message });
       }
-      return json(res, 404, { error: "unknown job route" });
+      return json(req, res, 404, { error: "unknown job route" });
     }
 
     // Arming is a separate permission from running: a listed device may switch
@@ -444,11 +479,11 @@ const server = createServer(async (req, res) => {
         console.warn(
           `[operator] terminal arm refused for ${identity?.device ?? identity?.client}: ${manage.reason}`
         );
-        return json(res, 403, { error: "not authorised to arm the terminal", reason: manage.reason });
+        return json(req, res, 403, { error: "not authorised to arm the terminal", reason: manage.reason });
       }
       const body = await readBody(req);
       const next = body?.enabled === true;
-      return json(res, 200, { enabled: setEnabled(next, identity) });
+      return json(req, res, 200, { enabled: setEnabled(next, identity) });
     }
 
     /*
@@ -475,7 +510,7 @@ const server = createServer(async (req, res) => {
       between "restarting" and "died" is the whole message.
     */
     if (pathname === "/api/build") {
-      return json(res, 200, await buildStatus(ROOT));
+      return json(req, res, 200, await buildStatus(ROOT));
     }
 
     if (pathname === "/api/restart" && req.method === "POST") {
@@ -484,7 +519,7 @@ const server = createServer(async (req, res) => {
         console.warn(
           `[operator] restart refused for ${identity?.device ?? identity?.client}: ${manage.reason}`
         );
-        return json(res, 403, { error: "not authorised to restart", reason: manage.reason });
+        return json(req, res, 403, { error: "not authorised to restart", reason: manage.reason });
       }
       const supervised = process.env.OPERATOR_SUPERVISED === "1";
       /*
@@ -526,46 +561,46 @@ const server = createServer(async (req, res) => {
         console.warn(
           `[operator] terminal refused for ${identity?.device ?? identity?.client}: ${allowed.reason}`
         );
-        return json(res, 403, { error: "not authorised to run commands", reason: allowed.reason });
+        return json(req, res, 403, { error: "not authorised to run commands", reason: allowed.reason });
       }
       const body = await readBody(req);
       const line = typeof body?.command === "string" ? body.command.trim() : "";
-      if (!line) return json(res, 400, { error: "expected { command: string }" });
+      if (!line) return json(req, res, 400, { error: "expected { command: string }" });
       try {
         const run = await startRun(line, identity);
-        return json(res, 200, describeRun(run));
+        return json(req, res, 200, describeRun(run));
       } catch (err) {
         // A rejected command is a user-facing message, not a server fault.
-        return json(res, 400, { error: err.message });
+        return json(req, res, 400, { error: err.message });
       }
     }
 
     if (pathname === "/api/terminal/stop" && req.method === "POST") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {
-        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       }
       const result = stopRun(url.searchParams.get("id") ?? "");
-      return json(res, result.ok ? 200 : 400, result);
+      return json(req, res, result.ok ? 200 : 400, result);
     }
 
     if (pathname === "/api/terminal/output") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {
-        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       }
       const run = getRun(url.searchParams.get("id") ?? "");
-      if (!run) return json(res, 404, { error: "no such run" });
-      return json(res, 200, readOutput(run, Number(url.searchParams.get("from") ?? 0)));
+      if (!run) return json(req, res, 404, { error: "no such run" });
+      return json(req, res, 200, readOutput(run, Number(url.searchParams.get("from") ?? 0)));
     }
 
     if (pathname === "/api/terminal/stream") {
       const allowed = deviceAuthorised(identity);
       if (!allowed.ok) {
-        return json(res, 403, { error: "not authorised", reason: allowed.reason });
+        return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       }
       const run = getRun(url.searchParams.get("id") ?? "");
-      if (!run) return json(res, 404, { error: "no such run" });
+      if (!run) return json(req, res, 404, { error: "no such run" });
 
       /*
         Plain chunked text, not SSE.
@@ -598,7 +633,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (pathname === "/api/clients") {
-      return json(res, 200, listClients());
+      return json(req, res, 200, listClients());
     }
 
     /*
@@ -631,7 +666,7 @@ const server = createServer(async (req, res) => {
       attach its own phone to his notifications.
     */
     if (pathname === "/api/push/key") {
-      return json(res, 200, { configured: pushConfigured, publicKey: vapidPublicKey || null });
+      return json(req, res, 200, { configured: pushConfigured, publicKey: vapidPublicKey || null });
     }
 
     if (pathname === "/api/push/subscribe" && req.method === "POST") {
@@ -642,18 +677,18 @@ const server = createServer(async (req, res) => {
           identity?.device ?? "a device",
         );
         console.log(`[operator] push: ${identity?.device ?? "a device"} subscribed`);
-        return json(res, 200, result);
+        return json(req, res, 200, result);
       } catch (err) {
-        return json(res, 400, { error: String(err?.message ?? err).slice(0, 200) });
+        return json(req, res, 400, { error: String(err?.message ?? err).slice(0, 200) });
       }
     }
 
     if (pathname === "/api/push/unsubscribe" && req.method === "POST") {
       try {
         const body = await readBody(req);
-        return json(res, 200, await removeSubscription(String(body?.endpoint ?? "")));
+        return json(req, res, 200, await removeSubscription(String(body?.endpoint ?? "")));
       } catch (err) {
-        return json(res, 400, { error: String(err?.message ?? err).slice(0, 200) });
+        return json(req, res, 400, { error: String(err?.message ?? err).slice(0, 200) });
       }
     }
 
@@ -674,22 +709,22 @@ const server = createServer(async (req, res) => {
       const wanted = Boolean(body?.on);
       if (wanted) {
         if (!clapCallback) {
-          return json(res, 409, { error: "the detector was never configured this run" });
+          return json(req, res, 409, { error: "the detector was never configured this run" });
         }
         const started = startListening(clapCallback);
         console.log(`[operator] clap detector ${started ? "ON" : "refused"} by ${identity?.device ?? "?"}`);
-        return json(res, started ? 200 : 409, {
+        return json(req, res, started ? 200 : 409, {
           listening: listenState.listening,
           reason: listenState.reason ?? null,
         });
       }
       stopListening();
       console.log(`[operator] clap detector OFF by ${identity?.device ?? "?"}`);
-      return json(res, 200, { listening: listenState.listening, reason: null });
+      return json(req, res, 200, { listening: listenState.listening, reason: null });
     }
 
     if (pathname === "/api/listen") {
-      return json(res, 200, {
+      return json(req, res, 200, {
         listening: listenState.listening,
         device: listenState.device,
         level: Number((listenState.level ?? 0).toFixed(4)),
@@ -720,7 +755,7 @@ const server = createServer(async (req, res) => {
     */
     if (pathname === "/api/listen/transcribe" && req.method === "POST") {
       const allowed = deviceMayUseCapabilities(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
 
       const chunks = [];
       let size = 0;
@@ -733,7 +768,7 @@ const server = createServer(async (req, res) => {
         }
         chunks.push(chunk);
       }
-      if (tooBig) return json(res, 413, { error: "audio too large" });
+      if (tooBig) return json(req, res, 413, { error: "audio too large" });
 
       try {
         const heard = await transcribeUpload(Buffer.concat(chunks));
@@ -781,7 +816,7 @@ const server = createServer(async (req, res) => {
         if (spoken === "stop") {
           const { stopped } = jobs.stopAll("stopped by voice");
           console.log(`[operator] voice STOP — cancelled ${stopped} job(s)`);
-          return json(res, 200, {
+          return json(req, res, 200, {
             ...heard,
             command: { done: true, stop: true, stopped },
             handled: true,
@@ -807,7 +842,7 @@ const server = createServer(async (req, res) => {
           console.log(
             `[operator] overlapped, not a stop — discarded ${JSON.stringify(String(heard?.text ?? "").slice(0, 80))}`,
           );
-          return json(res, 200, { text: "", discarded: "spoken over Operator" });
+          return json(req, res, 200, { text: "", discarded: "spoken over Operator" });
         }
 
         let armed = null;
@@ -902,7 +937,7 @@ const server = createServer(async (req, res) => {
           console.warn(`[operator] intent router threw: ${err?.message ?? err}`);
         }
 
-        return json(res, 200, {
+        return json(req, res, 200, {
           ...heard,
           wouldMatch: intent,
           command: armed,
@@ -917,7 +952,7 @@ const server = createServer(async (req, res) => {
           say: acted?.say ?? null,
         });
       } catch (err) {
-        return json(res, 500, { error: String(err?.message ?? err).slice(0, 300) });
+        return json(req, res, 500, { error: String(err?.message ?? err).slice(0, 300) });
       }
     }
 
@@ -940,17 +975,17 @@ const server = createServer(async (req, res) => {
     */
     if (pathname === "/api/speak") {
       const allowed = deviceMayUseCapabilities(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
 
       // Status, so a client can find out whether to use this at all before
       // committing a sentence to it.
       if (req.method === "GET" && !url.searchParams.get("text")) {
-        return json(res, 200, { ...ttsAvailable(), state: ttsState });
+        return json(req, res, 200, { ...ttsAvailable(), state: ttsState });
       }
 
       const text =
         url.searchParams.get("text") ?? (req.method === "POST" ? (await readBody(req))?.text : "");
-      if (!text) return json(res, 400, { error: "no text" });
+      if (!text) return json(req, res, 400, { error: "no text" });
 
       try {
         const spoken = await synthesize(text, { voice: url.searchParams.get("voice") ?? undefined });
@@ -964,14 +999,14 @@ const server = createServer(async (req, res) => {
         });
         return res.end(spoken.audio);
       } catch (err) {
-        return json(res, 503, { error: String(err?.message ?? err).slice(0, 300) });
+        return json(req, res, 503, { error: String(err?.message ?? err).slice(0, 300) });
       }
     }
 
     // Owner-approved outbound call — see server/status.mjs for why it's here
     // and not in the browser.
     if (pathname === "/api/claude-status") {
-      return json(res, 200, await claudeStatus());
+      return json(req, res, 200, await claudeStatus());
     }
 
     /*
@@ -985,15 +1020,15 @@ const server = createServer(async (req, res) => {
       Gated like everything under /api/ by the check in front of the router.
     */
     if (pathname === "/api/logs") {
-      return json(res, 200, { logs: listLogs() });
+      return json(req, res, 200, { logs: listLogs() });
     }
 
     if (pathname.startsWith("/api/logs/")) {
       const id = pathname.slice("/api/logs/".length);
       try {
-        return json(res, 200, await tailLog(id, url.searchParams.get("lines")));
+        return json(req, res, 200, await tailLog(id, url.searchParams.get("lines")));
       } catch (err) {
-        return json(res, 404, { error: String(err?.message ?? err).slice(0, 200) });
+        return json(req, res, 404, { error: String(err?.message ?? err).slice(0, 200) });
       }
     }
 
@@ -1012,7 +1047,7 @@ const server = createServer(async (req, res) => {
         "has anything changed" is one poll rather than two.
       */
       const store = await load();
-      return json(res, 200, {
+      return json(req, res, 200, {
         ok: true,
         schemaVersion: SCHEMA_VERSION,
         dataFile: DATA_FILE,
@@ -1022,7 +1057,7 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/api/state" && req.method === "GET") {
       const store = await load();
-      return json(res, 200, store);
+      return json(req, res, 200, store);
     }
 
     // Bulk write — used once by the client to migrate existing localStorage
@@ -1030,18 +1065,18 @@ const server = createServer(async (req, res) => {
     if (pathname === "/api/state" && req.method === "PUT") {
       const body = await readBody(req);
       if (body === null || typeof body !== "object" || Array.isArray(body)) {
-        return json(res, 400, { error: "expected an object of { key: value }" });
+        return json(req, res, 400, { error: "expected an object of { key: value }" });
       }
       await mergeState(body);
-      return json(res, 200, { ok: true, keys: Object.keys(body).length });
+      return json(req, res, 200, { ok: true, keys: Object.keys(body).length });
     }
 
     if (pathname.startsWith("/api/state/") && req.method === "PUT") {
       const key = decodeURIComponent(pathname.slice("/api/state/".length));
-      if (!key) return json(res, 400, { error: "missing key" });
+      if (!key) return json(req, res, 400, { error: "missing key" });
       const body = await readBody(req);
       await setState(key, body?.value ?? null);
-      return json(res, 200, { ok: true, key });
+      return json(req, res, 200, { ok: true, key });
     }
 
     /*
@@ -1066,10 +1101,10 @@ const server = createServer(async (req, res) => {
         path was the locked one.
       */
       const allowed = deviceMayUseCapabilities(identity);
-      if (!allowed.ok) return json(res, 403, { error: "not authorised", reason: allowed.reason });
+      if (!allowed.ok) return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
 
       if (req.method === "GET") {
-        return json(res, 200, { actions: listActions() });
+        return json(req, res, 200, { actions: listActions() });
       }
       if (req.method === "POST") {
         const body = await readBody(req);
@@ -1078,9 +1113,9 @@ const server = createServer(async (req, res) => {
           console.log(
             `[operator] action ${body?.action} by ${identity?.device ?? "unknown"}`
           );
-          return json(res, 200, { ok: true, action: body?.action, result });
+          return json(req, res, 200, { ok: true, action: body?.action, result });
         } catch (err) {
-          return json(res, err instanceof ActionError ? 400 : 500, { error: err.message });
+          return json(req, res, err instanceof ActionError ? 400 : 500, { error: err.message });
         }
       }
     }
@@ -1089,44 +1124,44 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/api/homelab/status" && req.method === "GET") {
       const store = await load();
-      return json(res, 200, await checkServices(store.state["homelab.services"]));
+      return json(req, res, 200, await checkServices(store.state["homelab.services"]));
     }
 
     // --- Dev browser (read-only, sandboxed to the repo — see dev.mjs) ---
 
     if (pathname === "/api/dev/meta") {
-      return json(res, 200, await repoMeta(ROOT));
+      return json(req, res, 200, await repoMeta(ROOT));
     }
 
     if (pathname === "/api/dev/tree") {
       const tree = await listTree(ROOT, url.searchParams.get("path") ?? ".");
-      if (!tree) return json(res, 400, { error: "path not allowed" });
-      return json(res, 200, tree);
+      if (!tree) return json(req, res, 400, { error: "path not allowed" });
+      return json(req, res, 200, tree);
     }
 
     if (pathname === "/api/dev/file") {
       const rel = url.searchParams.get("path");
-      if (!rel) return json(res, 400, { error: "missing path" });
+      if (!rel) return json(req, res, 400, { error: "missing path" });
       const file = await readTextFile(ROOT, rel);
-      return json(res, file.error ? 400 : 200, file);
+      return json(req, res, file.error ? 400 : 200, file);
     }
 
     // Drop a single slice back to its seed. Settings > Reset will use this.
     if (pathname.startsWith("/api/state/") && req.method === "DELETE") {
       const key = decodeURIComponent(pathname.slice("/api/state/".length));
       await deleteState(key);
-      return json(res, 200, { ok: true, key });
+      return json(req, res, 200, { ok: true, key });
     }
 
     if (pathname.startsWith("/api/")) {
-      return json(res, 404, { error: `no route for ${req.method} ${pathname}` });
+      return json(req, res, 404, { error: `no route for ${req.method} ${pathname}` });
     }
 
     if (SERVE_DIST) return await serveStatic(req, res, pathname);
-    return json(res, 404, { error: "API only — the dev server serves the app" });
+    return json(req, res, 404, { error: "API only — the dev server serves the app" });
   } catch (err) {
     console.error("[operator]", err);
-    return json(res, 500, { error: err.message });
+    return json(req, res, 500, { error: err.message });
   }
 });
 
