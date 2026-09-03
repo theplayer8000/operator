@@ -5,6 +5,7 @@
 //   node scripts/knowledge-import.mjs --write
 //   node scripts/knowledge-import.mjs --from reference --write
 //   node scripts/knowledge-import.mjs --file docs/known-issues.md --write
+//   node scripts/knowledge-import.mjs --link --write   # connect what is already there
 //
 // ## Extraction, not copying
 //
@@ -113,7 +114,7 @@ const FROM = valueOf("--from") || "docs";
  *   - Skip anything that is only true of this document's own structure.
  *     "The file has ten sections" is not knowledge.
  */
-const INSTRUCTION = [
+const INSTRUCTION_LINES = [
   "Extract the reusable FACTS from this document into notes for a personal knowledge vault.",
   "",
   "Return ONLY a JSON array, no prose before or after, no markdown fence. Each item:",
@@ -130,10 +131,34 @@ const INSTRUCTION = [
   '- kind "command" when the note is something to run. "resource" when it is a pointer',
   '  outwards. "note" otherwise.',
   "- topics: 2-4 lowercase single words.",
+  "- REUSE the existing topics below wherever one fits. Inventing a near-synonym",
+  "  ('storage' next to 'store', 'auth' next to 'authentication') is how a topic list",
+  "  ends up longer than the note list and stops grouping anything at all.",
   "- Skip anything only true of this document's own structure, and anything that is",
   "  a to-do rather than a fact.",
   "- Prefer 3 good notes to 15 thin ones. An empty array is a valid answer.",
-].join("\n");
+];
+
+/**
+ * The instruction, with the vault's CURRENT topic vocabulary appended.
+ *
+ * Measured after the first full import: 130 notes carrying 195 distinct topics.
+ * More topics than notes means every note invented its own, which is the same
+ * as having no topics — nothing groups, the filter row is unusable, and the
+ * shared-topic linking below has nothing to work with.
+ *
+ * Showing the model what already exists is the whole fix. It costs a few
+ * hundred tokens and turns a per-document vocabulary into a shared one.
+ */
+function instructionFor(topics) {
+  if (topics.length === 0) return INSTRUCTION_LINES.join("\n");
+  return [
+    ...INSTRUCTION_LINES,
+    "",
+    "Topics already in use — prefer these over new ones:",
+    topics.slice(0, 60).join(", "),
+  ].join("\n");
+}
 
 /** Collect the markdown worth reading. */
 async function sources() {
@@ -199,7 +224,103 @@ const titleKey = (title) =>
     .sort()
     .join(" ");
 
+/**
+ * Connect notes that clearly belong together.
+ *
+ * ## Why the importer cannot do this as it goes
+ *
+ * A note can only link to something that already exists, and extraction runs
+ * one document at a time — so at the moment each note is written, most of what
+ * it relates to has not been read yet. Linking has to be a second pass over
+ * the finished set. That is also why it is a separate flag rather than
+ * automatic: it is worth re-running after every import, not only after the
+ * first.
+ *
+ * ## Two signals, both conservative
+ *
+ * **Shared topics.** Two notes carrying two or more of the same topics are
+ * about the same thing. One shared topic is far too weak — "operator" appears
+ * on a third of the vault — so the bar is two.
+ *
+ * **Same source document.** Facts extracted from one document were written
+ * together by someone making a single argument, which is a real relationship
+ * and the only one available for a note whose topics are unique. Capped hard,
+ * because a twelve-note document would otherwise produce sixty-six edges and
+ * a graph that is one solid blob.
+ *
+ * Nothing here invents a semantic link, and it deliberately does not ask a
+ * model to. "These two feel related" from a model that has seen both titles
+ * and neither body is a guess, and a wrong edge in a graph is worse than a
+ * missing one — a missing edge is invisible, a wrong one is followed.
+ */
+async function linkPass() {
+  const stateRes = await fetch(`${BASE}/api/state`);
+  const state = await stateRes.json();
+  const notes = (state?.state?.["knowledge.notes"] ?? []).filter((n) => !n.archived);
+
+  if (notes.length < 2) {
+    console.log("Not enough notes to link.");
+    return;
+  }
+
+  /** How many edges any one note may gain here, so nothing becomes a hub. */
+  const PER_NOTE = 4;
+  const proposals = new Map();
+  const add = (from, to) => {
+    if (from === to) return;
+    const list = proposals.get(from) ?? new Set();
+    if (list.size >= PER_NOTE) return;
+    list.add(to);
+    proposals.set(from, list);
+  };
+
+  for (const note of notes) {
+    const topics = new Set(note.topics ?? []);
+    const already = new Set(note.links ?? []);
+
+    const scored = notes
+      .filter((other) => other.id !== note.id && !already.has(other.id))
+      .map((other) => {
+        const shared = (other.topics ?? []).filter((t) => topics.has(t)).length;
+        const sameSource = Boolean(note.source) && note.source === other.source;
+        // Topics beat provenance: two notes about the same subject from
+        // different documents are a better edge than two unrelated facts that
+        // happened to be written on the same page.
+        return { other, score: shared >= 2 ? shared * 2 : sameSource ? 1 : 0 };
+      })
+      .filter((c) => c.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, PER_NOTE);
+
+    for (const { other } of scored) add(note.id, other.id);
+  }
+
+  let made = 0;
+  for (const [from, targets] of proposals) {
+    for (const to of targets) {
+      if (!WRITE) {
+        made += 1;
+        continue;
+      }
+      try {
+        await callAction("knowledge_link", { id: from, linkTo: to });
+        made += 1;
+      } catch (err) {
+        console.warn(`  ! ${String(err?.message ?? err)}`);
+      }
+    }
+  }
+
+  const touched = proposals.size;
+  console.log(
+    `${made} link(s) across ${touched} note(s)` +
+      (WRITE ? "" : " — nothing written (dry run)"),
+  );
+}
+
 async function main() {
+  if (has("--link")) return linkPass();
+
   const files = (await sources()).slice(0, LIMIT);
   if (files.length === 0) {
     console.error(`Nothing to read under ${FROM}`);
@@ -223,6 +344,20 @@ async function main() {
   const already = state?.state?.["knowledge.notes"] ?? [];
   const seen = new Set(already.map((n) => titleKey(n.title)));
 
+  /*
+    The topic vocabulary already in use, most common first, so the model can
+    reuse it rather than inventing a synonym. See `instructionFor`.
+  */
+  const topicCounts = new Map();
+  for (const note of already) {
+    for (const topic of note.topics ?? []) {
+      topicCounts.set(topic, (topicCounts.get(topic) ?? 0) + 1);
+    }
+  }
+  const vocabulary = [...topicCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([topic]) => topic);
+
   console.log(
     `${files.length} document(s) · ${seen.size} note(s) already in the vault · ` +
       `${WRITE ? "WRITING" : "dry run — pass --write to keep them"}\n`,
@@ -243,7 +378,7 @@ async function main() {
     let result;
     try {
       result = await delegate({
-        task: INSTRUCTION,
+        task: instructionFor(vocabulary),
         files: [join(ROOT, file)],
         worker: WORKER,
       });
