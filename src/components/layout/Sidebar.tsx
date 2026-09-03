@@ -21,6 +21,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   X,
+  BookOpen,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -50,6 +51,7 @@ const NAV_ITEMS = [
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/gym", label: "Gym", icon: Dumbbell },
   { to: "/missions", label: "Mission Board", icon: Swords },
+  { to: "/knowledge", label: "Knowledge Vault", icon: BookOpen },
   { to: "/homelab", label: "Homelab", icon: Server },
   { to: "/log", label: "Activity Log", icon: ScrollText },
 

@@ -428,3 +428,70 @@ export interface MissionRecord {
   createdAt: string;
 }
 
+
+// --- Knowledge Vault ---
+//
+// The personal wiki the Mission Board has been pointing at since it was built:
+// `MissionDetail`'s "Related Knowledge" tab has held a free-text field and a
+// reserved-section placeholder this whole time.
+//
+// ## Why a note is not a document
+//
+// The temptation is a folder of markdown files, which is what Obsidian is and
+// what every "second brain" post describes. That is the wrong shape here for a
+// reason specific to Operator: a document is read by a person, and half the
+// point of this vault is that a WORKER can read it — "how do I restart the
+// Postgres container" should be answerable without a person opening a page.
+//
+// So a note is a record with fields, in the same store as everything else, and
+// the prose lives in one of them. Same storage, same backups, same capability
+// layer, and searchable by something other than a filename.
+//
+// ## Confidence is the field that earns its place
+//
+// Not decoration. A vault's failure mode is a note written once while learning
+// something, never revisited, and trusted a year later as though it were
+// checked. Saying out loud how sure you are makes the difference between
+// "this is how it works" and "this worked once" legible to you AND to a worker
+// deciding whether to act on it.
+
+/** How much a note should be trusted. Ordered, so it can be compared. */
+export type KnowledgeConfidence = "unverified" | "works" | "verified";
+
+/**
+ * What kind of thing a note is, which changes how it is read rather than how
+ * it is stored.
+ *
+ *   note      prose — how something works, why a choice was made
+ *   command   something to run, worth having exactly right
+ *   resource  a pointer outwards — a doc, a repo, a video
+ */
+export type KnowledgeKind = "note" | "command" | "resource";
+
+export interface KnowledgeNote {
+  id: string;
+  title: string;
+  /** Markdown. The body of the note; empty is allowed while it is a stub. */
+  body: string;
+  kind: KnowledgeKind;
+  confidence: KnowledgeConfidence;
+  /** Free tags. Lowercased on write so "Docker" and "docker" are one topic. */
+  topics: string[];
+  /**
+   * Other notes this one points at, by id.
+   *
+   * Directional and NOT mirrored, exactly like `MissionRecord.dependsOn`.
+   * Backlinks are computed by filtering every note for one that links here,
+   * so there is no second copy of the relationship to keep in sync — the same
+   * reasoning that made mission successors a derived view.
+   */
+  links: string[];
+  /** Missions this note is knowledge FOR. Mission ids. */
+  missions: string[];
+  /** Where it came from, when that is a URL worth keeping. */
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Archived rather than deleted, like a mission. There is no undo (OPS-020). */
+  archived?: boolean;
+}

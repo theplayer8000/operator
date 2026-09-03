@@ -1329,6 +1329,260 @@ async function calendarRange({ from, days = 7 }) {
   return { from: start, to: endKey, count: occurrences.length, events: occurrences };
 }
 
+// --- Knowledge Vault --------------------------------------------------------
+//
+// The READ actions here matter more than the writes, and that is not the usual
+// balance. This file's header says a new feature needs a read action because
+// without one a worker greps source to answer a question - $0.92 and two
+// minutes, the one time it happened. A vault is the extreme case of that: its
+// entire purpose is to hold answers, and one nothing can query is a folder.
+//
+// `knowledge_search` deliberately mirrors `lib/search.ts` rather than doing its
+// own thing. Same weights, same "every term must appear" rule, same confidence
+// nudge - so a worker and the page rank the same notes the same way. Two
+// implementations of one ranking is how they drift into disagreeing about what
+// the best answer is, which is the one thing a vault must not do.
+
+const KNOWLEDGE_KINDS = ["note", "command", "resource"];
+const KNOWLEDGE_CONFIDENCE = ["unverified", "works", "verified"];
+
+const normaliseText = (text) => String(text ?? "").toLowerCase().normalize("NFKD");
+
+/** Same weights as lib/search.ts. Change both or neither. */
+const SEARCH_WEIGHT = { title: 12, topic: 7, source: 3, body: 1 };
+
+function rankNotes(notes, query, limit) {
+  const terms = normaliseText(query)
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\p{L}\p{N}_-]/gu, ""))
+    .filter(Boolean);
+
+  if (terms.length === 0) return notes.slice(0, limit);
+
+  const hits = [];
+  for (const note of notes) {
+    const title = normaliseText(note.title);
+    const body = normaliseText(note.body);
+    const source = normaliseText(note.source);
+    const topics = (note.topics ?? []).map(normaliseText);
+
+    let score = 0;
+    let allPresent = true;
+    for (const term of terms) {
+      let points = 0;
+      if (title.includes(term)) {
+        points += SEARCH_WEIGHT.title * (new RegExp(String.raw`\b` + term, "u").test(title) ? 1 : 0.5);
+      }
+      if (topics.some((t) => t.includes(term))) points += SEARCH_WEIGHT.topic;
+      if (source.includes(term)) points += SEARCH_WEIGHT.source;
+      if (body.includes(term)) {
+        const occurrences = body.split(term).length - 1;
+        points += SEARCH_WEIGHT.body * (1 + Math.log2(occurrences));
+      }
+      if (points === 0) allPresent = false;
+      score += points;
+    }
+    if (!allPresent || score === 0) continue;
+    if (note.confidence === "verified") score *= 1.15;
+    if (note.confidence === "unverified") score *= 0.9;
+    hits.push({ note, score });
+  }
+  return hits.sort((a, b) => b.score - a.score).slice(0, limit).map((h) => h.note);
+}
+
+/**
+ * Trim a note for a worker reading a LIST.
+ *
+ * The body is the expensive field and usually the point, so it is summarised
+ * here and served whole by `knowledge_get`. Ten notes' full bodies in a search
+ * result is most of a context window spent on nine answers to questions nobody
+ * asked.
+ */
+const noteSummary = (note) => ({
+  id: note.id,
+  title: note.title,
+  kind: note.kind,
+  confidence: note.confidence,
+  topics: note.topics ?? [],
+  excerpt: String(note.body ?? "").slice(0, 240),
+  hasMore: String(note.body ?? "").length > 240,
+  links: (note.links ?? []).length,
+  updatedAt: note.updatedAt,
+});
+
+async function knowledgeSearch({ query = "", topic, kind, limit = 8, includeArchived = false }) {
+  oneOf(kind, KNOWLEDGE_KINDS, "kind");
+  const all = (await readState("knowledge.notes")) ?? [];
+  let notes = includeArchived ? all : all.filter((n) => !n.archived);
+  if (topic) {
+    const wanted = String(topic).trim().toLowerCase();
+    notes = notes.filter((n) => (n.topics ?? []).includes(wanted));
+  }
+  if (kind) notes = notes.filter((n) => n.kind === kind);
+
+  const capped = Math.max(1, Math.min(25, Number(limit) || 8));
+  const ranked = rankNotes(notes, query, capped);
+  return {
+    count: ranked.length,
+    of: notes.length,
+    /*
+      Said out loud, because the honesty is load-bearing. This ranks by WORDS.
+      A worker told "no match" should try different vocabulary rather than
+      concluding the vault has nothing on the subject - which is the wrong
+      conclusion to act on, and the reason the Search Service boundary exists
+      to become a vector lookup later.
+    */
+    matching: "words, not meaning - try other vocabulary before concluding it is not written down",
+    notes: ranked.map(noteSummary),
+  };
+}
+
+async function knowledgeGet({ id }) {
+  required(id, "id");
+  const all = (await readState("knowledge.notes")) ?? [];
+  const note = all.find((n) => n.id === id);
+  if (!note) throw new ActionError(`no note with id "${id}"`);
+  return {
+    ...note,
+    // Derived, exactly as the page derives it - one edge, two views.
+    linkedFrom: all
+      .filter((n) => !n.archived && (n.links ?? []).includes(note.id))
+      .map((n) => ({ id: n.id, title: n.title })),
+    linksTo: (note.links ?? [])
+      .map((linkId) => all.find((n) => n.id === linkId))
+      .filter(Boolean)
+      .map((n) => ({ id: n.id, title: n.title })),
+  };
+}
+
+async function knowledgeTopics() {
+  const all = (await readState("knowledge.notes")) ?? [];
+  const counts = new Map();
+  for (const note of all.filter((n) => !n.archived)) {
+    for (const topic of note.topics ?? []) counts.set(topic, (counts.get(topic) ?? 0) + 1);
+  }
+  return {
+    topics: [...counts.entries()]
+      .map(([topic, count]) => ({ topic, count }))
+      .sort((a, b) => b.count - a.count || a.topic.localeCompare(b.topic)),
+  };
+}
+
+/*
+  Topics are lowercased here as well as in the hook.
+
+  Not belt and braces - this is the path a MODEL writes through, and a model
+  will capitalise a proper noun every time. "Docker" and "docker" as two topics
+  is how the topic list becomes noise, and the hook's cleaning cannot help a
+  write that never goes through it.
+*/
+const cleanNoteTopics = (raw) => [
+  ...new Set(
+    (Array.isArray(raw) ? raw : []).map((t) => String(t).trim().toLowerCase()).filter(Boolean),
+  ),
+];
+
+async function knowledgeAdd({ title, body = "", kind, confidence, topics, missions, source }) {
+  required(title, "title");
+  oneOf(kind, KNOWLEDGE_KINDS, "kind");
+  oneOf(confidence, KNOWLEDGE_CONFIDENCE, "confidence");
+
+  const now = new Date().toISOString();
+  const note = {
+    id: generateId(),
+    title: String(title).trim(),
+    body: String(body ?? ""),
+    kind: kind ?? "note",
+    // Unverified by default, and honest: something just written down has by
+    // definition not been checked since. A model asserting otherwise about its
+    // own output is exactly the claim this field exists to prevent.
+    confidence: confidence ?? "unverified",
+    topics: cleanNoteTopics(topics),
+    links: [],
+    missions: Array.isArray(missions) ? missions : [],
+    ...(source ? { source: String(source) } : {}),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await withState("knowledge.notes", (current) => [note, ...(current ?? [])]);
+  return { id: note.id, title: note.title, confidence: note.confidence };
+}
+
+async function knowledgeUpdate({ id, title, body, kind, confidence, topics, source }) {
+  required(id, "id");
+  oneOf(kind, KNOWLEDGE_KINDS, "kind");
+  oneOf(confidence, KNOWLEDGE_CONFIDENCE, "confidence");
+
+  let found = false;
+  await withState("knowledge.notes", (current) =>
+    (current ?? []).map((n) => {
+      if (n.id !== id) return n;
+      found = true;
+      return {
+        ...n,
+        ...(title !== undefined ? { title: String(title).trim() } : {}),
+        ...(body !== undefined ? { body: String(body) } : {}),
+        ...(kind !== undefined ? { kind } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(topics !== undefined ? { topics: cleanNoteTopics(topics) } : {}),
+        ...(source !== undefined ? { source: String(source) } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+    }),
+  );
+  if (!found) throw new ActionError(`no note with id "${id}"`);
+  return { id, updated: true };
+}
+
+/** Link or unlink two notes. Calling it again with the same pair removes it. */
+async function knowledgeLink({ id, linkTo }) {
+  required(id, "id");
+  required(linkTo, "linkTo");
+  if (id === linkTo) throw new ActionError("a note cannot link to itself");
+
+  const all = (await readState("knowledge.notes")) ?? [];
+  if (!all.some((n) => n.id === id)) throw new ActionError(`no note with id "${id}"`);
+  if (!all.some((n) => n.id === linkTo)) throw new ActionError(`no note with id "${linkTo}"`);
+
+  let linked = false;
+  await withState("knowledge.notes", (current) =>
+    (current ?? []).map((n) => {
+      if (n.id !== id) return n;
+      const has = (n.links ?? []).includes(linkTo);
+      linked = !has;
+      return {
+        ...n,
+        links: has ? n.links.filter((l) => l !== linkTo) : [...(n.links ?? []), linkTo],
+        updatedAt: new Date().toISOString(),
+      };
+    }),
+  );
+  return { id, linkTo, linked };
+}
+
+/*
+  Archive, never delete - the hook's bargain, mirrored.
+
+  There is no undo anywhere in Operator (OPS-020), and a note is the least
+  recoverable thing in the store: a mission can be described again from the
+  work, a gym session from the programme, but something worked out once and
+  written down is gone. So there is no knowledge_delete action at all, which is
+  a deliberate absence rather than an oversight.
+*/
+async function knowledgeArchive({ id, archived = true }) {
+  required(id, "id");
+  let found = false;
+  await withState("knowledge.notes", (current) =>
+    (current ?? []).map((n) => {
+      if (n.id !== id) return n;
+      found = true;
+      return { ...n, archived: Boolean(archived), updatedAt: new Date().toISOString() };
+    }),
+  );
+  if (!found) throw new ActionError(`no note with id "${id}"`);
+  return { id, archived: Boolean(archived) };
+}
+
 async function missionsList({ status, includeArchived = false }) {
   oneOf(status, MISSION_STATUSES, "status");
   const missions = (await readState("missions.records")) ?? [];
@@ -1556,6 +1810,50 @@ const ACTIONS = {
       "Calendar events from a date onwards, with recurring series already expanded and skipped days removed. Use for \"what's on today/this week\".",
     params: "from? (YYYY-MM-DD or \"today\"), days? (default 7, max 90)",
     handler: calendarRange,
+  },
+  knowledge_search: {
+    description:
+      "Search the Knowledge Vault - the owner's own notes, commands and resources. Use this BEFORE working something out from scratch or reading source: if he has solved it before, the answer is here with a confidence level attached. Ranks by words rather than meaning, so try different vocabulary before concluding nothing is written down.",
+    params:
+      "query? (words to look for), topic? (exact topic tag), kind? (note|command|resource), limit? (default 8, max 25), includeArchived? (default false)",
+    handler: knowledgeSearch,
+  },
+  knowledge_get: {
+    description:
+      "One note in full, with what it links to and what links to it. Use after knowledge_search when the excerpt is not enough.",
+    params: "id",
+    handler: knowledgeGet,
+  },
+  knowledge_topics: {
+    description:
+      "Every topic in the vault with how many notes carry it. Use to see what is covered.",
+    params: "none",
+    handler: knowledgeTopics,
+  },
+  knowledge_add: {
+    description:
+      "Write a new note into the vault. Use when something was worked out that would cost time to work out again. Confidence defaults to unverified - do not claim verified for something you have not actually checked.",
+    params:
+      "title, body?, kind? (note|command|resource), confidence? (unverified|works|verified), topics? (array of strings), missions? (array of mission ids), source? (a URL)",
+    handler: knowledgeAdd,
+  },
+  knowledge_update: {
+    description:
+      "Edit an existing note. Every field is optional; only what is passed changes. Raising confidence to verified means it was actually re-checked.",
+    params: "id, title?, body?, kind?, confidence?, topics?, source?",
+    handler: knowledgeUpdate,
+  },
+  knowledge_link: {
+    description:
+      "Link one note to another. Calling it again with the same pair removes the link. Backlinks are derived, so only the forward direction is stored.",
+    params: "id (the note that points), linkTo (the note it points at)",
+    handler: knowledgeLink,
+  },
+  knowledge_archive: {
+    description:
+      "Archive a note, or restore one. There is deliberately no delete - a note is the least recoverable thing in the store.",
+    params: "id, archived? (default true)",
+    handler: knowledgeArchive,
   },
   missions_list: {
     description: "The Mission Board: names, ids, status, progress, milestone counts.",
@@ -1829,6 +2127,18 @@ const GROUP_WORDS = {
     /\b(calendar|event|events|schedule|scheduled|appointment|meeting|shift|shifts|book(ed|ing)?|diary|recurring|occurrence|next week|this week|tomorrow|today)\b/i,
   routine: /\b(routine|daily|habit|habits|morning|evening|night|checklist|step|steps|tick|ticked)\b/i,
   jobs: /\b(job|jobs|turn|turns|conversation|thread|tab|tabs|event log|transcript)\b/i,
+  /*
+    Wider than the others, deliberately.
+
+    Every other group answers "is this request ABOUT the gym / missions / the
+    calendar". This one answers "might he already have written this down",
+    which is worth asking about far more sentences than it strictly matches.
+    The cost of offering the vault actions when they were not needed is a few
+    hundred tokens of declarations; the cost of not offering them is a worker
+    rediscovering something at Claude's rate that was already written down.
+  */
+  knowledge:
+    /\b(note|notes|vault|knowledge|wiki|document(ed|ation)?|how do i|how to|remember|reference|command|snippet|look(ed)? up|worked out|figured out|topics?|tags?)\b/i,
   device: /\b(time|clock|date|what day|listen|hear|mic|microphone|speak|screen|focus|fullscreen|summon|music|play|pause|volume)\b/i,
 };
 

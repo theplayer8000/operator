@@ -16,6 +16,7 @@ import Orchestrator from "@/pages/Orchestrator";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
+import Knowledge from "@/pages/Knowledge";
 import MissionMap from "@/pages/MissionMap";
 import Statistics from "@/pages/Statistics";
 import OperatorMobile from "@/pages/OperatorMobile";
@@ -69,6 +70,13 @@ export default function App() {
         */}
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/routine" element={<DailyRoutine />} />
+        {/*
+          Two routes, ONE page. The parameter only decides which note is open,
+          so "one page per feature" holds while a note still gets a real URL —
+          which matters because the Mission Board links straight at one.
+        */}
+        <Route path="/knowledge" element={<Knowledge />} />
+        <Route path="/knowledge/:id" element={<Knowledge />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
         <Route path="/calendar" element={<Events />} />

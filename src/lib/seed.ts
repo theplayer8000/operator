@@ -10,6 +10,7 @@ import type {
   CalendarEvent,
   UpdateEntry,
   WeeklyGoal,
+  KnowledgeNote,
 } from "./types";
 import { toDateKey } from "./time";
 
@@ -624,3 +625,15 @@ function hoursAgo(n: number): string {
   d.setHours(d.getHours() - n);
   return d.toISOString();
 }
+
+/*
+  The vault starts empty, deliberately.
+
+  Every other feature here seeds an example or two so a fresh install has
+  something to look at. A knowledge base seeded with invented notes is worse
+  than an empty one: the whole value is that everything in it is something the
+  owner actually established, and a demo note about Docker is a lie sitting
+  next to the truth with the same styling. The empty state explains itself
+  instead.
+*/
+export const seedKnowledgeNotes: KnowledgeNote[] = [];

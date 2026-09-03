@@ -6,6 +6,7 @@ import {
   Target,
   CalendarClock,
   History,
+  ArrowUpRight,
   BookOpen,
   Scale,
   Map as MapIcon,
@@ -16,6 +17,8 @@ import {
 } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
+import { useKnowledge } from "@/hooks/useKnowledge";
+import { CONFIDENCE_META } from "@/components/knowledge/knowledgeMeta";
 import type { MissionDifficulty, MissionStatus } from "@/lib/types";
 import { STATUS_OPTIONS, DIFFICULTY_OPTIONS, STATUS_META, DIFFICULTY_META } from "@/components/missions/MissionBadges";
 import EditableField from "@/components/missions/EditableField";
@@ -57,10 +60,20 @@ export default function MissionDetail() {
     setArchived,
     deleteMission,
   } = useMissionBoard();
+  const vault = useKnowledge();
 
   const [tab, setTab] = useState<TabId>("overview");
 
   const mission = getMission(id);
+  /*
+    Notes attached to this mission, derived through the vault's own hook.
+
+    A read across features, which the architecture permits: a page may READ
+    another feature's hook as long as it mutates nothing, and this mutates
+    nothing — attaching happens from the note.
+  */
+  const vaultNotes = mission ? vault.forMission(mission.id) : [];
+
   const predecessors = useMemo(
     () => missions.filter((m) => mission?.dependsOn.includes(m.id)),
     [missions, mission]
@@ -358,10 +371,43 @@ export default function MissionDetail() {
               onChange={(v) => updateMission(mission.id, { relatedLearning: v })}
               placeholder="Topics, skills, resources this mission draws on..."
             />
-            <ReservedSection
-              icon={<BookOpen size={15} />}
-              message="Will link directly to Knowledge Vault entries once that page is built."
-            />
+            {/*
+              The reserved section this replaced said "once that page is
+              built". It is built.
+
+              Read-only here, deliberately. Attaching a note to a mission is
+              done from the note, because that is where you are when you decide
+              it is knowledge FOR something — and one direction of editing means
+              one place the relationship can be wrong.
+            */}
+            <section>
+              <h3 className="text-xs font-mono uppercase tracking-wider text-ink-700 mb-2 flex items-center gap-1.5">
+                <BookOpen size={13} /> Knowledge Vault
+              </h3>
+              {vaultNotes.length === 0 ? (
+                <ReservedSection
+                  icon={<BookOpen size={15} />}
+                  message="No notes attached yet. Open a note in the Knowledge Vault and attach it to this mission."
+                />
+              ) : (
+                <div className="space-y-1">
+                  {vaultNotes.map((note) => (
+                    <button
+                      key={note.id}
+                      onClick={() => navigate(`/knowledge/${note.id}`)}
+                      className="w-full min-h-11 px-3 py-2 rounded-badge bg-base-700/40 hover:bg-base-700 text-left flex items-center gap-2.5 transition-colors"
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full shrink-0 ${CONFIDENCE_META[note.confidence].dot}`}
+                        title={CONFIDENCE_META[note.confidence].help}
+                      />
+                      <span className="text-sm text-ink-300 truncate flex-1">{note.title}</span>
+                      <ArrowUpRight size={14} className="shrink-0 text-ink-700" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         )}
 
