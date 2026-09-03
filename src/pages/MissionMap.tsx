@@ -787,6 +787,7 @@ export default function MissionMap() {
       sensible extent to fit: fitting on frame zero fits the seed ring.
     */
     if (fittedFor.current !== source) {
+      const firstEver = fittedFor.current === null;
       fittedFor.current = source;
       /*
         About four seconds of the camera keeping up, which is roughly how long
@@ -808,7 +809,20 @@ export default function MissionMap() {
         try to move — which reads as the map being locked rather than as it
         being helpful. A short fit is all it wants.
       */
-      follow.current = source === "vault" ? 900 : 40;
+      /*
+        The mission map has always OPENED AT 1:1 and never fitted itself.
+        Adding a fit on mount changed the one view he uses most: it came up
+        small and far away, which is what he read as it being frozen. The nodes
+        were moving; they were just tiny.
+
+        So the vault always gets the long follow — 315 notes do not fit at 1:1
+        and there is nothing to preserve. Missions gets a short fit only when
+        SWITCHING BACK from the vault, where you would otherwise arrive at
+        whatever zoom the vault left behind. On first load it gets nothing at
+        all, which is what it did before any of this.
+      */
+      if (source === "vault") follow.current = 900;
+      else if (!firstEver) follow.current = 40;
     }
   }, [nodes, edges, source]);
 
