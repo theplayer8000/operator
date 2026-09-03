@@ -113,6 +113,49 @@ export function noteSuccess(provider) {
   unavailable.delete(provider);
 }
 
+/**
+ * How long this worker is sidelined for, in milliseconds. `0` means it is fine.
+ *
+ * Exported for the job that was *running* when the limit hit. Sidelining only
+ * ever helped the NEXT job — the one already in flight failed and sat there
+ * until somebody tapped Retry, which sent it back to the worker that had just
+ * said no. `jobs.mjs` uses this to decide between waiting the window out and
+ * moving the work somewhere else.
+ */
+export function cooldownRemaining(provider) {
+  const entry = unavailable.get(provider);
+  if (!entry) return 0;
+  const left = entry.until - Date.now();
+  if (left <= 0) {
+    unavailable.delete(provider);
+    return 0;
+  }
+  return left;
+}
+
+/**
+ * Does this request need a worker that can touch the repo?
+ *
+ * The same two-stage read as `routeTask` — rules, then the classifier — but
+ * asked about the WORK rather than about a worker, because after a failure the
+ * question is different. `routeTask` would happily name a replacement: the
+ * failed worker is sidelined by then, so the capable one drops out of the list
+ * and the answer comes back as whatever is left, with no way to tell "this is
+ * fine anywhere" from "this needs Claude and Claude is gone".
+ *
+ * Unknown counts as code. Handing a repo task to a worker with no filesystem
+ * produces a confident answer about work it did not do, which is the one
+ * outcome worse than waiting.
+ */
+export async function needsCode(prompt, signal) {
+  const text = String(prompt ?? "").trim();
+  if (!text) return false;
+  if (NEEDS_CODE.some((re) => re.test(text))) return true;
+  if (JUST_DATA.some((re) => re.test(text)) && text.length < 200) return false;
+  const decided = await classify(text, signal);
+  return decided ? decided.provider === "claude-code" : true;
+}
+
 function usable(ids) {
   const now = Date.now();
   const free = ids.filter((id) => {

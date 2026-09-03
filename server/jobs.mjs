@@ -70,7 +70,7 @@ import { fileURLToPath } from "node:url";
 import { resolveExecutable } from "./terminal.mjs";
 import { claimResources, removeJobResources } from "./uploads.mjs";
 import { DEFAULT_PROVIDER, listProviders, runWorkerTurn, selectWorker } from "./providers.mjs";
-import { routeTask, noteFailure, noteSuccess } from "./routing.mjs";
+import { routeTask, noteFailure, noteSuccess, cooldownRemaining, needsCode } from "./routing.mjs";
 import { verifyWorkspace } from "./verify.mjs";
 import {
   checkCeiling,
@@ -976,6 +976,15 @@ function blankJob(id) {
     handoff: null,
     /** In-memory retry payload plus persistable execution facts. */
     attempts: [],
+    /**
+     * Automatic recoveries spent on this job — see `recoverFromLimit`. In
+     * memory, and deliberately not reset by a manual retry: two failed
+     * hand-offs mean the owner should look, not that the job should keep
+     * shopping for a worker that will take it.
+     */
+    recoveries: 0,
+    /** `{ until, timer, provider }` while a turn waits out a worker's cooldown. */
+    backoff: null,
   };
 }
 
@@ -989,6 +998,15 @@ function blankJob(id) {
 function halt(job) {
   if (job.proc) job.proc.kill();
   if (job.abort) job.abort.abort();
+  /*
+    A turn waiting out a worker's cooldown is a turn this job is in the middle
+    of, even though nothing is running. Without this, Stop would look like it
+    worked and the timer would put the job back on the queue minutes later.
+  */
+  if (job.backoff) {
+    clearTimeout(job.backoff.timer);
+    job.backoff = null;
+  }
 }
 
 /**
@@ -1746,23 +1764,174 @@ async function runViaSdk(job, prompt) {
       retry after the window genuinely resets.
     */
     if (kind === "daily") markQuotaExhausted(job.provider, { window: "day", source: "provider" });
-    if (kind) {
-      emit(job, "text", {
-        text:
-          kind === "daily"
-            ? `_${job.provider} is out of quota for today — later work will route elsewhere._`
-            : `_${job.provider} is unavailable right now — later work will route elsewhere._`,
-      });
+    /*
+      And carry THIS turn on, not just the next one.
+
+      `noteFailure` above only helps the next job. The one that was running when
+      the limit hit still died on the spot and waited for a tap — and `retry()`
+      reuses `job.provider`, so that tap went straight back to the worker that
+      had just said no. Same shape as the 2026-08-21 complaint the cooldown was
+      built for, one job to the left of it.
+    */
+    if (!(kind && (await recoverFromLimit(job, kind, failure)))) {
+      if (kind) {
+        emit(job, "text", {
+          text:
+            kind === "daily"
+              ? `_${job.provider} is out of quota for today — later work will route elsewhere._`
+              : `_${job.provider} is unavailable right now — later work will route elsewhere._`,
+        });
+      }
+      setStatus(job, "failed", failure);
     }
-    setStatus(job, "failed", failure);
   } else {
     // A worker that just answered is plainly back, whatever it said last time.
     noteSuccess(job.provider);
+    // And the job's recovery allowance is about a run of failures, not a
+    // lifetime total — a thread that has worked since is not on its last one.
+    job.recoveries = 0;
     setStatus(job, "complete");
   }
 
   void persist();
   pump();
+}
+
+// --- when a worker says "not now" -----------------------------------------
+//
+// Two answers, and which one is right depends entirely on whether anywhere
+// else can actually do the work:
+//
+//   reroute   the work does not need a repo, or another worker can reach one.
+//             Requeued immediately on the new worker, with a fresh session —
+//             sessions are not transferable, and pretending otherwise would
+//             hand the next worker a `--resume` id it has never seen.
+//   back off  nothing else can do it. The turn is held, the session is kept,
+//             and it runs again when the window is up. A session cap lifts in
+//             half an hour and Claude Code's session survives on disk, so
+//             waiting genuinely finishes the work; rerouting to a worker with
+//             no filesystem produces a confident answer about work it did not
+//             do, which is worse than being slow (see routing.mjs's header).
+//
+// Only ever for an availability failure. `limitKind` is conservative on
+// purpose: an ordinary error — a bad tool call, a bug, a refusal — is not a
+// reason to spend another worker's turn on the same broken instruction.
+
+/**
+ * Automatic recoveries one job may spend before it stops and asks.
+ *
+ * Two, because the useful cases are one hand-off and one wait. A third is a
+ * job being passed around a set of workers that all decline it, which is the
+ * owner's problem to look at, not a loop to leave running on his behalf.
+ */
+const MAX_RECOVERIES = 2;
+
+/**
+ * The longest a job will hold a turn waiting for its worker to come back.
+ *
+ * A session cap fits inside this; a spent daily quota does not, and waiting six
+ * hours on a live job is indistinguishable from being stuck. Longer than this,
+ * it fails and says so.
+ */
+const MAX_BACKOFF_MS = 30 * 60_000;
+
+/**
+ * @returns {Promise<boolean>} true if the turn now has a future — the caller
+ *   must not mark the job failed.
+ */
+async function recoverFromLimit(job, kind, failure) {
+  const attempt = job.attempts.at(-1);
+  const prompt = attempt?.prompt;
+  // A job restored from disk has the facts of its attempts but not their
+  // prompts, so there is nothing to re-run. Same limit `retry()` states.
+  if (!prompt) return false;
+  if (job.recoveries >= MAX_RECOVERIES) return false;
+
+  const here = listProviders().find((p) => p.id === job.provider);
+  const hasTools = here?.capabilities?.tools === true;
+
+  /*
+    Never escalate.
+
+    A job on a capability-only worker may have been started by a caller with no
+    terminal armed, and `executionAllowed` is a fact about that request, not
+    about this job — it is not knowable here. So a reroute moves sideways or
+    down, never into a worker that can run commands. The worst case is a job
+    that waits; the worst case of guessing is an unarmed device getting
+    arbitrary execution through a failure path.
+  */
+  const candidates = listProviders().filter(
+    (p) =>
+      p.id !== job.provider &&
+      cooldownRemaining(p.id) === 0 &&
+      (hasTools || p.capabilities?.tools !== true),
+  );
+
+  const target =
+    hasTools && (await needsCode(prompt))
+      ? candidates.find((p) => p.capabilities?.tools === true)
+      : candidates[0];
+
+  const waitMs = cooldownRemaining(job.provider);
+  // Nothing to hand it to, and nothing worth waiting for.
+  if (!target && (waitMs <= 0 || waitMs > MAX_BACKOFF_MS)) return false;
+
+  job.recoveries += 1;
+  // Close this attempt by hand: `setStatus` does it for a terminal status, and
+  // the whole point here is that the job is not reaching one.
+  attempt.status = "failed";
+  attempt.endedAt = new Date().toISOString();
+  attempt.error = failure;
+  job.error = null;
+  job.pending.unshift(prompt);
+
+  if (target) {
+    const previous = here?.label ?? job.provider;
+    const selection = selectWorker(target.id, target.defaultModel);
+    job.provider = selection.provider;
+    job.model = selection.model;
+    // A session belongs to the worker that made it. The new one starts clean.
+    job.sessionId = null;
+    /*
+      `routed`, the same event the router emits at creation, so the reason a
+      job changed hands shows up in the thread the same way the original
+      decision did. Routing that happens silently is indistinguishable from
+      routing that is broken.
+    */
+    emit(job, "routed", {
+      provider: job.provider,
+      model: job.model,
+      label: target.label ?? target.id,
+      why: `${previous} ${kind === "daily" ? "is out of quota for today" : "is unavailable"} — carrying on here, from a fresh session`,
+    });
+    setStatus(job, "queued", `rerouted from ${previous}`);
+    if (!waiting.includes(job.id)) waiting.push(job.id);
+    return true;
+  }
+
+  const minutes = Math.max(1, Math.round(waitMs / 60_000));
+  const timer = setTimeout(() => {
+    // Everything that ends a job — cancel, close, clear — goes through halt(),
+    // which drops the backoff. This checks its own identity anyway: a job can
+    // be removed and its id reused by nothing, but a second failure could have
+    // replaced the timer while this one was pending.
+    if (jobs.get(job.id) !== job || job.backoff?.timer !== timer) return;
+    job.backoff = null;
+    if (!job.pending.length) return;
+    emit(job, "text", { text: `_Trying ${job.provider} again._` });
+    if (!waiting.includes(job.id)) waiting.push(job.id);
+    pump();
+    // A second past the window, so the cooldown has genuinely lapsed by the
+    // time `usable()` is consulted rather than lapsing during the call.
+  }, waitMs + 1_000);
+  timer.unref?.();
+  job.backoff = { until: Date.now() + waitMs, timer, provider: job.provider };
+
+  emit(job, "text", {
+    text: `_${here?.label ?? job.provider} is unavailable and nothing else here can do this work — holding this turn and trying again in ${minutes} minute${minutes === 1 ? "" : "s"}._`,
+  });
+  setStatus(job, "queued", `waiting ${minutes}m for ${job.provider}`);
+  return true;
 }
 
 async function runTurn(job) {

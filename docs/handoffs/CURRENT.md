@@ -1,6 +1,8 @@
 # Current work
 
-Nothing in flight. Everything committed and pushed — `origin/main` at `bc47c60`.
+Nothing in flight. **`agent` holds one commit that is not on `main` yet** —
+`64bfc08`, the failed-job reroute below. It is server-only, so merging it needs
+a restart to take effect.
 
 ## FIRST THING TO CHECK — it is probably not broken
 
@@ -11,6 +13,25 @@ speaker in the chat to hear replies` underneath; if that line is showing, that
 is the answer.
 
 ## Landed 2026-09-03
+
+**A failed job backs off and reroutes itself** (`64bfc08`, on `agent`).
+`server/jobs.mjs` + `server/routing.mjs`; no frontend change, because it reuses
+the `routed` and `text` events the chat already renders.
+
+The cooldown only ever helped the NEXT job — the one that was running when a
+limit hit died on the spot, and `retry()` reuses `job.provider`, so the tap went
+back to the worker that had just said no. On an availability failure
+(`limitKind` only; ordinary errors are untouched) the turn now either moves to
+another worker with a fresh session, or holds and reruns itself when the window
+is up. Two recoveries per job, reset by a successful turn; back-off capped at 30
+minutes, so a spent daily quota still fails and says so instead of looking stuck
+for six hours.
+
+Two rules worth not reversing: a reroute **never escalates** to a `tools: true`
+worker (`executionAllowed` is a fact about a request, not about a job), and a
+repo task is never handed to a worker with no filesystem — that is what the new
+`needsCode()` in `routing.mjs` decides. Syntax-checked; **not yet exercised
+against a real limit**, which needs a worker to actually run out.
 
 **The Knowledge Vault is real and full.** 692 notes · 4,124 links · 7 adrift ·
 133 topics. 320 extracted from this repo's own docs, 372 from the ChatGPT
