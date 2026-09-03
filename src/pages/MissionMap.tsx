@@ -800,7 +800,15 @@ export default function MissionMap() {
         over a graph still growing, too long and it hovers over a settled one.
       */
       heat.current = 1;
-      follow.current = 900;
+      /*
+        Only the big graph needs the camera to chase it.
+
+        Twelve missions settle inside a second, so 900 frames of re-fitting is
+        fifteen seconds of the view being pulled back to centre every time you
+        try to move — which reads as the map being locked rather than as it
+        being helpful. A short fit is all it wants.
+      */
+      follow.current = source === "vault" ? 900 : 40;
     }
   }, [nodes, edges, source]);
 
@@ -913,9 +921,30 @@ export default function MissionMap() {
         settled graph nudges its neighbourhood rather than relaunching the whole
         web across the screen.
       */
-      if (pointer.current.dragging) heat.current = Math.max(heat.current, 0.34);
-      heat.current = Math.max(0.06, heat.current * 0.994);
-      const hot = heat.current;
+      /*
+        Annealing is for the BIG graph only.
+
+        This file's own docstring says the mission map never freezes — "you can
+        grab a node and throw it, the web reorganises around your hand, and it
+        keeps breathing when you let go. That difference is the whole point of a
+        display you leave running." Cooling it to a stop broke exactly that, and
+        the owner felt it immediately as the flat mission view being
+        constrained.
+
+        Twelve nodes never needed cooling anyway: they settle on their own in a
+        second because the pull home is strong at that size. The problem
+        annealing solves — a layout whose equilibrium sits tens of thousands of
+        units out — only exists once the centring has been weakened to keep
+        hundreds of nodes from collapsing into a hairball.
+      */
+      const anneals = bodies.length > 40;
+      if (anneals) {
+        if (pointer.current.dragging) heat.current = Math.max(heat.current, 0.34);
+        heat.current = Math.max(0.06, heat.current * 0.994);
+      } else {
+        heat.current = 1;
+      }
+      const hot = anneals ? heat.current : 1;
 
       for (let i = 0; i < bodies.length; i++) {
         const a = bodies[i];
@@ -1362,10 +1391,21 @@ export default function MissionMap() {
         notes then shrinks it back to the gold speck in the photo. The screen
         floor is what actually fixes what he saw.
       */
-      const coreR = Math.max(
-        Math.min(150, CORE_R * Math.max(1, Math.sqrt(bodies.length / 12))),
-        floor(46),
-      );
+      /*
+        Both corrections, and BOTH only on the big graph.
+
+        Square root of the node count keeps the core the same proportion of a
+        layout that grows as nodes tile an area; the screen floor stops the zoom
+        that fits 315 notes from shrinking it back to a speck.
+
+        Neither applies to twelve missions, where the core is already the right
+        size at the zoom you look at it — and the screen floor in particular
+        would have doubled it the moment you zoomed out, which is a change to a
+        view nobody asked to change.
+      */
+      const coreR = anneals
+        ? Math.max(Math.min(150, CORE_R * Math.max(1, Math.sqrt(bodies.length / 12))), floor(46))
+        : CORE_R;
       drawCore(ctx, { tick, lift, speaking: v.speaking, busy, load, radius: coreR });
 
       // Nodes
