@@ -31,6 +31,9 @@ import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
 import { recordRequest, noteIdentity, listClients } from "./clients.mjs";
 import { claudeStatus } from "./status.mjs";
+// Only for handing over the listener — see onShutdown's comment for why this
+// direction, and not reboot.mjs reaching back for it.
+import { onShutdown } from "./reboot.mjs";
 import { identify, tokenConfigured } from "./auth.mjs";
 import {
   readOutput,
@@ -1289,6 +1292,73 @@ async function scheduledBackup(reason) {
     console.error(`[operator] backup (${reason}) threw: ${err.message}`);
   }
 }
+
+/**
+ * Stop accepting requests, and resolve once the listener is genuinely shut.
+ *
+ * There was no graceful path at all: no SIGINT handler, no `server.close()`,
+ * just `process.exit()`. Every in-flight request and every SSE stream was
+ * severed at the socket, so a phone mid-`PUT /api/state/<key>` got a connection
+ * reset rather than a completed write.
+ *
+ * **Closing the connections is not optional here.** `close()` stops new
+ * connections but waits for existing ones to end on their own, and this server
+ * holds keep-alive sockets and long-lived job event streams that never will —
+ * so without that the close hangs until the deadline every single time, which
+ * would make the graceful path slower than the kill it replaced. See the note
+ * below on why it happens in two steps rather than one.
+ *
+ * Bounded, because a shutdown that can block forever is not a shutdown. The
+ * caller gets `false` on timeout so it can say so rather than assume.
+ */
+export function closeHttp({ timeoutMs = 5_000, graceMs = 1_500 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (clean) => {
+      if (settled) return;
+      settled = true;
+      resolve(clean);
+    };
+    const timers = [];
+    const stop = () => timers.forEach(clearTimeout);
+    const arm = (fn, ms) => {
+      const t = setTimeout(fn, ms);
+      t.unref();
+      timers.push(t);
+    };
+
+    server.close(() => {
+      stop();
+      done(true);
+    });
+
+    /*
+      Idle keep-alive sockets go NOW; everything else gets a moment.
+
+      The distinction matters because of who calls this. `reboot.mjs` schedules
+      the shutdown a beat after answering the request that asked for it, so at
+      this instant there is very likely a response still flushing down one of
+      these sockets — and `closeAllConnections()` would destroy it, turning
+      "restarting: true" into a connection reset. That is the one message the
+      caller needs.
+
+      So: idle connections immediately (they are the ones that would otherwise
+      hold `close()` open indefinitely), and the forced sweep only after the
+      grace, for the stragglers that genuinely never end on their own — the job
+      event streams.
+    */
+    server.closeIdleConnections?.();
+    arm(() => server.closeAllConnections?.(), Math.min(graceMs, timeoutMs));
+    arm(() => done(false), timeoutMs);
+  });
+}
+
+/*
+  Hand the closer to reboot.mjs, which owns the shutdown order. Done here rather
+  than there because that module is also reachable from the CLI, where there is
+  no listener at all.
+*/
+onShutdown(closeHttp);
 
 server.listen(PORT, HOST, () => {
   console.log(`[operator] storage server on http://localhost:${PORT}`);

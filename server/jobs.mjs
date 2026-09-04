@@ -958,6 +958,21 @@ async function persist() {
   }
 }
 
+/**
+ * Wait until the job index is actually on disk.
+ *
+ * Every other `persist()` call is `void`-ed, which is correct in the middle of
+ * a turn and wrong on the way out: `process.exit()` does NOT wait for pending
+ * I/O, so an un-awaited write can be cut between `writeFile` and `rename` —
+ * leaving an orphan `.tmp` and the previous jobs.json. Tmp-then-rename stops a
+ * TRUNCATED file; it does nothing for a write that never got to run.
+ *
+ * A shutdown calls this and awaits it. Nothing else needs to.
+ */
+export function flush() {
+  return persist();
+}
+
 async function restore() {
   try {
     if (!existsSync(JOBS_FILE)) return;
@@ -2824,6 +2839,20 @@ export function stopAll(why = "stopped by voice") {
   waiting.length = 0;
 
   if (ids.length) console.log(`[operator] ${why} — cancelled ${ids.length} job(s)`);
+  /*
+    Save it, exactly as remove() and clear() already do.
+
+    This was the hole under the "soft" restart. stopAll marked every job
+    cancelled IN MEMORY and wrote none of it, so reboot.mjs — the caller this
+    exists for — exited before anything reached disk and data/jobs.json kept the
+    attempt recorded as "running". That is precisely the state the call was
+    added to prevent, and the comment above it in reboot.mjs claimed it did.
+
+    Fire-and-forget here matches every other call site and is right for the
+    voice "stop everything", which carries on running afterwards. A shutdown
+    must not rely on it — see flush().
+  */
+  if (ids.length) void persist();
   return { stopped: ids.length, ids };
 }
 
@@ -2854,6 +2883,9 @@ export function stop(id, why = "stopped") {
   if (at >= 0) waiting.splice(at, 1);
 
   console.log(`[operator] job ${id} ${why}`);
+  // Same reason as stopAll: a cancellation only in memory is a cancellation
+  // that the next restart silently un-does.
+  void persist();
   return { stopped: true, id, status: job.status };
 }
 

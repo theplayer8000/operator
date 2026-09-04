@@ -18,6 +18,23 @@
 // cancel the live ones properly so they are recorded as cancelled and their
 // workers are halted, persist, and only then exit.
 //
+// ## It has to be AWAITED, and the first version was not
+//
+// The first version did all of the above and then called `process.exit(0)`
+// behind a 750ms `setTimeout`, awaiting none of it. That is not a graceful
+// shutdown, it is a kill with a pause in front:
+//
+//   - `stopAll()` never called `persist()` at all, so the cancellations existed
+//     only in memory and `data/jobs.json` kept the attempt recorded as
+//     "running" — the exact state the call is here to prevent.
+//   - `process.exit()` does not wait for pending I/O, so any write that WAS in
+//     flight could be cut between `writeFile` and `rename`.
+//   - The HTTP listener was never closed, so in-flight requests and event
+//     streams were severed at the socket.
+//
+// The store survived all of it, because `store.mjs` is atomic per call. The job
+// bookkeeping — the entire thing the soft stop was added for — did not.
+//
 // ## Why exit 0 and not 75
 //
 // 75 asks the supervisor to start the child again — that is the shallow restart
@@ -62,6 +79,27 @@ const PHRASE = (process.env.OPERATOR_RESTART_PHRASE ?? "").trim() || DEFAULT_PHR
 const PHRASE_IS_SECRET = Boolean((process.env.OPERATOR_RESTART_PHRASE ?? "").trim());
 
 export class RestartRefused extends Error {}
+
+/**
+ * The HTTP listener, handed over by whoever owns it.
+ *
+ * Registered rather than imported, and that is not style. This module is
+ * reachable from `scripts/operator-action.mjs` (CLI → actions.mjs → here),
+ * where `index.mjs` has never been loaded — so an `import("./index.mjs")` to
+ * fetch its closer would not fetch anything, it would EXECUTE it, booting a
+ * second server inside the CLI process and binding the port. Registration is
+ * also the direction that avoids the cycle: index.mjs already depends on this
+ * file, and nothing here depends on index.mjs.
+ *
+ * Null when nobody registered — a CLI-triggered restart has no listener of its
+ * own to close, and the drain simply skips that step.
+ */
+let closeListener = null;
+
+/** Called once by index.mjs at startup. */
+export function onShutdown(close) {
+  closeListener = typeof close === "function" ? close : null;
+}
 
 /**
  * Compare loosely enough to survive being spoken.
@@ -132,7 +170,51 @@ export async function fullRestart({ reason = "restart requested", graceMs = 20_0
   };
 }
 
+/**
+ * How long the whole drain gets before it stops being graceful.
+ *
+ * Deliberately far shorter than the grace `restart-operator.mjs` allows: that
+ * one is the backstop for a server that will not go, and it should never be the
+ * thing we are relying on. If the drain cannot finish in this, going now and
+ * being honest about it beats hanging.
+ */
+const DRAIN_MS = 8_000;
+
+/** Bound a promise that has no timeout of its own. Resolves false if it wins. */
+function within(promise, ms) {
+  return Promise.race([
+    promise.then(() => true),
+    new Promise((resolve) => {
+      const t = setTimeout(() => resolve(false), Math.max(0, ms));
+      t.unref();
+    }),
+  ]);
+}
+
 async function shutdown(reason) {
+  const deadline = Date.now() + DRAIN_MS;
+  const left = () => Math.max(0, deadline - Date.now());
+
+  /*
+    Order is the design here, and it is: stop listening, then cancel, then save.
+
+    Listening first, because anything that arrives after this point would be
+    work started by a server that is leaving — including a queued turn that
+    `stopAll` has already walked past.
+  */
+  if (closeListener) {
+    try {
+      const clean = await closeListener({ timeoutMs: Math.min(left(), 5_000) });
+      console.log(
+        clean
+          ? "[operator] restart: stopped listening"
+          : "[operator] restart: listener did not close in time — continuing anyway",
+      );
+    } catch (err) {
+      console.warn(`[operator] restart: could not close the listener: ${err?.message ?? err}`);
+    }
+  }
+
   try {
     /*
       Cancel live work through the job runner rather than just exiting.
@@ -147,6 +229,18 @@ async function shutdown(reason) {
     const jobs = await import("./jobs.mjs");
     const stopped = jobs.stopAll(reason);
     if (stopped.stopped) console.log(`[operator] restart: cancelled ${stopped.stopped} job(s)`);
+
+    /*
+      And WAIT for that to reach disk. This is the line the first version was
+      missing: `stopAll` schedules a save, `process.exit` does not wait for it,
+      and the cancellation it just recorded never lands.
+    */
+    const saved = await within(jobs.flush(), left());
+    console.log(
+      saved
+        ? "[operator] restart: job index saved"
+        : "[operator] restart: job index did NOT save in time — a cancelled turn may read as running",
+    );
   } catch (err) {
     // A restart must not be blocked by the tidy-up failing. Say so and go.
     console.warn(`[operator] restart: could not stop jobs cleanly: ${err?.message ?? err}`);
@@ -154,9 +248,10 @@ async function shutdown(reason) {
 
   console.log("[operator] restarting fully — the launcher will start it again");
   /*
-    A moment for those writes to land and for the log to flush. The store is
-    atomic per call so nothing is buffered, but `stopAll` persists as it goes
-    and there is no value in racing it.
+    A last beat purely so the lines above reach data/serve.log — stdout is a
+    pipe to the supervisor and `process.exit` truncates it too. Everything that
+    MATTERS has been awaited by now, which is the difference from the version
+    where this timeout was the mechanism.
   */
-  setTimeout(() => process.exit(0), 750);
+  setTimeout(() => process.exit(0), 150);
 }

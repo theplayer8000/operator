@@ -1,107 +1,89 @@
 # Current work
 
-**Nothing in flight. Eleven commits on `main`, gates clean, nothing pushed.**
+**The full restart drains properly now. NOT YET RESTARTED, so it is not live.**
 
-**The server has NOT been restarted.** `server/` is loaded at boot, so the AI
-Router file tools and `/api/health/checks` do not exist until it is. That is
-deliberate — a restart destroys every job's event log, and it is his call.
+`server/` is loaded at boot, so this fix — and the AI Router file tools, and
+`/api/health/checks` — only exist after a full restart. His call.
 
-## Landed 2026-09-04
+## Landed 2026-09-04 (desk session)
 
-**AI Router can touch the code** (`85e8b05`). `server/workspace.mjs` — read,
-list, search, write, edit, and a fixed set of **named** checks. No shell:
-`run_check` picks which check runs, never what runs. `jobs.mjs` had always
-passed `onPermission` into every provider's turn and only the SDK path ever
-called it, so a write raises the same card on his phone with no second
-permission model. 24 boundary checks pass: `data/` refused (the store, the
-per-device push secret, the command audit), `.git/`, `.claude/`, `.env`,
-outside-project, write-outside-checkout, and "rm -rf /" as a check name.
-`tools` stays `"capability-actions"` — that exact value is the no-escalation
-guard — and the new flag is `files: true`, which the reroute also accepts.
-ADR 0016 amended: this lets the MODEL choose files where the 09-02 amendment
-approved files a CALLER hands down. `OPERATOR_WORKER_FILES=0` revokes it.
+**The "soft stop" was a kill with a pause in front** (`server/reboot.mjs`,
+`server/jobs.mjs`, `server/index.mjs`). He caught the claim himself. Three
+separate holes:
 
-**The Health page** (`2d68e50`), `/health` + `GET /api/health/checks`. Every
-check is a failure that actually happened: `node --check` across all 55 `.mjs`
-(the gate `tsc` and `vite` do not cover), a stale `dist/`, a server older than
-`server/`, worktree drift, backups, store growth, environment set in the
-registry but absent from the process. Degrades to "could not check" rather than
-to red. **Not a plugin** — ADR 0014 is explicit that one reaches `claude-code`
-alone.
+- `stopAll()` marked every job cancelled IN MEMORY and never called `persist()`
+  — `remove()` and `clear()` both do. So `shutdown()` exited before anything
+  reached disk and `data/jobs.json` kept the attempt recorded as `"running"`,
+  which is the precise state reboot.mjs's own comment said the call prevented.
+- `process.exit(0)` behind a 750ms `setTimeout`, awaiting nothing. `exit` does
+  not wait for pending I/O, so a write in flight could be cut between
+  `writeFile` and `rename`. Tmp-then-rename stops a truncated file; it does
+  nothing for a write that never ran.
+- No `server.close()` and no SIGINT/SIGTERM handler anywhere in `server/`, so
+  in-flight requests and job event streams were severed at the socket.
 
-**The map opens up when you zoom** (`edb18de`). Separation grows faster than
-size, so the graph spills off screen and the strands stretch. Denser starfield,
-four parallax bands, drawn in screen space. **Nothing has rendered it** — no
-dev server was up, so the maths is verified and the look is not.
+Now: **stop listening → cancel → await the save → exit**, bounded by
+`DRAIN_MS` (8s) with each step reporting whether it made it. `jobs.flush()` is
+the awaitable persist; every other call site stays fire-and-forget, which is
+right mid-turn and wrong on the way out.
 
-**The clap will never touch playback** (`e6d352f`). Removed from
-`presence-layer-design.md`, and the TV framing is gone from there and from
-`dashboard-graph-design.md`. Also a new section on scheduled and triggered
-tasks, which is where the templates he saw belong.
+**`closeHttp` closes connections in two steps, deliberately.** Idle keep-alive
+sockets go immediately (they are what would otherwise hold `close()` open until
+the deadline every single time); `closeAllConnections()` only after a 1.5s grace,
+because `reboot.mjs` schedules the shutdown a beat after answering the request
+that asked for it, and the forced sweep would destroy the `restarting: true`
+reply on its way to his phone.
 
-**The launcher stopped dropping settings** (`e6d352f`). It named each variable
-and had missed ten, including `AIROUTER_API_KEY` and the VAPID keys — the same
-silent no-op that made the ceilings unreachable, fourth time. Every `OPERATOR_*`
-in the registry is forwarded as a group now (23, where the list named ~9) and
-the banner logs **names only**, because the namespace now includes secrets.
+**The listener is REGISTERED, not imported** (`onShutdown()` in reboot.mjs,
+called by index.mjs). The first cut had reboot.mjs do `await import("./index.mjs")`
+to fetch the closer — which would have booted a second server inside
+`scripts/operator-action.mjs`, since that path reaches reboot.mjs via actions.mjs
+with index.mjs never loaded. Registration also runs the way the dependency
+already points.
 
-**`land.mjs` would have crashed after merging** (`0edef41`).
-`execFile("npm.cmd")` throws EINVAL on Node 24, and it failed *after*
-`git merge --ff-only` had advanced main.
+**Verified**, not just compiled: a harness on a throwaway port and throwaway
+data files, 8 assertions, all pass. `closeHttp` resolved in **2ms** with an idle
+keep-alive socket open, and the port refused connections afterwards. `tsc -b`
+and `vite build` clean. Never calls `fullRestart` — that spawns the helper,
+which kills the real server by command-line match.
 
-**The harness is written down** (`0b9ca2e`). `runner.mjs` now passes
-`settingSources` explicitly — the SDK's own default, so nothing changes. The
-point is that a probe measured 60 inherited commands and nobody had chosen
-them.
+## The Dev page restart still hard-exits, and that is FINE
 
-## Two security findings, both fixed
+`POST /api/restart` writes the response then `setTimeout(() => process.exit(75), 150)`:
+no `stopAll`, no drain, no listener close. That is not an oversight to fix —
+**his words: that button is primarily for when he already knows everything is
+saved.** It is the fast one, taken deliberately when nothing is running, and
+draining it would add up to 8s to the only restart that is currently instant.
 
-**greptile was enabled** in `~/.claude/settings.json` — refused by ADR 0014 for
-indexing the whole repository on `api.greptile.com`, and its payload is an HTTP
-MCP server pointed there. No key was set, so nothing had left the machine. Off.
-
-**The agent worktree had its own permission file with no deny list.** Claude
-Code resolves `.claude/settings.local.json` against the session cwd, and jobs
-run in the worktree — so it is a *different gitignored file* from the one a desk
-session edits. Main had 9 allow / 17 deny; the worktree had 9 allow / **0
-deny**, and its allow rules were the single-use kind ADR 0014 called out.
-`jobs.mjs`'s `disallowedTools` still covered Operator's own jobs, so this
-mattered for a session opened by hand in that worktree. Mirrored; backup beside
-it. Written up in the vault as `verified`.
-
-## Task splitting — analysed, and the answer is NO
-
-Measured against 139 recorded turns. **Two of the three things you would build
-it for already exist**: concurrency is live at 3, and `delegate.mjs` already
-does worker-to-worker hand-down and is pre-allowed. The third is unproven.
-
-The long tail is **not** one model thinking — `job-6/7` ran 895s for $1.11 while
-`job-7/7` ran 38s for $1.25. It is tool execution and waiting on a permission
-tap, and a split shortens neither. On a median request a merge round trip costs
-more than it saves.
-
-Three things instead, cheapest first: pass `usage.rounds` through instead of the
-hardcoded `turns: 1`; have `delegate.mjs` and `semantic.mjs` call `recordTurn`
-so sub-task **quota** stops being invisible; then decide with a week of data.
+The two are now honestly different tools rather than one being a broken copy of
+the other: `/api/restart` reloads CODE and assumes a quiet server;
+`operator_restart` drains, saves, and re-reads the ENVIRONMENT. Do not "fix"
+the first into the second.
 
 ## Open, needs him
 
-1. **Restart the server**, then ask AI Router to make a small change and watch
-   the permission card appear.
-2. **Look at the map in a browser.** Nothing rendered it.
-3. **Brave Search API** — vault note. New external host, needs its own named
-   approval row. Not touched.
-4. **Runway** for video generation — same, needs the row first.
-5. **`git push origin main`** — eleven commits ahead, this session cannot push.
+1. **`BRAVE_SEARCH_API_KEY` and `RUNWAY_API_KEY` are unset.** He has the Brave
+   one. `secret_set`, then a full restart — the shallow one re-reads no
+   environment.
+2. **The restart phrase is still the default**, `restart operator now`.
+   `OPERATOR_RESTART_PHRASE` is unset in both User and Machine registry, so the
+   phrase is printed in the refusal and stops accidents only. He tried
+   `Operator_Restart`, which flattens to `operator restart` and is correctly
+   refused.
+3. **Look at the map in a browser.** Still nothing has rendered it. Both Vite
+   instances are down (5173 and 5175) — `OperatorViteMain` / `OperatorViteAgent`
+   in Task Scheduler.
+4. **`git push origin main`** — now 9 commits ahead, this session cannot push.
 
 ## Loose ends
 
-- **No capability action stops a running job.** `jobs_list` and `job_events` are
-  read-only, so a chat worker can watch a job it cannot stop. A note in this
-  file said he is building that; left alone rather than duplicated.
-- The bundle is one 953 kB chunk (269 kB gzipped). Lazy-loading the heavy
-  routes, `MissionMap` above all, is a deliberate `src/` change.
-- Two comments in `jobs.mjs` still say "one job at a time"; concurrency is 3.
-- `.agents/skills/` is an untracked duplicate of `.claude/skills/` — six
-  identical files in a directory nothing reads.
-- `stash@{0}` in the agent worktree holds its old `AGENTS.md`.
+- Agent worktree is **4 behind main and dirty** (1 uncommitted file), so
+  `npm run land` will refuse the fast-forward until that is dealt with.
+- The test harness tripped a libuv assertion on exit (`UV_HANDLE_CLOSING`) from
+  the clap detector's audio handle being torn down by `process.exit`. Harness
+  only, after all assertions passed — but it is the same class of thing as the
+  bug above, and the real server exits the same way.
+- Store is 1.1 MB, 12x its oldest restore point in 4 days; `knowledge.notes` is
+  737 KB of it and the whole store crosses the wire on every write.
+- Turn stats: p50 38.4s, p95 354.7s over 147 turns, 21 errored.
+- `.agents/` is untracked and duplicates `.claude/skills/`.
