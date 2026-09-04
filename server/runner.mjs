@@ -75,8 +75,20 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
       escalation and a widened filesystem scope. `~/.claude/settings.json`
       carries `defaultMode: "auto"` today. `auto` is an escalating mode, and
       the SDK trust-filters those from `project` ONLY — the `user` tier is not
-      filtered. Whether the explicit `permissionMode`
-      passed below outranks it is NOT measured; do not assume either answer.
+      filtered.
+
+      MEASURED 2026-09-04, because it was worth settling rather than fearing:
+      the explicit `permissionMode` passed below DOES outrank it. A `Write`
+      with `allowedTools: []` reached `canUseTool` and was refused; the file
+      was never created. Same result with the `user` source dropped and with
+      `managedSettings` pinning the mode, so nothing here is load-bearing on
+      those. ADR 0012 option C holds.
+
+      The probe that first suggested otherwise used `Bash(hostname)`, which
+      never reaches the callback under ANY mode — the SDK auto-approves
+      trivially safe calls on its own, as the note above `ALLOWED_TOOLS` in
+      `jobs.mjs` already records for `echo`. A read-only command proves nothing
+      about permissions; probe with a write.
 
   `deniedTools`, `allowedTools`, `canUseTool` and the device gate in `jobs.mjs`
   remain the boundary Operator *controls*. They are not the only thing with a
