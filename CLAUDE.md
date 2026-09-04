@@ -68,7 +68,7 @@ Approved so far — this list is the whole set:
 | **Google Gemini** | `generativelanguage.googleapis.com` | **2026-08-20**, `server/gemini.mjs`. What leaves the machine: the prompt and whatever job context is attached. Key in `GEMINI_API_KEY`, env only |
 | **ntfy.sh — as a relay** | `ntfy.sh`, via the owner's own ntfy server | **Restored 2026-09-02** after being retired for a day. Web Push to his iPhone returned `201 Created` and never arrived — iOS drops a home-screen web app's push entitlement when the app has not been opened recently, and a PWA never gets the durable entitlement a native app has. What leaves the machine: a message ID and a hash of the topic. **Both channels now send**, because push reports success and delivers nothing, so a fallback on error would never fire. `OPERATOR_NOTIFY_CHANNELS` trims it |
 | **Web Push** | the browser's push service — `web.push.apple.com` on iOS, Google/Mozilla/Microsoft elsewhere | **2026-09-01**, `server/push.mjs`. What leaves the machine: the subscription endpoint, an **encrypted** payload, and the time. **A push service is unavoidable** — it is how a sleeping OS is woken — so this is a swap, not an elimination, and it was approved on that basis. What changed: RFC 8291 encryption is mandatory and the key is shared only between this server and the browser that subscribed, so the carrier holds ciphertext rather than a promise not to look. Keys in `OPERATOR_VAPID_PUBLIC` / `OPERATOR_VAPID_PRIVATE`, env only |
-| **AI Router** | `api.airouter.ch` | **2026-09-02**, `server/airouter.mjs`, [ADR 0016](docs/decisions/0016-ai-router.md). Flat CHF 39/mo, Swiss-hosted, OpenAI-compatible with tool calling. What leaves the machine: the prompt and whatever job context is attached — same class as the Gemini approval — **plus, since the 2026-09-02 amendment, his source diff on every completed turn (`semantic.mjs`) and whole project files handed down by `delegate.mjs`.** Those two are named in the ADR rather than inherited from this row, and audio of him is still outside it. **It replaces the LOCAL model, not Claude**: the 3B Ollama fits in 4GB is too weak for the verification it already does. Key in `AIROUTER_API_KEY`, env only. Risks recorded in the ADR: no named legal entity, no SLA, and 'no prompt logging' is a policy rather than a structural property |
+| **AI Router** | `api.airouter.ch` | **2026-09-02**, `server/airouter.mjs`, [ADR 0016](docs/decisions/0016-ai-router.md). Flat CHF 39/mo, Swiss-hosted, OpenAI-compatible with tool calling. What leaves the machine: the prompt and whatever job context is attached — same class as the Gemini approval — **plus, since the 2026-09-02 amendment, his source diff on every completed turn (`semantic.mjs`) and whole project files handed down by `delegate.mjs`, and since the 2026-09-04 amendment, project files the MODEL chooses to read (`workspace.mjs`).** Those are named in the ADR rather than inherited from this row, and audio of him is still outside it. **`data/` is refused to the file tools** — the store, the push secrets and the command audit are not reachable by a worker, only through capability actions. **It replaces the LOCAL model, not Claude**: the 3B Ollama fits in 4GB is too weak for the verification it already does. Key in `AIROUTER_API_KEY`, env only. Risks recorded in the ADR: no named legal entity, no SLA, and 'no prompt logging' is a policy rather than a structural property |
 
 **Each AI provider needs its own named approval.** The AI Provider Manager was
 approved on 2026-07-30 (ADR 0009); approving the router did **not** approve its
@@ -299,6 +299,15 @@ server/
   runner.mjs            — one turn, through the Claude Agent SDK. The ONLY file in
                           server/ that imports an npm package — ADR 0012 bounded
                           the dependency there deliberately. Keep it that way
+  workspace.mjs         — a filesystem for a worker with no harness of its own.
+                          AI Router reads, searches, writes and edits through
+                          this, and runs NAMED checks — never a shell. Writes
+                          ask him first (the same onPermission jobs.mjs already
+                          passed every provider) and land only in the job's own
+                          worktree. `data/` is refused: the store, the push
+                          secrets and the command audit are not a worker's to
+                          read, and the capability actions answer those
+                          questions properly. ADR 0016, amended 2026-09-04
   gemini.mjs            — one turn, through Gemini. Same runTurn contract as
                           runner.mjs; raw fetch, no SDK, so the npm rule holds.
                           No filesystem or shell — capability actions only

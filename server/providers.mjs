@@ -113,10 +113,25 @@ const OLLAMA = {
  * on the Pro subscription keeps the judgement work, where its marginal turn is
  * already free.
  *
- * `tools: "capability-actions"` like the other two non-Claude workers: it reaches
- * `actions.mjs` and nothing else. No filesystem, no shell — so every tool call
- * is something the owner could already do through a page, and there is nothing
- * to ask permission about.
+ * **It has a filesystem as of 2026-09-04**, and that is the one place it now
+ * differs from the other two non-Claude workers. The owner's reason: *"when
+ * claude is down ai router is the second most capable worker"* — and a fallback
+ * that can only discuss the code is not a fallback for a coding job.
+ *
+ * Read the three flags below together, because the distinctions are load
+ * bearing and easy to collapse:
+ *
+ * - `tools` stays `"capability-actions"`. That value means "reaches
+ *   actions.mjs", and `jobs.mjs` uses `tools === true` to mean "can run
+ *   arbitrary commands as the owner" — the test its no-escalation guard depends
+ *   on. This worker still cannot, so the value must not change.
+ * - `files: true` is the new one. `server/workspace.mjs` gives it read, list,
+ *   search, write, edit and a FIXED set of named checks — never a shell.
+ *   Writes land only in the job's own worktree.
+ * - `permissions` becomes `"interactive"`, because a write now suspends the
+ *   turn and asks him, through the same `onPermission` channel Claude uses.
+ *   Leaving it as `"pre-approved"` would tell the page nothing can ask, which
+ *   stopped being true.
  */
 const AIROUTER = {
   id: "airouter",
@@ -125,8 +140,17 @@ const AIROUTER = {
   models: airouterModels.map((id) => ({ id, label: id })),
   capabilities: {
     tools: "capability-actions",
+    files: true,
+    /*
+      Attachments are local PATHS handed to a worker (server/uploads.mjs), which
+      was meaningless to a worker that could not read a disk. It can now, so
+      this becomes true the moment uploads are claimed onto its turns — left
+      false until that path is actually wired and tested, because a capability
+      the page advertises and the worker cannot honour is worse than one it
+      does not claim.
+    */
     attachments: false,
-    permissions: "pre-approved",
+    permissions: "interactive",
     sessions: "in-memory",
     verification: "worker-reported",
   },

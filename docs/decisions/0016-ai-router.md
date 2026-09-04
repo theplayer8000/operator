@@ -95,6 +95,58 @@ the boundary is enforced rather than merely stated.
 **The revocation is one variable.** `OPERATOR_SEMANTIC_PROVIDER=local` puts
 verification back on the box; `--worker ollama` does the same per delegation.
 
+### Amended 2026-09-04 — a filesystem, and what that widens
+
+The owner: *"airouter should have that too please because when claude is down
+ai router is the second most capable worker i'll get more in future maybe."*
+
+Built as `server/workspace.mjs` — read, list, search, write, edit, and a fixed
+set of named checks. **No shell.**
+
+**What this widens, stated plainly, because it is a real widening.** The
+2026-09-02 amendment approved whole project files reaching the router *when a
+caller hands them down*. This lets the MODEL choose which files, which is a
+different thing: `delegate.mjs` sends what a human or a dispatching worker
+picked, and this sends whatever the model decides it wants to look at. Over a
+long coding turn that is potentially most of the source of a system holding his
+calendar, gym history, missions and homelab shape.
+
+Approved on his explicit request, and bounded four ways rather than by wording:
+
+1. **`data/` is refused outright**, and this is the boundary that matters most.
+   The store is `data/operator.json` — every mission, every gym session, the
+   calendar, the memory facts. `data/push.json` carries a per-device push
+   secret. `data/serve.log` is the terminal's command audit. None of it is
+   reachable, and the refusal names the capability action that answers the
+   question properly instead. Also refused: `.env*`, `.git/` (every version of
+   every file, including ones deleted for cause), `.claude/` (permission rules —
+   a worker that can edit those can widen the OTHER worker's reach, the same
+   escalation that keeps `OPERATOR_TERMINAL_DEVICES` environment-only),
+   `node_modules/`, `dist/`, and any `*.log`.
+2. **Writes land only in the job's own worktree**, so this worker's mistakes are
+   exactly as isolated as Claude's: invisible to the running app until a human
+   merges the branch.
+3. **Every write asks him.** `jobs.mjs` had always passed `onPermission` into
+   every provider's turn and only the SDK path ever called it. Now this one
+   does, so a write raises the same card on his phone and the same turn resumes
+   on the tap. `permissions` moves from `pre-approved` to `interactive`.
+4. **Commands are named, never a shell.** `run_check` takes the NAME of a check
+   and runs a fixed argv — `apps.mjs`'s bargain, "a caller picks which, never
+   what runs". The worker can therefore verify its own work and cannot execute
+   anything arbitrary.
+
+**What it does NOT change.** `tools` stays `"capability-actions"`, because
+`jobs.mjs` reads `tools === true` as "can run commands as the owner" and its
+no-escalation guard depends on that test. AI Router still cannot. The new flag
+is `files: true`, and the reroute now looks for either — so a coding job whose
+Claude ran out of quota can move somewhere that can finish it without the
+failure path handing anything a shell.
+
+Audio of him remains outside this ADR, unchanged.
+
+**The revocation is one variable.** `OPERATOR_WORKER_FILES=0` removes the file
+tools from every worker without touching anything else.
+
 ## The risks, recorded because they are real
 
 **No named legal entity.** The site carries "© 2026 AI Router Switzerland" and

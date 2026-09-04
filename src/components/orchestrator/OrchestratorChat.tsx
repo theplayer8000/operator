@@ -1302,6 +1302,16 @@ export default function OrchestratorChat() {
               ? j.providers.find((p) => p.id === selectedProvider)
               : undefined;
             const tools = worker?.capabilities?.tools;
+            /*
+              A capability worker that can also touch the checkout — AI Router
+              since 2026-09-04. The old copy told him this worker had "no file
+              access and no shell, so there is nothing for it to ask permission
+              about", and half of that stopped being true: it still has no
+              shell, but it reads and edits source now, and a write suspends the
+              turn and asks him. A page that says nothing can ask, on a worker
+              that is about to ask, is the worst kind of stale.
+            */
+            const hasFiles = Boolean(worker?.capabilities?.files);
             const isCapabilityWorker =
               tools === "capability-actions" ||
               // The list has not caught up, but the job knows what ran it.
@@ -1309,7 +1319,21 @@ export default function OrchestratorChat() {
             const isClaudeCode = selectedProvider === "claude-code" || !j.selectedId;
             return (
               <>
-          {(isCapabilityWorker ? (
+          {(isCapabilityWorker && hasFiles ? (
+            <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
+              A model with access to Operator&apos;s own data{" "}
+              <strong className="font-normal text-ink-500">and to this project&apos;s source</strong>
+              . It changes the Mission Board, the calendar, the gym log and the daily routine
+              through named, validated actions, and it can read, search and edit files and run the
+              project&apos;s own checks. There is{" "}
+              <strong className="font-normal text-ink-500">no shell</strong> — it picks which check
+              to run, never what runs. Edits land in the agent worktree, so they are invisible to
+              the running app until a branch is merged, and every write{" "}
+              <strong className="font-normal text-ink-500">pauses the turn and asks you</strong>.
+              Its memory of a conversation lives in this server and{" "}
+              <strong className="font-normal text-ink-500">does not survive a restart</strong>.
+            </p>
+          ) : isCapabilityWorker ? (
             <p className="text-[11px] text-ink-700 mt-3 leading-relaxed">
               A model with access to Operator&apos;s own data — it can change the Mission Board,
               the calendar, the gym log and the daily routine through{" "}

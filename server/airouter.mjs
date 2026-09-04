@@ -33,6 +33,28 @@
 // restart loses it. Pretending otherwise would give a tab an id whose history
 // is gone.
 //
+// ## It has a filesystem now — 2026-09-04
+//
+// The owner: *"airouter should have that too please because when claude is
+// down ai router is the second most capable worker."*
+//
+// That was the gap the reroute exposed. A job that hit a Claude limit moved to
+// a worker that could discuss the code and not touch it, so "recovered" meant
+// "asked someone who cannot help". `server/workspace.mjs` supplies read, list,
+// search, write, edit and a fixed set of named checks; the boundaries live
+// there and are not this file's to relax.
+//
+// Two things worth knowing from here:
+//
+// **Writes ask the owner.** `jobs.mjs` has always passed `onPermission` into
+// every provider's turn — nothing but the Claude path had ever called it. Now
+// this one does, so a write from AI Router raises the same card on his phone,
+// and the same turn resumes on the tap.
+//
+// **The round cap moves with the tools.** Ten rounds is plenty for "what's on
+// my calendar" and nowhere near enough for read → edit → typecheck → fix. It is
+// raised only when the file tools are actually in play.
+//
 // ## Cost
 //
 // Flat rate, so there is no per-token figure to report and reporting $0 would
@@ -43,6 +65,13 @@
 // exactly `OPERATOR_MAX_CONCURRENT`.
 
 import { runAction, listActions, groupsFor, ActionError, redactParams } from "./actions.mjs";
+import {
+  TOOLS as FILE_TOOLS,
+  TOOL_NAMES as FILE_TOOL_NAMES,
+  runWorkspaceTool,
+  WorkspaceError,
+  enabled as filesEnabled,
+} from "./workspace.mjs";
 
 const env = (name) => (process.env[name] ?? "").replace(/^﻿/, "").trim();
 
@@ -91,8 +120,17 @@ const TIMEOUT_MS = 180_000;
  * `params` is a JSON STRING rather than a nested schema. Models are markedly
  * better at producing that, and `actions.mjs` validates either way.
  */
-function toolDeclarations(groups) {
-  return listActions({ groups }).map((action) => ({
+function toolDeclarations(groups, { files = false } = {}) {
+  /*
+    File tools FIRST.
+
+    Order is not cosmetic: asked to fix a bug, a model handed forty capability
+    actions and six file tools reaches for what it sees first, and the whole
+    point of this worker having a filesystem is that a repo task stops being
+    answered out of the model's memory of the codebase.
+  */
+  const fileTools = files ? [...FILE_TOOLS] : [];
+  return fileTools.concat(listActions({ groups }).map((action) => ({
     type: "function",
     function: {
       name: action.name,
@@ -108,7 +146,7 @@ function toolDeclarations(groups) {
         required: ["params"],
       },
     },
-  }));
+  })));
 }
 
 /**
@@ -201,6 +239,23 @@ export async function runTurn({
     data is a second actor rather than an assistant to the one that asked.
   */
   useTools = true,
+  /*
+    Where this turn's files live, and how to ask about writing one.
+
+    Both are already in the spec `jobs.mjs` builds for EVERY provider — `cwd` is
+    the agent worktree and `onPermission` is the phone question — and this
+    worker simply ignored them until it had a filesystem to use them for.
+  */
+  cwd,
+  onPermission,
+  /**
+   * Whether this turn may touch files.
+   *
+   * Off for a delegated sub-task for the same reason tools are: a checker that
+   * can write is a second actor. Off when there is no `cwd`, because a write
+   * with no checkout would land wherever the server happens to be running.
+   */
+  useFiles = true,
 }) {
   const id = sessionId ?? newSessionId();
   const history = conversations.get(id) ?? [];
@@ -216,7 +271,9 @@ export async function runTurn({
   }
   messages.push({ role: "user", content: prompt });
 
-  const tools = useTools ? toolDeclarations(groupsFor(prompt)) : [];
+  const files = Boolean(useTools && useFiles && filesEnabled && cwd);
+  const tools = useTools ? toolDeclarations(groupsFor(prompt), { files }) : [];
+  const ctx = { cwd, onPermission, signal };
   let error = null;
   let rounds = 0;
 
@@ -228,7 +285,16 @@ export async function runTurn({
       that a loop stops being a problem — which matters less here than on a
       metered provider, but a wedged turn is still a wedged turn.
     */
-    for (; rounds < 10; rounds += 1) {
+    /*
+      Ten rounds answers a question; it does not finish a change.
+
+      Read the file, edit it, run the typechecker, read the error, fix it, run
+      it again is already six before anything else happens. The cap exists to
+      stop a runaway rather than to bound useful work, so it moves with what the
+      turn can actually do.
+    */
+    const maxRounds = files ? 40 : 10;
+    for (; rounds < maxRounds; rounds += 1) {
       const body = await call({
         model: model || DEFAULT_MODEL,
         messages,
@@ -273,9 +339,23 @@ export async function runTurn({
           continue;
         }
 
-        onEvent("tool_use", { tool: name, subject: redactParams(name, params) });
+        const isFile = FILE_TOOL_NAMES.has(name);
+        onEvent("tool_use", {
+          tool: name,
+          /*
+            A file tool's subject is its PATH, not its parameters — `write_file`
+            carries a whole file in `content`, and putting that in the event log
+            would render the file into the chat and into every later turn that
+            replays it.
+          */
+          subject: isFile
+            ? String(params?.path ?? params?.name ?? "")
+            : redactParams(name, params),
+        });
         try {
-          const result = await runAction(name, params);
+          const result = isFile
+            ? await runWorkspaceTool(name, params, ctx)
+            : await runAction(name, params);
           onEvent("tool_result", { ok: true, text: JSON.stringify(result) });
           messages.push({
             role: "tool",
@@ -290,7 +370,15 @@ export async function runTurn({
           */
           const text = String(err?.message ?? err);
           onEvent("tool_result", { ok: false, text });
-          if (!(err instanceof ActionError)) throw err;
+          /*
+            A WorkspaceError is the same class of thing as an ActionError: the
+            model asked for something it may not have, or got a path wrong, and
+            the message says precisely what. It goes back as DATA so the next
+            round can correct it. A refusal by the owner arrives this way too —
+            the model reads "was refused by the owner" and carries on with the
+            rest of the work instead of retrying.
+          */
+          if (!(err instanceof ActionError) && !(err instanceof WorkspaceError)) throw err;
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,

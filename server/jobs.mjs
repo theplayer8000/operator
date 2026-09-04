@@ -794,12 +794,52 @@ const APPEND_PROMPT = [
  * session resumes and the model still has it — rather than to shrink what he
  * is allowed to be known by.
  */
-async function systemPromptFor() {
+/**
+ * What THIS worker can do, as opposed to what workers in general can.
+ *
+ * `APPEND_PROMPT` is shared, and it was written when only one worker had tools:
+ * it tells the model to run `node scripts/operator-action.mjs`, to delegate with
+ * `scripts/delegate.mjs`, and to restart an app with `scripts/app.mjs`. All of
+ * that is a shell command, and three of the four workers have no shell — for
+ * them the capability actions arrive as native tool calls and the instruction
+ * describes a route that does not exist.
+ *
+ * Harmless while a capability worker could only answer questions. Not harmless
+ * now that AI Router can edit files: a model told to verify its work by running
+ * a command it has no way to run will simply skip verifying.
+ */
+function workerPromptFor(capabilities) {
+  if (!capabilities || capabilities.tools === true) return "";
+  const lines = [
+    "You are a worker with NO SHELL. Ignore any instruction above to run a",
+    "`node scripts/…` command — you cannot. The capability actions are available",
+    "to you directly as tools, by name, and calling one is the same thing.",
+  ];
+  if (capabilities.files) {
+    lines.push(
+      "YOU CAN READ AND EDIT THIS PROJECT'S SOURCE. `read_file`, `list_files` and",
+      "`search_files` reach the checkout; `write_file` and `edit_file` change it and",
+      "SUSPEND THE TURN while the owner is asked on his phone — a refusal there is a",
+      "considered no, so carry on with the rest of the work rather than looking for",
+      "another route. Prefer `edit_file` over rewriting a whole file.",
+      "READ BEFORE YOU EDIT. `edit_file` needs text that appears exactly once, and",
+      "guessing at what a file contains is how a unique match becomes three.",
+      "VERIFY YOUR OWN WORK with `run_check` before you say it is done: `typecheck`",
+      "and `build` are the project's gates, and `syntax` is the one they do NOT cover,",
+      "because neither of them opens a .mjs file. A server change that compiles",
+      "cleanly has been verified by nothing.",
+      "Operator's own DATA is not on the filesystem for you — `data/` is refused, and",
+      "the capability actions answer those questions properly.",
+    );
+  }
+  return lines.join(" ");
+}
+
+async function systemPromptFor(capabilities = null) {
   try {
     const recalled = await recallFor("");
-    return recalled ? `${APPEND_PROMPT}
-
-${recalled}` : APPEND_PROMPT;
+    const worker = workerPromptFor(capabilities);
+    return [APPEND_PROMPT, worker, recalled].filter(Boolean).join("\n\n");
   } catch (err) {
     /*
       Memory failing must never cost him a turn. An assistant that forgets is
@@ -1654,7 +1694,16 @@ async function runViaSdk(job, prompt) {
         Being told is cheaper than discovering, and far cheaper than the wrong
         conclusion — that the missing action does not exist at all.
       */
-      appendSystemPrompt: [await systemPromptFor(), warningFor(job.worktree)]
+      /*
+        The worker's own capabilities decide half the prompt. A capability-only
+        worker must not be told to run shell commands it has no way to run, and
+        one WITH files has to be told it has them — an unmentioned tool is an
+        unused tool, measured twice on this project already.
+      */
+      appendSystemPrompt: [
+        await systemPromptFor(listProviders().find((p) => p.id === job.provider)?.capabilities),
+        warningFor(job.worktree),
+      ]
         .filter(Boolean)
         .join("\n\n"),
       /*
@@ -1886,10 +1935,22 @@ async function recoverFromLimit(job, kind, failure) {
       (hasTools || p.capabilities?.tools !== true),
   );
 
+  /*
+    A repo task needs a worker that can touch the repo — which is no longer the
+    same thing as a worker that can run commands.
+
+    `tools === true` means "arbitrary execution as the owner" and is what the
+    guard above refuses to escalate into. `files` means "can read and edit the
+    checkout, through server/workspace.mjs, with writes asking first". AI Router
+    has the second and not the first, which is exactly the point: a coding job
+    whose Claude ran out of quota can now move somewhere that can finish it,
+    without the reroute handing anything a shell.
+  */
+  const canCode = (p) => p.capabilities?.tools === true || p.capabilities?.files === true;
   const target =
     hasTools && (await needsCode(prompt))
-      ? candidates.find((p) => p.capabilities?.tools === true)
-      : candidates[0];
+      ? (candidates.find((p) => p.capabilities?.tools === true) ?? candidates.find(canCode))
+      : (candidates.find(canCode) ?? candidates[0]);
 
   const waitMs = cooldownRemaining(job.provider);
   // Nothing to hand it to, and nothing worth waiting for.

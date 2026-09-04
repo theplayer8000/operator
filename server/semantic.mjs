@@ -75,6 +75,15 @@ async function askModel({ prompt, model, system, maxTokens }) {
       prompt,
       model: model || DEFAULT_MODEL,
       appendSystemPrompt: system,
+      /*
+        No tools for the verifier, for the reason delegate.mjs states and this
+        call had never applied: a checker that can WRITE is a second actor
+        rather than a check on the first. It was harmless while this worker
+        could only reach capability actions and had no `cwd`; it stops being
+        harmless the moment the same runTurn can edit files, and a safety
+        property that holds by accident is one that breaks silently.
+      */
+      useTools: false,
       onEvent: (type, data) => {
         if (type === "text") text += data.text;
       },
