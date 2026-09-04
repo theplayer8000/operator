@@ -1704,6 +1704,12 @@ async function runViaSdk(job, prompt) {
       // turn rather than refusing the next one.
       budgetUsd: jobCeilingUsd(),
       /*
+        Files claimed onto this job (server/uploads.mjs). Claude reads the
+        paths in its prompt; AI Router turns image files into vision parts
+        (server/airouter.mjs userMessage). Empty for a job with no uploads.
+      */
+      attachments: job.resources,
+      /*
         The drift warning rides along with the prompt.
 
         Being told is cheaper than discovering, and far cheaper than the wrong

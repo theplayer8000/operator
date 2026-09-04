@@ -140,8 +140,12 @@ function within(root, target) {
                  environment-only exists to prevent.
   - build output and dependencies: enormous, generated, and never the answer.
 */
+/** `data/job-resources/` — owner-uploaded files claimed onto a job's turns (see the note on the data/ rule). */
+const inJobResources = (rel) =>
+  rel === `data${sep}job-resources` || rel.startsWith(`data${sep}job-resources${sep}`);
+
 const DENIED = [
-  { test: (rel) => rel === "data" || rel.startsWith(`data${sep}`), why: "the store and its secrets live here — use a capability action (`node scripts/operator-action.mjs list`) to read Operator's data" },
+  { test: (rel) => !inJobResources(rel) && (rel === "data" || rel.startsWith(`data${sep}`)), why: "the store and its secrets live here — use a capability action (`node scripts/operator-action.mjs list`) to read Operator's data" },
   { test: (rel) => /(^|[\\/])\.env(\.|$)/i.test(rel), why: "environment files hold API keys" },
   { test: (rel) => rel === ".git" || rel.startsWith(`.git${sep}`), why: "the git object store is every version of every file, including ones deleted deliberately" },
   { test: (rel) => rel === ".claude" || rel.startsWith(`.claude${sep}`), why: "these are permission rules — a worker that can edit them can widen its own reach" },

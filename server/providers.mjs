@@ -143,13 +143,19 @@ const AIROUTER = {
     files: true,
     /*
       Attachments are local PATHS handed to a worker (server/uploads.mjs), which
-      was meaningless to a worker that could not read a disk. It can now, so
-      this becomes true the moment uploads are claimed onto its turns — left
-      false until that path is actually wired and tested, because a capability
-      the page advertises and the worker cannot honour is worse than one it
-      does not claim.
+      was meaningless to a worker that could not read a disk. It can now: since
+      2026-09-04 `data/job-resources/` is carved out of workspace.mjs's `data/`
+      refusal, so a claimed text file is readable, and image files become vision
+      parts in `userMessage` (airouter.mjs).
+
+      True from that date. It was left false for a few hours with a comment
+      saying it should be true — the session that wrote the feature could not
+      make the edit land and said so rather than claiming it had. Honest, and
+      still the worst of both: a flag that contradicts the comment above it. A
+      capability the page advertises and the worker cannot honour is worse than
+      one it does not claim, and so is the reverse.
     */
-    attachments: false,
+    attachments: true,
     permissions: "interactive",
     sessions: "in-memory",
     verification: "worker-reported",

@@ -65,6 +65,7 @@
 // exactly `OPERATOR_MAX_CONCURRENT`.
 
 import { runAction, listActions, groupsFor, ActionError, redactParams } from "./actions.mjs";
+import { readFile } from "node:fs/promises";
 import {
   TOOLS as FILE_TOOLS,
   TOOL_NAMES as FILE_TOOL_NAMES,
@@ -119,6 +120,25 @@ const newSessionId = () => `air-${Date.now().toString(36)}-${(counter += 1)}`;
  */
 const TIMEOUT_MS = Number(process.env.OPERATOR_AIROUTER_TIMEOUT_MS || 420_000);
 
+/*
+  Which models accept image parts in the user message.
+
+  MODELS is the full catalogue — a model may still be text-only. Qwen3.8 is a
+  vision-language model, and DeepSeek-V4-Flash accepts images through its
+  scaling pipeline (the owner's call, 2026-09-04). If the router rejects the
+  image parts anyway, call() falls back to the text-only prompt, so a turn
+  never dies just because a model turned out text-only.
+*/
+const VISION_MODELS = new Set(["Qwen3.8", "DeepSeek-V4-Flash"]);
+
+/*
+  Caps on what gets attached, because an image travels as base64 and base64 is
+  4/3 of the file — a 10 MB phone photo would eat a 262K window before the
+  text arrives. Skipped images are named in a text part, not dropped silently.
+*/
+const MAX_IMAGE_BYTES = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGE_BYTES || 5 * 1024 * 1024);
+const MAX_IMAGES_PER_TURN = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGES || 4);
+
 /**
  * The capability layer, as OpenAI tool declarations.
  *
@@ -169,7 +189,23 @@ function toolDeclarations(groups, { files = false } = {}) {
  * far more likely to be the per-minute ceiling than a suspension — which is
  * worth waiting out rather than failing the turn.
  */
-async function call({ model, messages, tools, signal, onRateLimit, reasoningEffort }) {
+async function call({
+  model,
+  messages,
+  tools,
+  signal,
+  onRateLimit,
+  reasoningEffort,
+  /*
+    When the request carries image parts and the model turns out to reject
+    them, the router answers 400. `altContent` is the same user message with
+    the images removed; `onFallback` lets the caller keep its own history in
+    step — a response that answered a text-only prompt must not follow an
+    image-bearing one in the replay.
+  */
+  altContent,
+  onFallback,
+}) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -205,6 +241,15 @@ async function call({ model, messages, tools, signal, onRateLimit, reasoningEffo
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        if (res.status === 400 && altContent && /image|vision|multimodal/i.test(text)) {
+          // Retried once with the images removed. A model that rejects image
+          // parts is still a usable worker; the text-only request then stands
+          // or fails on its own merits below.
+          messages = [...messages];
+          messages[messages.length - 1] = { role: "user", content: altContent };
+          onFallback?.();
+          continue;
+        }
         throw new Error(`AI Router returned ${res.status}: ${text.slice(0, 300)}`);
       }
       return await res.json();
@@ -221,6 +266,72 @@ async function call({ model, messages, tools, signal, onRateLimit, reasoningEffo
  *
  * @returns {Promise<{sessionId: string, error: string|null, usage: object}>}
  */
+/*
+  Turn claimed files into an OpenAI-format user message.
+
+  The prompt stays a plain string when there is nothing to attach or the model
+  cannot see images — a text-only request is what every model accepts. With
+  image attachments on a vision model the user message becomes a parts array:
+  the text first, then each image as a base64 data URI. Anything over the caps
+  is named in a trailing text part rather than dropped silently, so the model
+  knows it exists and can still ask for the path.
+
+  Returns { used, content } — `used` tells the caller whether the request is
+  multimodal, so it can fall back to text if the router refuses image parts.
+*/
+async function userMessage(prompt, attachments, model) {
+  const isImage = (resource) =>
+    /^image\//.test(resource?.type ?? "") ||
+    /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(resource?.name ?? "");
+  const images = (attachments ?? []).filter(isImage).slice(0, MAX_IMAGES_PER_TURN);
+  if (images.length === 0 || !VISION_MODELS.has(model)) {
+    return { used: false, content: prompt };
+  }
+
+  const EXT_MIME = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    bmp: "image/bmp",
+    avif: "image/avif",
+  };
+  const parts = [{ type: "text", text: prompt }];
+  const skipped = [];
+  for (const image of images) {
+    try {
+      const buf = await readFile(image.path);
+      if (buf.length > MAX_IMAGE_BYTES) {
+        skipped.push(`${image.name} (${Math.round(buf.length / 1024)} KB)`);
+        continue;
+      }
+      const ext = (image.name ?? "").split(".").pop()?.toLowerCase() ?? "";
+      const mime = /^image\//.test(image?.type ?? "")
+        ? image.type
+        : EXT_MIME[ext] ?? "image/png";
+      parts.push({
+        type: "image_url",
+        image_url: { url: `data:${mime};base64,${buf.toString("base64")}` },
+      });
+    } catch {
+      skipped.push(image.name);
+    }
+  }
+  if (parts.length === 1) {
+    // Every image failed or was over the cap — nothing to show. Fall back to
+    // the plain prompt rather than sending a parts array with no image in it.
+    return { used: false, content: prompt };
+  }
+  if (skipped.length) {
+    parts.push({
+      type: "text",
+      text: `Not attached (too large or unreadable): ${skipped.join(", ")}. Their paths are named in the prompt above.`,
+    });
+  }
+  return { used: true, content: parts };
+}
+
 export async function runTurn({
   prompt,
   model,
@@ -269,6 +380,12 @@ export async function runTurn({
    * with no checkout would land wherever the server happens to be running.
    */
   useFiles = true,
+  /*
+    Files claimed onto this job (server/uploads.mjs). Non-image files stay in
+    the prompt as paths; image files become vision parts when `model` accepts
+    them — see userMessage().
+  */
+  attachments,
 }) {
   const id = sessionId ?? newSessionId();
   const history = conversations.get(id) ?? [];
@@ -282,7 +399,18 @@ export async function runTurn({
   if (appendSystemPrompt && messages.length === 0) {
     messages.push({ role: "system", content: appendSystemPrompt });
   }
-  messages.push({ role: "user", content: prompt });
+  /*
+    Images make the user message a parts array (see userMessage). `used` arms
+    the fallback in `call()`: if the router rejects image parts with a 400,
+    the request is retried with this turn's plain text instead of failing.
+  */
+  const imageMessage = await userMessage(prompt, attachments, model || DEFAULT_MODEL);
+  messages.push({ role: "user", content: imageMessage.content });
+  // Keeps the replayed history honest when call() falls back to text-only.
+  const dropImages = () => {
+    messages[messages.length - 1] = { role: "user", content: prompt };
+    onEvent("text", { text: "_This model refused the image attachment — continuing with the text-only prompt._" });
+  };
 
   const files = Boolean(useTools && useFiles && filesEnabled && cwd);
   const tools = useTools ? toolDeclarations(groupsFor(prompt), { files }) : [];
@@ -319,6 +447,8 @@ export async function runTurn({
         tools,
         signal,
         reasoningEffort,
+        // Armed only when this turn is multimodal — see userMessage().
+        ...(imageMessage.used ? { altContent: prompt, onFallback: dropImages } : {}),
         // Said out loud: a silent pause on a phone reads as a hang, and the
         // event log is the only thing that can say otherwise.
         onRateLimit: (seconds) =>
