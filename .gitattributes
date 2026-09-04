@@ -1,0 +1,43 @@
+# Line endings — LF everywhere, in the repo AND in the working tree.
+#
+# ## Why this file exists
+#
+# `core.autocrlf=true` was set on this machine and nothing declared what the
+# repo wanted, so the working tree drifted into a mix: 7 of 44 files in
+# `server/` were CRLF and the rest LF, including the five an agent edits most —
+# actions.mjs, airouter.mjs, jobs.mjs, providers.mjs, workspace.mjs.
+#
+# That is not cosmetic here. An agent edits by matching exact text, and a
+# multi-line match written with LF cannot match a file stored with CRLF. On
+# 2026-09-04 a session gave up on a one-word change for exactly this reason and
+# left a comment saying so — `providers.mjs` kept `attachments: false` under a
+# paragraph explaining that it should be true and could not be edited. The flag
+# then contradicted its own documentation until someone did it by hand.
+#
+# So the cost of the mix is not ugly diffs, it is an agent that cannot reliably
+# edit the files it works in, failing in a way that reads as a tooling quirk
+# rather than a repo setting.
+#
+# `eol=lf` overrides autocrlf per path, which is why this fixes it without
+# anyone changing their global git config — and it holds for the next machine
+# too, which a config setting would not.
+
+* text=auto eol=lf
+
+# Binary — never touched, never diffed as text. Several of these contain 0x0D
+# bytes and a naive CRLF scan reports them as text files needing conversion.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.mp3 binary
+*.mp4 binary
+*.exe binary
+*.dll binary
+*.pdb binary
