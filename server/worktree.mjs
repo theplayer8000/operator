@@ -42,13 +42,30 @@ const git = async (cwd, args) => {
  * Where the worktree stands relative to main.
  *
  * @returns {Promise<{ok: boolean, cwd: string, branch?: string, behind?: number,
- *                    dirty?: string[], reason?: string}>}
+ *                    ahead?: number, unlanded?: string[], dirty?: string[],
+ *                    reason?: string}>}
  */
 export async function state(cwd) {
   if (!cwd) return { ok: false, cwd, reason: "no job worktree configured" };
   try {
     const branch = await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
     const behind = Number(await git(cwd, ["rev-list", "--count", "HEAD..main"])) || 0;
+    /*
+      AHEAD is the half this file was missing, and it cost a day.
+
+      `behind` answers "is the agent running old code". It says nothing about
+      the opposite and more expensive failure: work FINISHED in here that never
+      reached main. On 2026-09-04 the chat-uploads fix was built twice, marked
+      done, and sat here across four full restarts — each one loading a build
+      that had never contained it, so the fix looked broken rather than absent.
+      Nothing was lost and nothing was stale; it simply had not landed, and no
+      check asked that question.
+    */
+    const ahead = Number(await git(cwd, ["rev-list", "--count", "main..HEAD"])) || 0;
+    /** Subjects, so a card or a check can say WHAT is stranded rather than a count. */
+    const unlanded = ahead
+      ? (await git(cwd, ["log", "--format=%h %s", "main..HEAD"])).split("\n").filter(Boolean)
+      : [];
     /*
       Untracked files count as dirty here, and that is not pedantry.
 
@@ -60,7 +77,7 @@ export async function state(cwd) {
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean);
-    return { ok: true, cwd, branch, behind, dirty };
+    return { ok: true, cwd, branch, behind, ahead, unlanded, dirty };
   } catch (err) {
     return { ok: false, cwd, reason: String(err?.message ?? err) };
   }
@@ -98,6 +115,127 @@ export async function sync(cwd, busy = false) {
   } catch (err) {
     return { ...s, synced: false, reason: String(err?.message ?? err).split("\n")[0] };
   }
+}
+
+/**
+ * Put the worktree's uncommitted work somewhere it can be got back.
+ *
+ * ## Stash, never discard — and that is not a softer version of the request
+ *
+ * "Clear the dirty tree" means `checkout -- .` plus `clean -fd` to most people,
+ * and both are UNRECOVERABLE: uncommitted work is not in git, so there is no
+ * reflog, no revert, nothing. This project has no undo (OPS-020) and CLAUDE.md
+ * is explicit that a dirty file you did not write is someone else's work rather
+ * than noise to sweep up.
+ *
+ * `git stash push -u` achieves the only thing the caller actually needs — a
+ * clean tree, so a sync or a land stops being refused — and the work survives.
+ * The repo already uses stash exactly this way: `stash@{0}` in the worktree
+ * holds an AGENTS.md from 2026-09-03. The ref is returned so it can be quoted
+ * back, because a recovery nobody knows how to perform is not much better than
+ * a deletion.
+ *
+ * @param {string} cwd
+ * @param {string} why  goes into the stash message, so the list is readable later
+ */
+export async function stash(cwd, why = "cleared to unblock a sync") {
+  const s = await state(cwd);
+  if (!s.ok) return { ...s, stashed: false };
+  if (!s.dirty.length) return { ...s, stashed: false, reason: "nothing to stash — the tree is clean" };
+
+  try {
+    const message = `operator: ${String(why).slice(0, 80)}`;
+    await git(cwd, ["stash", "push", "--include-untracked", "-m", message]);
+    const after = await state(cwd);
+    const list = (await git(cwd, ["stash", "list"])).split(String.fromCharCode(10)).filter(Boolean);
+    return {
+      ...after,
+      stashed: true,
+      stashedFiles: s.dirty,
+      ref: list[0] ? list[0].split(":")[0] : "stash@{0}",
+      restore: `git -C ${cwd} stash pop`,
+    };
+  } catch (err) {
+    return { ...s, stashed: false, reason: String(err?.message ?? err).split(String.fromCharCode(10))[0] };
+  }
+}
+
+/**
+ * Put the worktree's FINISHED work onto main — the step nothing automated.
+ *
+ * ## What this is allowed to do, and what it deliberately is not
+ *
+ * It fast-forwards main to the worktree's branch. It does NOT commit: only work
+ * already committed in there can land, and that is the load-bearing constraint
+ * rather than an implementation detail. An auto-lander that staged everything
+ * would have swept `server/roblox-studio.mjs` in half-finished on 2026-09-04,
+ * alongside an `actions.mjs` that imports it at the top level — a server that
+ * does not boot, landed automatically, on main.
+ *
+ * So: the agent decides what is finished by committing it, by name. This moves
+ * what it already stood behind.
+ *
+ * Fast-forward only, and main must be clean — both for the reason `land.mjs`
+ * gives: two sessions write to this repo, and a dirty main is someone else's
+ * work in progress.
+ *
+ * @param {string} cwd       the worktree
+ * @param {string} mainCwd   the main checkout
+ * @param {boolean} busy     true when a job is running in there
+ */
+export async function land(cwd, mainCwd, busy = false) {
+  const s = await state(cwd);
+  if (!s.ok) return { ...s, landed: false };
+  if (busy) return { ...s, landed: false, reason: "a job is running in the worktree" };
+  if (!s.ahead) {
+    return { ...s, landed: false, reason: "nothing to land — main already has every commit from here" };
+  }
+
+  const mainDirty = (await git(mainCwd, ["status", "--porcelain"]))
+    .split(String.fromCharCode(10))
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (mainDirty.length) {
+    return {
+      ...s,
+      landed: false,
+      reason: `main has uncommitted changes (${mainDirty.join(", ")}) — that is someone else's work, not noise to merge over`,
+    };
+  }
+
+  try {
+    // Refuses unless main is an ancestor. A merge commit made by an agent onto
+    // main, unreviewed, is the thing this whole worktree arrangement prevents.
+    await git(mainCwd, ["merge", "--ff-only", s.branch]);
+  } catch (err) {
+    return { ...s, landed: false, reason: `not a fast-forward: ${String(err?.message ?? err).split(String.fromCharCode(10))[0]}` };
+  }
+
+  /*
+    Which command makes it real, decided from the DIFF rather than guessed.
+
+    CLAUDE.md's table: `src/` needs a build, `server/` needs a restart, and
+    getting this wrong is the failure that looks like the fix not working —
+    which is exactly what the landed commit was fixing.
+  */
+  const files = (await git(mainCwd, ["show", "--name-only", "--format=", "HEAD"]))
+    .split(String.fromCharCode(10))
+    .filter(Boolean);
+  const touchedSrc = files.some((f) => f.startsWith("src/"));
+  const touchedServer = files.some((f) => f.startsWith("server/"));
+
+  return {
+    ...(await state(cwd)),
+    landed: true,
+    commits: s.unlanded,
+    takesEffect: touchedServer
+      ? "a FULL restart — server/ is loaded at boot, so nothing here is live until then"
+      : touchedSrc
+        ? "npm --prefix <main> run build — dist/ is read per request, no restart needed"
+        : "nothing to run — no src/ or server/ files changed",
+    needsRestart: touchedServer,
+    needsBuild: touchedSrc && !touchedServer,
+  };
 }
 
 /**

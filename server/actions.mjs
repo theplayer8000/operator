@@ -32,7 +32,13 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
 // No cycle: worktree.mjs imports nothing from here.
-import { state as worktreeState, sync as syncTree } from "./worktree.mjs";
+import {
+  state as worktreeState,
+  sync as syncTree,
+  stash as stashTree,
+  land as landTree,
+} from "./worktree.mjs";
+import { rollback as rollbackMain } from "./rollback.mjs";
 import { fullRestart, RestartRefused } from "./reboot.mjs";
 import { search as webSearch, SearchError, configured as searchConfigured } from "./websearch.mjs";
 import {
@@ -2355,6 +2361,73 @@ const ACTIONS = {
           ? "the worktree now matches main; the next turn runs against current code"
           : "already up to date",
       };
+    },
+  },
+  /*
+    Landing, clearing and undoing — the three that make the worktree a loop
+    rather than a one-way valve.
+
+    The worktree exists so an agent's half-finished work is invisible until
+    someone merges it, and that merge is the review step. It STAYS a review
+    step: `worktree_land` moves only what the agent already committed, and only
+    as a fast-forward. What changes is that the review is a card on his phone
+    rather than a trip to the desk — which is the difference between a boundary
+    and an obstacle.
+
+    The failure that produced these: on 2026-09-04 the chat-uploads fix was
+    built, marked done, and sat committed in the worktree across four full
+    restarts, each loading a build that had never contained it. Nothing was
+    broken and nothing was stale — it had simply never landed. The agent had
+    already recorded `needsOwner: true` and "land it", and had no way to do
+    either or to make anyone look.
+  */
+  worktree_status: {
+    description:
+      "Where the agent worktree stands: how far BEHIND main it is (running stale code), how far AHEAD (work finished in there that never landed — the expensive one), and what is uncommitted. Read this before concluding that a feature is missing or that a fix did not work.",
+    params: "(none)",
+    handler: async () => {
+      const cwd = process.env.OPERATOR_JOB_CWD;
+      if (!cwd) throw new ActionError("no agent worktree is configured (OPERATOR_JOB_CWD is unset)");
+      const s = await worktreeState(cwd);
+      if (!s.ok) throw new ActionError(`cannot read the worktree: ${s.reason ?? "unknown"}`);
+      return s;
+    },
+  },
+  worktree_land: {
+    description:
+      "Put the agent worktree's FINISHED work onto main — the step that makes a change real. Only what is already COMMITTED in the worktree lands; this never stages anything, so half-finished work stays where it is. Fast-forward only, and it refuses if main has uncommitted changes (that is another session's work) or if a job is running. The reply says whether a build or a full restart is needed, decided from the diff rather than guessed.",
+    params: "(none)",
+    handler: async () => {
+      const cwd = process.env.OPERATOR_JOB_CWD;
+      if (!cwd) throw new ActionError("no agent worktree is configured (OPERATOR_JOB_CWD is unset)");
+      const mainCwd = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const jobs = await import("./jobs.mjs");
+      const result = await landTree(cwd, mainCwd, jobs.busy());
+      if (!result.landed) throw new ActionError(`not landed — ${result.reason ?? "unknown"}`);
+      return result;
+    },
+  },
+  worktree_stash: {
+    description:
+      "Park the agent worktree's uncommitted changes so a sync or a land stops being refused. STASHED, never discarded — the work is recoverable and the command to bring it back is in the reply. Use this when the tree is dirty with something nobody wants. If the work IS wanted, commit it by name instead and use worktree_land.",
+    params: "why? (one line, goes into the stash message so the list reads sensibly later)",
+    handler: async ({ why } = {}) => {
+      const cwd = process.env.OPERATOR_JOB_CWD;
+      if (!cwd) throw new ActionError("no agent worktree is configured (OPERATOR_JOB_CWD is unset)");
+      const result = await stashTree(cwd, why ? String(why) : "cleared to unblock a sync");
+      if (!result.stashed) throw new ActionError(`not stashed — ${result.reason ?? "unknown"}`);
+      return result;
+    },
+  },
+  main_rollback: {
+    description:
+      "Undo a land that made things worse — move main back to a commit it has already been on. For the case this is actually for: a server/ change landed, the server was restarted, and it did not come back. Refuses to rewrite anything already pushed (it names `git revert` instead), refuses to move main anywhere it has never been, and stashes uncommitted work rather than destroying it. The reply carries the command to undo the undo. A server/ rollback is NOT live until a full restart — the broken code is still in memory until then.",
+    params: "steps? (how many commits back, default 1, max 20), to? (a commit, instead of a count)",
+    handler: async ({ steps, to } = {}) => {
+      const mainCwd = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const result = await rollbackMain(mainCwd, { steps, to });
+      if (!result.rolledBack) throw new ActionError(result.reason ?? "could not roll back");
+      return result;
     },
   },
   jobs_list: {

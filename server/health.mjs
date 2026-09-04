@@ -409,6 +409,60 @@ async function gitChecks() {
   }
 
   /*
+    Work FINISHED in the worktree that never reached main — the other direction,
+    and the more expensive one.
+
+    Every check above asks whether the agent is running old code. None asked the
+    opposite question, and on 2026-09-04 that cost a day: the chat-uploads fix
+    was built, committed, marked done, and sat here across four full restarts.
+    Each restart loaded a build that had never contained it, so the fix did not
+    look absent — it looked BROKEN, which sent the next session hunting for a
+    bug in code that was never running.
+
+    Graded by what is actually at risk. Committed-but-unlanded is the loud one:
+    someone decided that work was finished and it is not live, and nothing else
+    in this file would ever say so. Uncommitted-only is quieter — that is
+    ordinary work in progress, and it is a warning solely because it blocks a
+    sync, which the check above already explains.
+  */
+  if (w.ok) {
+    const stranded = w.ahead ?? 0;
+    if (stranded > 0) {
+      out.push(
+        check(
+          "git:unlanded",
+          stranded >= 3 ? "fail" : "warn",
+          "Finished work reached main",
+          `${stranded} commit(s) are committed in ${w.branch} and NOT on main, so nothing they change is live no matter how many times Operator is restarted: ` +
+            (w.unlanded ?? []).slice(0, 4).join("; ") +
+            ((w.unlanded?.length ?? 0) > 4 ? ` (+${w.unlanded.length - 4} more)` : ""),
+          {
+            hint: "the worktree_land action, or npm run land",
+            ahead: stranded,
+            commits: w.unlanded ?? [],
+          },
+        ),
+      );
+    } else if (w.dirty.length) {
+      out.push(
+        check(
+          "git:unlanded",
+          "ok",
+          "Finished work reached main",
+          `Nothing committed is waiting to land. ${w.dirty.length} file(s) uncommitted in ${w.branch} — work in progress, not stranded.`,
+          { ahead: 0, dirty: w.dirty.length },
+        ),
+      );
+    } else {
+      out.push(
+        check("git:unlanded", "ok", "Finished work reached main", `Everything committed in ${w.branch} is on main.`, {
+          ahead: 0,
+        }),
+      );
+    }
+  }
+
+  /*
     Unpushed work, measured against the last fetch and NOT a fresh one.
 
     Fetching here would be an outbound call to GitHub on a page poll — the
