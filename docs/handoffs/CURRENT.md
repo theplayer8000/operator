@@ -1,89 +1,74 @@
 # Current work
 
-**The full restart drains properly now. NOT YET RESTARTED, so it is not live.**
+**Everything below is ON MAIN and NOT LOADED. The server has not been restarted
+since 23:12, and every change here is in `server/`.**
 
-`server/` is loaded at boot, so this fix — and the AI Router file tools, and
-`/api/health/checks` — only exist after a full restart. His call.
+## The uploads answer: it was built twice and never merged
 
-## Landed 2026-09-04 (desk session)
+He asked why attaching a file in chat still did nothing. Both halves existed and
+neither was on `main`:
 
-**The "soft stop" was a kill with a pause in front** (`server/reboot.mjs`,
-`server/jobs.mjs`, `server/index.mjs`). He caught the claim himself. Three
-separate holes:
+- `data/job-resources/` carved out of `workspace.mjs`'s `data/` refusal, so a
+  claimed TEXT file is actually readable.
+- Image attachments turned into **vision parts** in `airouter.mjs` — base64
+  data URIs after the text, capped at 4 images / 5 MB each, skipped ones NAMED
+  rather than silently dropped, and a 400 from the router retries once with the
+  images stripped and repairs its own replay history.
 
-- `stopAll()` marked every job cancelled IN MEMORY and never called `persist()`
-  — `remove()` and `clear()` both do. So `shutdown()` exited before anything
-  reached disk and `data/jobs.json` kept the attempt recorded as `"running"`,
-  which is the precise state reboot.mjs's own comment said the call prevented.
-- `process.exit(0)` behind a 750ms `setTimeout`, awaiting nothing. `exit` does
-  not wait for pending I/O, so a write in flight could be cut between
-  `writeFile` and `rename`. Tmp-then-rename stops a truncated file; it does
-  nothing for a write that never ran.
-- No `server.close()` and no SIGINT/SIGTERM handler anywhere in `server/`, so
-  in-flight requests and job event streams were severed at the socket.
+Both sat **uncommitted in the agent worktree** while the server serves `main`.
+So all four full restarts loaded a build that had never contained the fix. The
+work was fine; nothing had landed it.
 
-Now: **stop listening → cancel → await the save → exit**, bounded by
-`DRAIN_MS` (8s) with each step reporting whether it made it. `jobs.flush()` is
-the awaitable persist; every other call site stays fire-and-forget, which is
-right mid-turn and wrong on the way out.
+Committed on `agent` as `9bc35be`, **by name** — deliberately NOT `actions.mjs`
+or `roblox-studio.mjs` (see below). Fast-forwarded onto main.
 
-**`closeHttp` closes connections in two steps, deliberately.** Idle keep-alive
-sockets go immediately (they are what would otherwise hold `close()` open until
-the deadline every single time); `closeAllConnections()` only after a 1.5s grace,
-because `reboot.mjs` schedules the shutdown a beat after answering the request
-that asked for it, and the forced sweep would destroy the `restarting: true`
-reply on its way to his phone.
+Also flipped `providers.mjs` `attachments: false` → `true`. The session that
+wrote the feature left it false under a comment saying it should be true,
+because it could not make the edit land — honest about failing, and still a flag
+contradicting the comment directly above it.
 
-**The listener is REGISTERED, not imported** (`onShutdown()` in reboot.mjs,
-called by index.mjs). The first cut had reboot.mjs do `await import("./index.mjs")`
-to fetch the closer — which would have booted a second server inside
-`scripts/operator-action.mjs`, since that path reaches reboot.mjs via actions.mjs
-with index.mjs never loaded. Registration also runs the way the dependency
-already points.
+## Also landed
 
-**Verified**, not just compiled: a harness on a throwaway port and throwaway
-data files, 8 assertions, all pass. `closeHttp` resolved in **2ms** with an idle
-keep-alive socket open, and the port refused connections afterwards. `tsc -b`
-and `vite build` clean. Never calls `fullRestart` — that spawns the helper,
-which kills the real server by command-line match.
+- **`9a90adb`** — the health credential check was blind to `BRAVE_SEARCH_API_KEY`
+  and `RUNWAY_API_KEY`. Both approved and shipped 2026-09-04, never added to
+  `APPROVED_CREDENTIALS`, so when he set them from his phone the page said
+  "nothing set in the registry is missing from the running server" — true of the
+  two names it looked at, silent about the two it did not. Regex also anchored
+  per alternative; `^(OPERATOR_|A|B$)` bound the `$` to the last one only, so
+  `AIROUTER_API_KEY_OLD` counted as the real thing.
+- **`CLAUDE.md` approval row for `apis.roblox.com`** (uncommitted as of writing).
+  The passthrough shipped in `8093110` with no row. The consent was clearly
+  given — he set the key and the module documents his intent — but the record
+  was missing, and a host in use and absent from that table is the exact thing
+  the rule prevents. Worth knowing: it is **the one approved host where a worker
+  can change state on a service he does not own** (mutating verbs, every scope
+  ticked).
 
-## The Dev page restart still hard-exits, and that is FINE
+## Outstanding, in order
 
-`POST /api/restart` writes the response then `setTimeout(() => process.exit(75), 150)`:
-no `stopAll`, no drain, no listener close. That is not an oversight to fix —
-**his words: that button is primarily for when he already knows everything is
-saved.** It is the fast one, taken deliberately when nothing is running, and
-draining it would add up to 8s to the only restart that is currently instant.
-
-The two are now honestly different tools rather than one being a broken copy of
-the other: `/api/restart` reloads CODE and assumes a quiet server;
-`operator_restart` drains, saves, and re-reads the ENVIRONMENT. Do not "fix"
-the first into the second.
-
-## Open, needs him
-
-1. **`BRAVE_SEARCH_API_KEY` and `RUNWAY_API_KEY` are unset.** He has the Brave
-   one. `secret_set`, then a full restart — the shallow one re-reads no
-   environment.
-2. **The restart phrase is still the default**, `restart operator now`.
-   `OPERATOR_RESTART_PHRASE` is unset in both User and Machine registry, so the
-   phrase is printed in the refusal and stops accidents only. He tried
-   `Operator_Restart`, which flattens to `operator restart` and is correctly
-   refused.
-3. **Look at the map in a browser.** Still nothing has rendered it. Both Vite
-   instances are down (5173 and 5175) — `OperatorViteMain` / `OperatorViteAgent`
-   in Task Scheduler.
-4. **`git push origin main`** — now 9 commits ahead, this session cannot push.
+1. **Full restart.** Nothing above is live. `restart operator now`.
+2. **Then prove the uploads path** — attach a text file AND an image to an AI
+   Router job. Neither layer has ever run.
+3. **Roblox Studio MCP is built but NOT landed.** `server/roblox-studio.mjs` is
+   still untracked in the agent worktree and `actions.mjs` imports it at the top
+   level — **committing one without the other is a server that will not boot.**
+   Land them together, open Studio, then probe `roblox_studio tools_list` first;
+   tool names are discovered, not hardcoded.
+4. **2 commits unpushed** (`9bc35be`, `9a90adb`) plus the CLAUDE.md commit.
+   Denied to this session; run it yourself:
+   ```bash
+   git -C D:\Projects\Operator push origin main
+   ```
 
 ## Loose ends
 
-- Agent worktree is **4 behind main and dirty** (1 uncommitted file), so
-  `npm run land` will refuse the fast-forward until that is dealt with.
-- The test harness tripped a libuv assertion on exit (`UV_HANDLE_CLOSING`) from
-  the clap detector's audio handle being torn down by `process.exit`. Harness
-  only, after all assertions passed — but it is the same class of thing as the
-  bug above, and the real server exits the same way.
-- Store is 1.1 MB, 12x its oldest restore point in 4 days; `knowledge.notes` is
-  737 KB of it and the whole store crosses the wire on every write.
-- Turn stats: p50 38.4s, p95 354.7s over 147 turns, 21 errored.
-- `.agents/` is untracked and duplicates `.claude/skills/`.
+- `BRAVE_API_KEY` (31 chars) is still in the registry alongside the correct
+  `BRAVE_SEARCH_API_KEY`. Nothing reads it. Harmless, and one more name than
+  there should be.
+- The agent worktree is now **1 behind main** and still dirty with the Roblox
+  Studio pair, so `worktree_sync` will refuse until those are committed — which
+  is correct, that IS half-finished work.
+- `server/roblox.mjs`'s header and base host come from Roblox's docs, not from a
+  call that succeeded. First real call is the test.
+- Job-1 has run 48 turns on one thread. Event logs die on the next restart; the
+  work log and this file are what survive.
