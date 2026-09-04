@@ -114,6 +114,13 @@ $ntfyTopic = $env:OPERATOR_NTFY_TOPIC
 $espeakLib = $env:PHONEMIZER_ESPEAK_LIBRARY
 $concurrent = $env:OPERATOR_MAX_CONCURRENT
 $focusScreen = $env:OPERATOR_FOCUS_SCREEN
+# Both of these were missed when the forwarding became a group, and the banner
+# then reported "hosted apps: none" and "clap listener: off" for two things
+# that were set and forwarded correctly. The environment was right and the log
+# was wrong, which is the harder half to notice - read every name the banner
+# below uses, not just most of them.
+$apps = $env:OPERATOR_APPS
+$listen = $env:OPERATOR_LISTEN
 
 # Roll the log if it has got large, keeping exactly one previous file.
 #
