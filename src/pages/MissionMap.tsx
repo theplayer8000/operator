@@ -67,6 +67,56 @@ const CORE_R = 62;
 /** Missions settle outside this, so nothing parks on top of the core. */
 const MIN_ORBIT = 235;
 
+/**
+ * How much the layout OPENS UP as you zoom in, over and above the plain
+ * magnification.
+ *
+ * A canvas zoom is an affine scale: every node grows and every gap grows by
+ * exactly the same factor, so the composition is frozen and the picture reads
+ * as an object being magnified rather than as a space you are moving into. The
+ * owner: *"when u zoom in the nodes should spread out further and like expand
+ * off screen... and the lines should stretch out too"*.
+ *
+ * So node POSITIONS get a multiplier that grows with the zoom while node RADII
+ * stay exactly on the curve they were already on. Separation outruns size, the
+ * strands between nodes stretch because they are drawn between those positions,
+ * and the outermost nodes leave the viewport — which is what moving into a
+ * space looks like rather than what enlarging a picture of one looks like.
+ *
+ * Logarithmic in the zoom RATIO rather than linear in the zoom, and both halves
+ * of that matter because the range here is enormous — the vault fits at about a
+ * tenth and the wheel goes to 3:
+ *
+ *   - a linear term would be imperceptible across the vault's useful range and
+ *     violent across the mission map's,
+ *   - a ratio is what the eye actually reads. One wheel notch multiplies the
+ *     zoom by 1.12 whatever it started from, so a term in ln(z) opens the
+ *     layout by the same amount per notch everywhere. Linear in z would make
+ *     the notches near 3 six times the size of the notches near 0.5.
+ *
+ * Anchored on the FITTED zoom rather than on 1, because "zoomed in" only means
+ * anything relative to the view that shows you everything, and that view is
+ * ~0.1 for the vault and 1:1 for twelve missions. Below the anchor the
+ * multiplier is pinned at 1, so zooming out converges back onto exactly the
+ * compact layout `fitView` measured — and the fit stays honest, because at the
+ * zoom it picks the spread is 1 by construction.
+ *
+ * The physics never sees this. It is applied where the projection is written
+ * (`sx`/`sy`), which is the one place the whole file already agrees is the
+ * position — so the drawn node, the strand endpoint and the hit test all move
+ * together and cannot drift apart.
+ */
+const SPREAD_GAIN = 0.6;
+/**
+ * Finite by construction, like every other divide on this canvas.
+ *
+ * Only the vault comes near it (fitted 0.06 against a wheel that reaches 3 is a
+ * ratio of 50, which is 3.35) and nothing misbehaves at the cap — it is here so
+ * that a future change to either end of the zoom range cannot quietly turn a
+ * node position into a five-figure coordinate.
+ */
+const SPREAD_MAX = 3.2;
+
 
 
 /** Which graph is on screen. Three, and they share one renderer. */
@@ -303,6 +353,41 @@ export default function MissionMap() {
     expanding the target is recomputed every frame — you watch it pull back.
   */
   const viewTarget = useRef({ zoom: 1, panX: 0, panY: 0 });
+  /**
+   * The zoom `fitView` last chose — the anchor the layout spread is measured
+   * from.
+   *
+   * 1 rather than 0 as the default, because the mission map deliberately opens
+   * at 1:1 and is never fitted on first load: for that view, 1 IS the fitted
+   * zoom, and anchoring anywhere else would make the map he looks at most open
+   * already spread.
+   */
+  const fitZoom = useRef(1);
+  /*
+    Has the app framed this graph itself yet?
+
+    Auto scaling is only allowed once it has. Without this guard the passive
+    rule below fires on frame 0 of the mission map — `follow` is 0 by design on
+    first load, nothing has been framed, and a layout slightly larger than the
+    window is the normal case — which zooms the landing page out and undoes
+    `00b1125`, the fix for "its js frozen lol on mission flat". It was not
+    frozen; it had been fitted small.
+
+    The vault sets this immediately (it always fits). Missions sets it when you
+    come back from another graph, or on RECENTRE. So the 1:1 opening survives
+    exactly as long as nobody has asked for anything else.
+  */
+  const hasFitted = useRef(false);
+  /**
+   * Has he framed the view HIMSELF since the last automatic fit?
+   *
+   * Auto scaling and "leave it where he put it" are the same question asked
+   * twice, and this is the answer to both. Nothing reframes a view he aimed;
+   * everything is free to reframe one he never touched. Dragging a node is
+   * deliberately not framing — moving a body around the graph is not a
+   * statement about where the camera should be.
+   */
+  const userFramed = useRef(false);
   /** Frames of automatic following left. Any manual gesture zeroes it. */
   const follow = useRef(0);
   /*
@@ -631,6 +716,33 @@ export default function MissionMap() {
   }, []);
 
   const view = useRef({ zoom: 1, panX: 0, panY: 0 });
+
+  /**
+   * The layout multiplier at a given zoom. See `SPREAD_GAIN`.
+   *
+   * A pure function of two refs, so it can be called from the animation loop
+   * and from a pointer handler and give the same answer in the same frame —
+   * which is the whole requirement, because one of those draws the node and
+   * the other decides which node you grabbed.
+   */
+  const spreadAt = (zoom: number) =>
+    Math.min(
+      SPREAD_MAX,
+      1 + SPREAD_GAIN * Math.log(Math.max(1, zoom / Math.max(0.01, fitZoom.current))),
+    );
+
+  /**
+   * How far out the view may go — and it has to be ONE number.
+   *
+   * It was two, and they disagreed: the wheel floor moved to 0.06 on a big
+   * graph (the comment on `onWheel` records why) while `fitView` kept clamping
+   * at 0.3, so RECENTRE on the vault framed a web three times too large for the
+   * window and the button could not reach a view the wheel could. A floor is
+   * the point past which zooming out stops being useful, and that has to mean
+   * the same thing to every caller.
+   */
+  const zoomFloor = () => (bodiesRef.current.length > 40 ? 0.06 : 0.35);
+
   const pointer = useRef({
     x: 0,
     y: 0,
@@ -1067,6 +1179,15 @@ export default function MissionMap() {
         whatever zoom the vault left behind. On first load it gets nothing at
         all, which is what it did before any of this.
       */
+      /*
+        And the follow only ever half-worked, because `fitView` clamped the
+        zoom at 0.3 while the vault needs a tenth of that — so switching to it
+        DID chase the layout, and stopped short of a frame that held it. The
+        floor is one number now (`zoomFloor`), so this fit can reach the view
+        the wheel could always reach.
+      */
+      // A new graph has not been framed yet, whatever the last one did.
+      hasFitted.current = false;
       if (source === "vault") follow.current = 900;
       // Agents and missions settle in under a second; a short fit frames them
       // without the camera hovering over a picture that has stopped moving.
@@ -1095,7 +1216,23 @@ export default function MissionMap() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
-    window.addEventListener("resize", resize);
+    /*
+      A resized window is a new frame to fill, not the old one stretched.
+
+      Deliberately NOT part of `resize` itself: that runs once at mount, when
+      the graph is empty and the mission map is supposed to open at 1:1 without
+      ever being fitted. Only a real resize EVENT asks for a re-frame, and only
+      when he has not framed it himself.
+
+      Routed through `follow` rather than fitting on the spot so it glides
+      rather than snapping, and so a drag-resize keeps up instead of firing a
+      hard fit per pixel.
+    */
+    const onResize = () => {
+      resize();
+      if (!userFramed.current) follow.current = Math.max(follow.current, 45);
+    };
+    window.addEventListener("resize", onResize);
 
     // Particles travelling along the strands, from a mission to the ones that
     // wait on it. Direction is the information: it shows which way the board
@@ -1114,23 +1251,77 @@ export default function MissionMap() {
       Generated at mount because a field that changed every frame would twinkle
       like static, and a field regenerated on re-render would jump.
 
-      220 is enough to read as a sky at 1440p and cheap enough to draw as plain
-      arcs. No gradients here — that is the mistake that made the vault graph
-      unusable.
+      220 was too few — "bit dark out there" — and they were laid out in WORLD
+      units over a fixed 3600x2600 patch, which has a worse problem than being
+      sparse: inside `ctx.scale(zoom)` that patch is 216 pixels across at the
+      zoom that fits the vault, so the sky collapsed into a stamp in the middle
+      of the screen exactly when there was most black to fill. The wrap that was
+      supposed to stop that was a no-op, because it re-wrapped coordinates that
+      were already inside the range it wrapped to.
+
+      So the field is now in SCREEN space, outside the camera transform, as a
+      repeating tile. Three things fall out of that and all three are the point:
+      it covers any viewport at any zoom, its density is constant instead of
+      collapsing as you zoom out, and it can carry real PARALLAX — panning moves
+      the near band nine times as far as the far one, which is the depth cue a
+      field glued to the graph could never give.
+
+      It also stays put while the layout spreads (see `SPREAD_GAIN`), which is
+      the correct physics and the better picture: the sky is the fixed reference
+      the moving graph is measured against, which is the reason this file has
+      stars at all.
     */
-    const stars = Array.from({ length: 220 }, () => {
-      const depth = 0.25 + Math.random() * 0.75;
-      return {
-        // Spread over a generous area so panning does not run out of sky.
-        x: (Math.random() - 0.5) * 3600,
-        y: (Math.random() - 0.5) * 2600,
-        depth,
-        r: 0.4 + depth * 1.1,
-        // Slightly cool, slightly varied — a field of identical dots reads as
-        // a texture rather than as distance.
-        alpha: 0.12 + depth * 0.4,
-      };
-    });
+    /** The repeat the sky is wrapped over, in screen pixels. */
+    const STAR_TILE = 1100;
+    /*
+      Four bands, not 510 individual stars, and the difference is what makes
+      this affordable.
+
+      A band is one depth: one size, one brightness, one parallax factor — so
+      every star in it can go into a single path and be painted by a single
+      `fill`. That is the same trick the strands use, and for the same reason
+      (1,653 stroke calls a frame is what froze the tab once already). The old
+      field issued 220 fills for 220 stars; this issues FOUR for the ~870 that
+      land on a 1080p screen, at a measured density of one per 2,380 square
+      pixels whatever the window size or how far it has been panned.
+
+      The counts are deliberately top-heavy toward the far, dim end. A field
+      where every star is legible reads as noise; layers are what read as
+      distance, and most of a real sky is nearly invisible.
+    */
+    const sky = [
+      { count: 250, r: 0.55, alpha: 0.15, parallax: 0.05, square: true },
+      { count: 150, r: 0.8, alpha: 0.26, parallax: 0.13, square: true },
+      { count: 78, r: 1.15, alpha: 0.42, parallax: 0.26, square: false },
+      { count: 32, r: 1.7, alpha: 0.66, parallax: 0.46, square: false },
+    ].map((band) => ({
+      ...band,
+      stars: Array.from({ length: band.count }, () => ({
+        x: Math.random() * STAR_TILE,
+        y: Math.random() * STAR_TILE,
+      })),
+    }));
+    /*
+      A dozen bright ones that breathe, drawn individually because each needs
+      its own alpha and a batch cannot vary that.
+
+      The original note here — "a field that changed every frame would twinkle
+      like static" — is right about a field. It is not right about a dozen: what
+      makes static is EVERYTHING moving at once, and what makes a sky look alive
+      is a few of the brightest doing something slow. Periods run from six
+      seconds to seventeen.
+
+      They cost about twenty fills a frame (a dozen stars, each drawn at every
+      tile position on screen), which is affordable only because the four
+      batched bands replaced two hundred and twenty.
+    */
+    const beacons = Array.from({ length: 12 }, () => ({
+      x: Math.random() * STAR_TILE,
+      y: Math.random() * STAR_TILE,
+      r: 1.5 + Math.random() * 0.9,
+      phase: Math.random() * Math.PI * 2,
+      speed: 0.006 + Math.random() * 0.011,
+    }));
 
     const motes = Array.from({ length: 90 }, () => ({
       edge: Math.floor(Math.random() * Math.max(1, edgesRef.current.length)),
@@ -1429,6 +1620,18 @@ export default function MissionMap() {
       const floor = (screenPx: number, cap = screenPx * 12) =>
         Math.min(cap, screenPx / Math.max(0.05, zoom));
 
+      /*
+        How far apart the layout is holding itself THIS frame, as against how
+        big the nodes are. See `SPREAD_GAIN` for the curve and why.
+
+        Computed once here and applied only where the projection is written, a
+        few lines down, so there is exactly one expression in the file that
+        turns a simulated position into a drawn one. Radii deliberately do not
+        get it: separation outrunning size is the entire effect, and a spread
+        radius would just be the zoom again.
+      */
+      const spread = spreadAt(zoom);
+
       if (solid) {
         // A slow yaw so depth is legible. A static projection of a 3D layout
         // is just a strange 2D one — the rotation is what reveals the shape.
@@ -1487,8 +1690,20 @@ export default function MissionMap() {
             behaving like a far side instead of turning inside out.
           */
           const p = FOV / Math.max(FOV * 0.25, FOV + z2);
-          b.sx = x1 * p;
-          b.sy = y1 * p;
+          /*
+            Spread applied AFTER the perspective divide, on the flat result.
+
+            Deliberate: the depth pipeline — the FOV measured from the layout's
+            own extent, the clamp above that stops the divisor reaching zero,
+            the depth normalisation below — is all reasoning about the graph as
+            it actually is. Feeding a zoom-dependent multiplier into it would
+            make the lens change shape as you scrolled, and would put nodes
+            through the clamp the crash notes above are about. Spreading the
+            projected image instead opens the picture without touching the
+            camera model at all.
+          */
+          b.sx = x1 * p * spread;
+          b.sy = y1 * p * spread;
           b.sr = Math.max(b.r * p, floor(3.2));
           // Normalised against the layout's own extent rather than a constant,
           // so a tight cluster still separates front from back.
@@ -1513,8 +1728,8 @@ export default function MissionMap() {
         bodies.sort((a, b) => a.depth - b.depth);
       } else {
         for (const b of bodies) {
-          b.sx = b.x;
-          b.sy = b.y;
+          b.sx = b.x * spread;
+          b.sy = b.y * spread;
           b.sr = Math.max(b.r, floor(3.2));
           b.depth = 1;
         }
@@ -1555,19 +1770,162 @@ export default function MissionMap() {
       */
       if (follow.current > 0) {
         follow.current -= 1;
-        // Stop early once the layout has stopped moving; there is nothing left
-        // to keep up with, and a camera that keeps adjusting a still picture
-        // reads as drift.
-        if (heat.current < 0.12) follow.current = 0;
+        /*
+          Stop early once the layout has stopped moving; there is nothing left
+          to keep up with, and a camera that keeps adjusting a still picture
+          reads as drift.
+
+          Long follows only. The 900-frame chase exists to keep up with a graph
+          that is still expanding, and cutting it short once the graph is cool
+          is the whole point. A short fit — the 45 frames auto scaling asks for
+          when the content has outgrown the window — is asked for precisely
+          BECAUSE the layout has settled somewhere that no longer fits, so
+          cancelling it on a cold layout would cancel every one of them.
+        */
+        /*
+          `>= 60`, not `> 60`. This runs after the decrement above, so the
+          60-frame source-change follow is already 59 on its first frame and a
+          strict `>` could never cancel it — it would always run the full
+          second even on a layout that had gone cold immediately.
+        */
+        if (heat.current < 0.12 && follow.current >= 60) follow.current = 0;
         // Every fourth frame: fitting is a pass over every body, and the target
         // does not move fast enough to need it more often than that.
         if (follow.current % 4 === 0) fitView(false);
+      } else if (
+        !userFramed.current &&
+        !pointer.current.down &&
+        hasFitted.current &&
+        tick % 30 === 0
+      ) {
+        /*
+          Auto scaling. If he has not framed the view himself, the graph is not
+          allowed to grow out of the window.
+
+          One rule covering four things that used to have none: a node added, a
+          layout still spreading after the follow ended, a window resized
+          smaller, and a graph swapped for a much larger one. All four are the
+          same event — the content no longer fits what it is being shown in —
+          and answering it in the frame loop means nothing has to remember to
+          call anything.
+
+          Three guards, and each is a bug that would otherwise be here:
+
+          - `userFramed` is the deliberate half. A view he zoomed or panned to
+            is his, and a camera that keeps overruling that is the map fighting
+            him.
+          - `pointer.down` because a drag WRITES positions from the pointer. Let
+            the camera zoom out mid-drag and the dragged node has to move
+            outward to stay under the cursor, which grows the bounds, which
+            zooms out further: a runaway, in the one gesture that can feed it.
+          - `hasFitted`, which is what protects the mission map's 1:1
+            opening. That view is never framed by the app, so this rule must
+            not be the thing that frames it. See the ref's own comment.
+
+          BOTH DIRECTIONS, with an asymmetric dead band. An earlier version
+          acted on overflow only, on the reasoning that zooming in to fill
+          space would disturb the 1:1 opening — but `hasFitted` handles that
+          properly, and overflow-only turns out to be a slow one-way ratchet:
+          the simulation never settles by design, every outward breath past the
+          threshold lowers the camera and raises `fitZoom`, and no inward
+          breath ever raises it again. Over a long session the graph drifts out
+          to the widest it has ever been and cannot come back without
+          RECENTRE.
+
+          0.85 out and 1.6 in are the two numbers to move if this ever feels
+          wrong. They are deliberately far apart: a single threshold would let
+          a layout that breathes across it re-fit twice a second. Past about a
+          fifth out of frame there are nodes he cannot see; past 1.6 the graph
+          is a small island in a large window.
+        */
+        const wanted = measureFit();
+        // What is on screen is `zoom * spread` of the measured layout, and
+        // `wanted.zoom` is the zoom at which the layout exactly fills the
+        // window. Comparing the two is comparing like with like.
+        const shown = zoom * spread;
+        if (wanted && (wanted.zoom < shown * 0.85 || wanted.zoom > shown * 1.6)) {
+          follow.current = 45;
+        }
       }
       const target = viewTarget.current;
       const ease = follow.current > 0 ? 0.06 : 0.12;
       view.current.zoom += (target.zoom - view.current.zoom) * ease;
       view.current.panX += (target.panX - view.current.panX) * ease;
       view.current.panY += (target.panY - view.current.panY) * ease;
+
+      /* ---- the sky -------------------------------------------------------
+         Drawn first, furthest, and OUTSIDE the camera transform.
+
+         Everything else on this canvas is in world units and scales with the
+         zoom. The stars must not: they are the fixed thing the motion is read
+         against, and a sky that zooms with the graph is a texture painted on
+         the graph. See the generation note above for what that cost.
+
+         Parallax instead. Each band is offset by the pan and by the yaw in
+         proportion to its own depth, so the near band sweeps and the far band
+         barely moves — which is the cue that turns a scatter of dots into
+         distance. In flat mode there is no yaw to follow, so the field only
+         answers the pan, which is correct: a diagram does not need a sky
+         turning behind it.
+      */
+      ctx.globalCompositeOperation = "lighter";
+      const panX = view.current.panX;
+      const panY = view.current.panY;
+      // Named apart from the projection's own `yaw` above, which lives in a
+      // block of its own — two things called yaw in one function is how the
+      // wrong one ends up being read.
+      const skyYaw = solid ? spin.current : 0;
+      const wrapTile = (v: number) => ((v % STAR_TILE) + STAR_TILE) % STAR_TILE;
+      /*
+        One star, drawn at every tile position that lands on screen.
+
+        Wrapping into [0, TILE) and then stepping by TILE is what makes the
+        field infinite: pan as far as you like and there is always sky. It also
+        does the culling for free — a star whose wrapped position is past the
+        edge of a viewport smaller than the tile simply draws nothing, so the
+        cost follows the size of the WINDOW rather than the size of the field.
+      */
+      const tiled = (bx: number, by: number, dot: (x: number, y: number) => void) => {
+        for (let x = wrapTile(bx); x <= width; x += STAR_TILE) {
+          for (let y = wrapTile(by); y <= height; y += STAR_TILE) dot(x, y);
+        }
+      };
+      for (const band of sky) {
+        const r = band.r;
+        /*
+          A square for the two faint bands. At a diameter of one pixel there is
+          no difference anyone can see between a square and a circle, and `rect`
+          is one path op where an arc is a curve to flatten — worth having when
+          it is four hundred of them a frame.
+        */
+        const dot = band.square
+          ? (x: number, y: number) => ctx.rect(x - r, y - r, r * 2, r * 2)
+          : (x: number, y: number) => {
+              // The moveTo is not optional: without it each arc is joined to
+              // the last one by a straight line through the batch.
+              ctx.moveTo(x + r, y);
+              ctx.arc(x, y, r, 0, Math.PI * 2);
+            };
+        const ox = panX * band.parallax + skyYaw * band.parallax * 260;
+        const oy = panY * band.parallax;
+        ctx.beginPath();
+        for (const star of band.stars) tiled(star.x + ox, star.y + oy, dot);
+        ctx.fillStyle = `rgba(184,204,236,${band.alpha * (solid ? 1 : 0.78)})`;
+        ctx.fill();
+      }
+      // The bright few, each on its own slow cycle. Same parallax as the
+      // nearest band, because that is the layer they belong to.
+      const beaconOx = panX * 0.46 + skyYaw * 0.46 * 260;
+      const beaconOy = panY * 0.46;
+      for (const beacon of beacons) {
+        const shimmer = 0.58 + 0.42 * Math.sin(tick * beacon.speed + beacon.phase);
+        ctx.fillStyle = `rgba(214,228,255,${(0.5 + lift * 0.28) * shimmer})`;
+        tiled(beacon.x + beaconOx, beacon.y + beaconOy, (x, y) => {
+          ctx.beginPath();
+          ctx.arc(x, y, beacon.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
 
       ctx.save();
       ctx.translate(width / 2 + view.current.panX, height / 2 + view.current.panY);
@@ -1576,35 +1934,26 @@ export default function MissionMap() {
       ctx.globalCompositeOperation = "lighter";
 
       /*
-        The sky, drawn first and furthest.
+        Faint concentric rings — a horizon for the web to sit in, so the nodes
+        read as being somewhere rather than floating on nothing.
 
-        Parallax by depth against the same yaw the nodes use, so the field
-        turns with the graph instead of sitting on the glass in front of it.
-        In flat mode there is no yaw, so they simply sit still — which is
-        correct: a flat graph is a diagram and a diagram does not need a sky
-        moving behind it.
+        Spread with the layout, because they are the GROUND the layout stands
+        on: left at a fixed radius while the nodes opened outwards they would
+        shrink into a badge around the core and stop being a horizon at all.
+
+        One path, four subpaths, one stroke — same reason as the strands below,
+        and the `moveTo` before each arc is what stops the four being joined by
+        a line through the middle.
       */
-      for (const star of stars) {
-        const drift = solid ? Math.sin(spin.current) * star.depth * 180 : 0;
-        const x = star.x + drift;
-        // Wrapped rather than clipped, so panning never reaches an edge of the
-        // field and finds nothing.
-        const wrapped = ((x + 1800) % 3600) - 1800;
-        ctx.beginPath();
-        ctx.arc(wrapped, star.y, star.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(184,204,236,${star.alpha * (solid ? 1 : 0.55)})`;
-        ctx.fill();
-      }
-
-      // Faint concentric rings — a horizon for the web to sit in, so the nodes
-      // read as being somewhere rather than floating on nothing.
+      ctx.beginPath();
       for (let i = 1; i <= 4; i++) {
-        ctx.beginPath();
-        ctx.arc(0, 0, i * 165, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(80,110,160,${0.035 + lift * 0.03})`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        const ringR = i * 165 * spread;
+        ctx.moveTo(ringR, 0);
+        ctx.arc(0, 0, ringR, 0, Math.PI * 2);
       }
+      ctx.strokeStyle = `rgba(80,110,160,${0.035 + lift * 0.03})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
 
       const focus = hoveredRef.current?.id ?? null;
       const near = new Set<string>();
@@ -1937,12 +2286,24 @@ export default function MissionMap() {
     raf = requestAnimationFrame(step);
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
 
   /* ---- interaction ---------------------------------------------------- */
 
+  /**
+   * A pointer, in the space things are DRAWN in.
+   *
+   * The exact inverse of the canvas transform — `translate(w/2 + pan)` then
+   * `scale(zoom)` — and nothing else, which is what makes it safe to compare
+   * against `sx`/`sy`. Those already carry the projection AND the layout
+   * spread, so this keeps working unchanged as the spread moves: the number it
+   * returns is the number the node was painted at.
+   *
+   * It is deliberately NOT the simulated position. `toLayout` is that, and the
+   * two differ by exactly the spread.
+   */
   const toWorld = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -1952,6 +2313,21 @@ export default function MissionMap() {
       x: (clientX - rect.left - rect.width / 2 - panX) / zoom,
       y: (clientY - rect.top - rect.height / 2 - panY) / zoom,
     };
+  };
+
+  /**
+   * A pointer, in the space the PHYSICS runs in.
+   *
+   * Dragging is the one gesture that writes a position back, so it is the one
+   * place the spread has to be undone. Without the divide, grabbing a node at
+   * any zoom above the fitted one would multiply its coordinates by the spread
+   * the moment you moved — the node would leap outward from the core, and the
+   * harder you had zoomed in the further it would go.
+   */
+  const toLayout = (clientX: number, clientY: number) => {
+    const { x, y } = toWorld(clientX, clientY);
+    const spread = spreadAt(view.current.zoom);
+    return { x: x / spread, y: y / spread };
   };
 
   const bodyAt = (clientX: number, clientY: number) => {
@@ -2065,7 +2441,9 @@ export default function MissionMap() {
         pointer.current.dragging = null;
         return;
       }
-      const { x, y } = toWorld(e.clientX, e.clientY);
+      // `toLayout`, not `toWorld` — a drag writes into the simulation, and the
+      // simulation does not know about the layout spread.
+      const { x, y } = toLayout(e.clientX, e.clientY);
       // Velocity carried from the pointer, so releasing mid-sweep throws the
       // node instead of dropping it dead.
       b.vx = x - b.x;
@@ -2096,6 +2474,9 @@ export default function MissionMap() {
         view.current.panX += dx;
         view.current.panY += dy;
         viewTarget.current = { ...view.current };
+        // He has framed it. Nothing reframes it again until he asks — see
+        // `userFramed`.
+        userFramed.current = true;
       }
       return;
     }
@@ -2132,8 +2513,10 @@ export default function MissionMap() {
   };
 
   const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    // Scrolling is a manual gesture like any other; the camera stops steering.
+    // Scrolling is a manual gesture like any other; the camera stops steering,
+    // and stays stopped — this is him choosing a frame.
     follow.current = 0;
+    userFramed.current = true;
     const next = view.current.zoom * (e.deltaY < 0 ? 1.12 : 0.89);
     /*
       The floor depends on how big the graph is.
@@ -2144,28 +2527,28 @@ export default function MissionMap() {
       again. A floor should be the point past which zooming out stops being
       useful, and that moves with the node count.
     */
-    const low = bodiesRef.current.length > 40 ? 0.06 : 0.35;
-    view.current.zoom = Math.max(low, Math.min(3, next));
+    view.current.zoom = Math.max(zoomFloor(), Math.min(3, next));
     viewTarget.current = { ...view.current };
   };
 
-  /*
-    Fit everything on screen, rather than merely returning to 1:1.
-
-    The first version reset zoom and pan to their defaults, which is not what
-    "reset" means on a map you can throw nodes around: if you had flung one into
-    the distance, the view snapped back to centre and the node was still off
-    screen. Measuring the actual bounds and framing them does what the button
-    says.
-  */
-  const fitView = (immediate = true) => {
+  /**
+   * Where the camera WOULD sit to hold the whole graph, without moving it.
+   *
+   * Split out of `fitView` because the answer is wanted twice for two different
+   * reasons: to go there, and to ask whether the graph has outgrown the window
+   * since the last time it did. Those must not be allowed to compute the frame
+   * differently — a rule that fires on one measurement and moves the camera to
+   * another is a rule that fires again on the next frame, forever.
+   *
+   * Measured in SIMULATION units, with no spread applied, and that is what
+   * keeps the whole arrangement stable: the zoom it returns becomes the anchor
+   * (`fitZoom`), and the spread at the anchor is 1 by definition — so the frame
+   * it measured is the frame you land in.
+   */
+  const measureFit = () => {
     const canvas = canvasRef.current;
     const bodies = bodiesRef.current;
-    if (!canvas || bodies.length === 0) {
-      viewTarget.current = { zoom: 1, panX: 0, panY: 0 };
-      if (immediate) view.current = { ...viewTarget.current };
-      return;
-    }
+    if (!canvas || bodies.length === 0) return null;
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
@@ -2190,9 +2573,47 @@ export default function MissionMap() {
     */
     const usableH = h - 150;
     const zoom = Math.max(
-      0.3,
+      // The same floor the wheel uses. They were two numbers and disagreed —
+      // see `zoomFloor`.
+      zoomFloor(),
       Math.min(1.6, Math.min(w / (maxX - minX), usableH / (maxY - minY)) * 0.94),
     );
+
+    return {
+      zoom,
+      // Shifted up by half the space the chat occupies, so the centre of the
+      // web sits in the centre of what you can actually see.
+      panX: -((minX + maxX) / 2) * zoom,
+      panY: -((minY + maxY) / 2) * zoom - 40,
+    };
+  };
+
+  /*
+    Fit everything on screen, rather than merely returning to 1:1.
+
+    The first version reset zoom and pan to their defaults, which is not what
+    "reset" means on a map you can throw nodes around: if you had flung one into
+    the distance, the view snapped back to centre and the node was still off
+    screen. Measuring the actual bounds and framing them does what the button
+    says.
+  */
+  const fitView = (immediate = true) => {
+    const target = measureFit();
+    /*
+      Framing is the camera's decision again from here.
+
+      Both callers mean that: RECENTRE is him handing the view back, and the
+      follow only runs when nothing has taken it. Auto scaling reads this flag
+      and nothing else, so this line is the whole of "it holds where he left
+      it" — see `userFramed`.
+    */
+    userFramed.current = false;
+    if (!target) {
+      viewTarget.current = { zoom: 1, panX: 0, panY: 0 };
+      fitZoom.current = 1;
+      if (immediate) view.current = { ...viewTarget.current };
+      return;
+    }
 
     /*
       Calm the web as well as framing it.
@@ -2210,20 +2631,26 @@ export default function MissionMap() {
       is the opposite of watching it expand.
     */
     if (immediate) {
-      for (const b of bodies) {
+      for (const b of bodiesRef.current) {
         b.vx = 0;
         b.vy = 0;
         b.vz = 0;
       }
     }
 
-    viewTarget.current = {
-      zoom,
-      // Shifted up by half the space the chat occupies, so the centre of the
-      // web sits in the centre of what you can actually see.
-      panX: -((minX + maxX) / 2) * zoom,
-      panY: -((minY + maxY) / 2) * zoom - 40,
-    };
+    viewTarget.current = target;
+    /*
+      The anchor the layout spread is measured from moves with the fit.
+
+      This is what makes "zoomed in" mean the same thing on twelve missions and
+      on 690 notes: it is measured from the view that shows you everything, not
+      from 1. It also makes the fit self-consistent — the spread is exactly 1 at
+      this zoom, so the bounds `measureFit` just measured are the bounds you
+      arrive at.
+    */
+    fitZoom.current = target.zoom;
+    // From here on the camera owns the framing, so auto scaling may act.
+    hasFitted.current = true;
     // RECENTRE is a request, so it lands immediately. The animated version is
     // `follow`, below, which is for the camera keeping up with a graph that is
     // still moving.
