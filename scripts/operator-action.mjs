@@ -64,13 +64,28 @@ async function main() {
     // The server's own reason, not the status code — a 400 here means the
     // action said exactly what was wrong with the call, and repeating that
     // verbatim is what lets a worker correct itself on the next turn.
-    throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    const err = new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    // The server answered, so it is plainly running. Marked so the handler
+    // below does not tell the caller otherwise.
+    err.reachedServer = true;
+    throw err;
   }
   console.log(JSON.stringify(body.result, null, 2));
 }
 
 main().catch((err) => {
   console.error(`action failed: ${err.message}`);
-  console.error("Is the server running, and the terminal armed? npm run serve");
+  /*
+    Only when the server never answered.
+
+    It used to print unconditionally, so a rejected parameter came back as
+    `action failed: <exactly what was wrong>` followed by "is the server
+    running?" — sending a worker to check infrastructure when the message
+    immediately above it had already told it what to fix. A hint that fires on
+    every failure is noise on the one failure it was written for.
+  */
+  if (!err.reachedServer) {
+    console.error("Is the server running, and the terminal armed? npm run serve");
+  }
   process.exit(1);
 });
