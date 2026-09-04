@@ -78,6 +78,29 @@ export const enabled = (process.env.OPERATOR_WORKER_FILES ?? "1").trim() !== "0"
 */
 const MAX_READ_CHARS = 200_000;
 const MAX_WRITE_CHARS = 500_000;
+
+/*
+  How much a whole TURN may read, and how much of a file arrives unasked.
+
+  These two exist because of what happened on 2026-09-04, the first day this
+  worker had files. It read `MissionMap.tsx` (2,200 lines), `actions.mjs`,
+  `index.mjs`, `terminal.mjs` — twice — and a dozen more, whole. Every one of
+  those is appended to `messages` and **re-sent on every following round**, so
+  by round twelve a single completion could not finish inside the request
+  timeout. Four turns died, two of them at exactly 180.0s.
+
+  `delegate.mjs` already learned this and caps a delegation at 400,000
+  characters. That cap did not come across when the tools were written, which
+  is the whole mistake: the tool-using path needs it MORE, because a delegation
+  pays for its text once and a tool loop pays for it every round.
+
+  DEFAULT_READ_LINES is the other half. `read_file` takes `offset`/`limit` and
+  the model was not using them, so "read the file" meant all of it. Claude
+  Code's own Read defaults to a window for the same reason. The reply says the
+  file was truncated and how to get the rest, so nothing is silently lost.
+*/
+const TURN_READ_BUDGET = Number(process.env.OPERATOR_WORKER_READ_BUDGET || 300_000);
+const DEFAULT_READ_LINES = 400;
 const MAX_LIST = 400;
 const MAX_MATCHES = 120;
 const CHECK_TIMEOUT_MS = 10 * 60_000;
@@ -203,21 +226,42 @@ async function readFileTool({ path, offset, limit }, ctx) {
   } catch (err) {
     throw new WorkspaceError(`cannot read "${path}": ${err?.code === "ENOENT" ? "no such file" : err?.message}`);
   }
+  /*
+    The turn's remaining budget. Refused rather than truncated to nothing,
+    because a worker handed an empty file believes the file is empty.
+  */
+  if (ctx.budget && ctx.budget.chars >= TURN_READ_BUDGET) {
+    throw new WorkspaceError(
+      `this turn has already read ${Math.round(ctx.budget.chars / 1000)}k characters, which is the cap. Everything read stays in the conversation and is re-sent every round, so reading more makes the turn slower and then times it out. Use search_files to find the lines you need, or read_file with offset/limit.`,
+    );
+  }
+
   const lines = body.split("\n");
   const from = Math.max(0, Number(offset) || 0);
-  const count = limit ? Math.max(1, Number(limit)) : lines.length;
+  const asked = limit ? Math.max(1, Number(limit)) : DEFAULT_READ_LINES;
+  const count = Math.min(asked, lines.length - from);
   let text = lines.slice(from, from + count).join("\n");
-  let truncated = false;
+  const notes = [];
+  if (from + count < lines.length) {
+    notes.push(
+      `showing lines ${from + 1}-${from + count} of ${lines.length} — pass offset:${from + count} to continue, or use search_files to jump straight to what you need`,
+    );
+  }
   if (text.length > MAX_READ_CHARS) {
     text = text.slice(0, MAX_READ_CHARS);
-    truncated = true;
+    notes.push(`stopped at ${MAX_READ_CHARS} characters`);
   }
+  if (ctx.budget) ctx.budget.chars += text.length;
+
   return {
     path: display(target, ctx.cwd),
     lines: lines.length,
     from: from + 1,
     text,
-    ...(truncated ? { truncated: `stopped at ${MAX_READ_CHARS} characters — read a line range instead` } : {}),
+    ...(notes.length ? { truncated: notes.join("; ") } : {}),
+    ...(ctx.budget
+      ? { budgetLeft: `${Math.max(0, Math.round((TURN_READ_BUDGET - ctx.budget.chars) / 1000))}k characters` }
+      : {}),
   };
 }
 
@@ -471,7 +515,7 @@ export const TOOLS = [
     function: {
       name: "read_file",
       description:
-        "Read a file from Operator's source. Use this before changing anything. Reads reach the whole project; Operator's DATA (data/) is not here — it has capability actions.",
+        "Read part of a file. SEARCH FIRST — everything you read stays in the conversation and is re-sent on every following round, so reading several large files whole is what makes a turn time out rather than finish. Returns 400 lines unless you ask for more; pass offset to continue. Operator's DATA (data/) is not here — it has capability actions.",
       parameters: {
         type: "object",
         properties: {

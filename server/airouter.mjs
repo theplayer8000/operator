@@ -103,8 +103,21 @@ const conversations = new Map();
 let counter = 0;
 const newSessionId = () => `air-${Date.now().toString(36)}-${(counter += 1)}`;
 
-/** Long enough for a big reasoning turn, short enough that a hang ends. */
-const TIMEOUT_MS = 180_000;
+/**
+ * Per-REQUEST timeout, not per turn.
+ *
+ * 180s was fine while this worker only called capability actions — those
+ * return a few hundred bytes and the history stayed small. With file tools the
+ * history carries every file the turn has read, re-sent every round, so a late
+ * round is a much bigger request than an early one and 180s stopped being
+ * generous: on 2026-09-04 four turns failed, two at exactly 180.0s.
+ *
+ * 420s is the figure `delegate.mjs` arrived at against the same provider, for
+ * the same reason, and it was measured rather than guessed. The read budget in
+ * `workspace.mjs` is the other half of this fix — a longer timeout alone would
+ * buy a slower failure rather than a success.
+ */
+const TIMEOUT_MS = Number(process.env.OPERATOR_AIROUTER_TIMEOUT_MS || 420_000);
 
 /**
  * The capability layer, as OpenAI tool declarations.
@@ -273,7 +286,12 @@ export async function runTurn({
 
   const files = Boolean(useTools && useFiles && filesEnabled && cwd);
   const tools = useTools ? toolDeclarations(groupsFor(prompt), { files }) : [];
-  const ctx = { cwd, onPermission, signal };
+  /*
+    `budget` is turn-scoped on purpose: it lives on the ctx object built here,
+    once per turn, so a long conversation gets a fresh allowance per turn while
+    a single runaway turn is bounded.
+  */
+  const ctx = { cwd, onPermission, signal, budget: { chars: 0 } };
   let error = null;
   let rounds = 0;
 
