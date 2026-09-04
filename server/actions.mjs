@@ -31,6 +31,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
+import {
+  readHandoff,
+  writeHandoff,
+  foldHandoff,
+  listHandoffs,
+  HandoffError,
+} from "./handoff.mjs";
 
 export class ActionError extends Error {}
 
@@ -2083,6 +2090,38 @@ const ACTIONS = {
     params: "limit? (default 10, max 50), by? (filter by who), needsOwner? (only what is waiting on him), since? (ISO date)",
     handler: workRecent,
   },
+  /*
+    The handoff. Three of the four workers have no filesystem, and the one that
+    does writes in a checkout the app does not serve — so "the worker can just
+    use Write" was never true for this file. server/handoff.mjs has the full
+    reasoning.
+  */
+  handoff_read: {
+    description:
+      "The live handoff — what the last session was doing, what is half-finished, what it could not verify. Read this BEFORE starting work: it is the one record that survives a server restart, and a restart wipes every job's event log. Pass a name to read a past milestone instead.",
+    params:
+      "name? (a dated milestone, e.g. \"2026-09-04-short-slug\" — omit for the current note)",
+    handler: (p) => handoff(readHandoff, p),
+  },
+  handoff_write: {
+    description:
+      "Replace the live handoff with what is true NOW — what you are doing and why, what landed, what is verified and what is not. Write it AS YOU WORK, and always before asking for a restart. It REPLACES rather than appends: this is a working note, not a second changelog.",
+    params: "body (the whole file, markdown)",
+    handler: (p) => handoff(writeHandoff, p),
+  },
+  handoff_fold: {
+    description:
+      "Close out a milestone: the live handoff becomes a dated file in docs/handoffs/ and the working note resets. Only when a piece of work is genuinely FINISHED — not at the end of every turn. Refuses to overwrite an existing milestone.",
+    params:
+      "slug (short kebab-case, e.g. \"voice-latency\"), date? (YYYY-MM-DD, defaults to today), body? (fold this instead of what CURRENT.md holds)",
+    handler: (p) => handoff(foldHandoff, p),
+  },
+  handoff_list: {
+    description:
+      "Every past milestone handoff, newest first, with when it was written. Use it to find the one worth reading in full.",
+    params: "limit? (default 15, max 100)",
+    handler: (p) => handoff(listHandoffs, p),
+  },
   knowledge_search: {
     description:
       "Search the Knowledge Vault - the owner's own notes, commands and resources. Use this BEFORE working something out from scratch or reading source: if he has solved it before, the answer is here with a confidence level attached. Ranks by words rather than meaning, so try different vocabulary before concluding nothing is written down.",
@@ -2541,6 +2580,8 @@ const SILENT_ACTIONS = new Set([
   "job_events",
   // Reading what Operator believes about him is not a change to it.
   "memory_list",
+  "handoff_read",
+  "handoff_list",
 ]);
 
 /**
@@ -2591,6 +2632,22 @@ function summarise(name, params, result, before) {
     return { title: `Calendar — ${verb}`, message: `${what}${when}` };
   }
 
+  /*
+    Worth a lock screen, and worth being specific on one. "Handoff updated" is
+    the sentence that tells him a session is mid-flight on his machine — and
+    filing a milestone is the one that tells him something finished.
+  */
+  if (name === "handoff_write") {
+    const first = String(params?.body ?? "")
+      .split("\n")
+      .map((l) => l.replace(/^#+\s*/, "").trim())
+      .find((l) => l && !l.startsWith("_"));
+    return { title: "Handoff updated", message: first ? first.slice(0, 90) : "docs/handoffs/CURRENT.md" };
+  }
+  if (name === "handoff_fold") {
+    return { title: "Milestone filed", message: String(result?.folded ?? params?.slug ?? "a handoff") };
+  }
+
   if (name.startsWith("routine_")) {
     const what = params?.label ?? params?.name ?? "a step";
     const when = params?.date ? ` on ${params.date}` : " today";
@@ -2605,6 +2662,30 @@ async function snapshot(name, params) {
   if (!name.startsWith("mission") || !params?.id) return null;
   const missions = await readState("missions.records");
   return Array.isArray(missions) ? (missions.find((m) => m?.id === params.id) ?? null) : null;
+}
+
+/**
+ * The handoff actions, which write a FILE rather than a slice of the store.
+ *
+ * The one place this layer steps outside `operator.json`, and it is deliberate:
+ * `docs/handoffs/CURRENT.md` is already Operator's own data by every test that
+ * matters — the Updates page renders it, the rule requiring it is in CLAUDE.md,
+ * and it is the only record that survives the restart which wipes every job's
+ * event log. What it is NOT is a general file-writing action, and it must not
+ * become one: the paths are fixed, the names are validated, and nothing here
+ * takes a path from a caller.
+ *
+ * Errors are translated rather than passed through. A HandoffError is the
+ * caller getting it wrong and says exactly what — anything else is a real
+ * failure and should not be dressed up as a validation message.
+ */
+async function handoff(fn, params) {
+  try {
+    return await fn(params ?? {});
+  } catch (err) {
+    if (err instanceof HandoffError) throw new ActionError(err.message);
+    throw err;
+  }
 }
 
 export async function runAction(name, params = {}) {

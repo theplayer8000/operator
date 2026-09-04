@@ -730,13 +730,32 @@ const APPEND_PROMPT = [
   "WHEN YOU FINISH work that changed anything, record it:",
   "`node scripts/operator-action.mjs work_record '{\"summary\":\"…\",\"by\":\"Claude Code\",\"files\":[\"…\"]}'`.",
   "One line saying what happened, and `needsOwner: true` ONLY when he actually",
+  "has to do something himself. That is how Operator answers \"what did you do\"",
+  "and \"did anything happen while I was out\" — it cannot see work it did not",
+  "dispatch unless the work says so.",
   "PASS `mission` when the work belongs to one — the id from `missions_list`, or",
   "its exact name. That writes the same line to the mission's activity, which is",
   "how the board stays current without anyone remembering to update it. Progress",
   "percentages stay his: a percentage is a judgement, not a fact you can derive.",
-  "has to do something himself. That is how Operator answers \"what did you do\"",
-  "and \"did anything happen while I was out\" — it cannot see work it did not",
-  "dispatch unless the work says so.",
+  /*
+    The handoff, named as an action rather than as a file.
+
+    It has been a rule in CLAUDE.md since restarts became routine, and it was
+    followed roughly never — because the model had to remember a path, and
+    because a job writes in the `agent` worktree while the Updates page renders
+    main's copy, so the note it wrote was invisible on his phone anyway. Both
+    are fixed underneath (server/handoff.mjs always writes the served copy);
+    what is left is saying so here, since a capability nobody mentions does not
+    get used.
+  */
+  "KEEP THE HANDOFF CURRENT — it is the only record that survives a restart,",
+  "and a restart destroys every job's event log including this conversation's.",
+  "`handoff_read` at the start of a piece of work (what was half-finished, what",
+  "the last session could not verify), `handoff_write` as you go and ALWAYS",
+  "before asking for a restart, and `handoff_fold` with a short slug when a",
+  "piece of work is genuinely finished. It replaces rather than appends: short",
+  "and true beats long and stale. Do not write the file with Write — you are in",
+  "the agent worktree and that copy is not the one the app shows him.",
   "YOU ARE THE ONE DISPATCHING, not the one who has to do everything.",
   "`node scripts/delegate.mjs \"<task>\" --file <path> --file <path>` hands one",
   "piece of work to a cheaper model (AI Router, flat rate) and prints its answer.",

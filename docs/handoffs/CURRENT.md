@@ -1,7 +1,11 @@
 # Current work
 
-Nothing in flight. Everything committed and pushed — `origin/main` at `4238b35`,
-`agent` level with it.
+**The handoff is now a capability action, so every worker can keep it.** On
+`main` as of 2026-09-04. `server/` changed — **a restart is needed** before the
+actions exist.
+
+The previous milestone is folded into
+[`2026-09-03-vault-pipeline-and-reroute.md`](2026-09-03-vault-pipeline-and-reroute.md).
 
 ## FIRST THING TO CHECK — it is probably not broken
 
@@ -11,72 +15,58 @@ screen and says nothing. The map prints the reply in gold with `muted — tap th
 speaker in the chat to hear replies` underneath; if that line is showing, that
 is the answer.
 
-## Landed 2026-09-03
+## Landed 2026-09-04
 
-**A failed job backs off and reroutes itself** (`64bfc08`, on `agent`).
-`server/jobs.mjs` + `server/routing.mjs`; no frontend change, because it reuses
-the `routed` and `text` events the chat already renders.
+**`server/handoff.mjs` + four actions** — `handoff_read`, `handoff_write`,
+`handoff_fold`, `handoff_list`. The rule requiring this file has been in
+CLAUDE.md since restarts became routine, and it was followed roughly never.
+Three structural reasons, none of them "remember harder":
 
-The cooldown only ever helped the NEXT job — the one that was running when a
-limit hit died on the spot, and `retry()` reuses `job.provider`, so the tap went
-back to the worker that had just said no. On an availability failure
-(`limitKind` only; ordinary errors are untouched) the turn now either moves to
-another worker with a fresh session, or holds and reruns itself when the window
-is up. Two recoveries per job, reset by a successful turn; back-off capped at 30
-minutes, so a spent daily quota still fails and says so instead of looking stuck
-for six hours.
+1. **Three of the four workers have no filesystem.** `gemini`, `airouter` and
+   `ollama` run capability-actions-only. They finish work too, and had no way to
+   leave a note about it. A rule one worker in four can obey is not a rule.
+2. **The one worker that does have a filesystem writes the wrong copy.** Jobs run
+   in the `agent` worktree; the Updates page renders `main`'s. A handoff written
+   by a job was invisible on the phone until someone merged a branch — which
+   defeats the only thing this file is for. `handoff.mjs` resolves paths from its
+   own location, never `process.cwd()`, so it always writes the served copy.
+3. It needed a path remembered and a naming convention followed at the end of a
+   long turn. `operator-action.mjs` is already pre-allowed and already validated.
 
-Two rules worth not reversing: a reroute **never escalates** to a `tools: true`
-worker (`executionAllowed` is a fact about a request, not about a job), and a
-repo task is never handed to a worker with no filesystem — that is what the new
-`needsCode()` in `routing.mjs` decides. Syntax-checked; **not yet exercised
-against a real limit**, which needs a worker to actually run out.
+This is the **one place the capability layer touches a file rather than the
+store**, and it must not become a general file-writing action: the paths are
+fixed, the names are validated, and nothing takes a path from a caller.
 
-**The Knowledge Vault is real and full.** 692 notes · 4,124 links · 7 adrift ·
-133 topics. 320 extracted from this repo's own docs, 372 from the ChatGPT
-export. 682 are `unverified`, which is correct — every one is a model's reading
-of something, two removes from checked. Raising confidence is a human act, and
-the Statistics bar measures trust rather than volume so it will actually move.
+**`scripts/land.mjs`** (`npm run land`) — written by Claude inside Operator,
+reviewed and committed from the desk. Merges `agent` → `main` and then does the
+*right* one of build / restart, which is the decision CLAUDE.md's table
+describes and the one that fails silently when done by hand. Refuses a
+non-fast-forward, refuses a main checkout with uncommitted tracked changes,
+never pushes.
 
-**The pipeline that filled it**, in order:
+**One defect fixed in the job system prompt.** The `mission` guidance added on
+09-03 was spliced into the middle of another sentence, so every worker was
+reading "…`needsOwner: true` ONLY when he actually PASS `mission` when the work
+belongs to one…". Order restored.
 
-- `tools/vault-triage/index.html` — offline, no build, no network. Drag the
-  export in, triage by keyboard, export a manifest. 288 conversations, 67 kept.
-- `scripts/chat-import.mjs` — reads `keep` and nothing else. Idempotent on
-  `conversation_id`, NOT on title: extraction is non-deterministic and a
-  title-keyed importer would silently double the vault on a re-run.
-- `scripts/knowledge-import.mjs --link --cluster --tidy-topics` — connect,
-  consolidate by meaning, merge spellings. Run all three after any import.
+## Verified
 
-**The layer that was missing.** `work.handoffs` — a durable ledger every
-finisher writes to. `jobs.mjs` records its own turns; an outside session calls
-`work_record`. Operator can now answer "did you get anything from Claude?",
-which it previously could not.
+- Read, list, write, fold, and a named read of a past milestone, against the
+  real folder.
+- Refusals: `../evil` and `docs/handoffs/x.md` as a slug, an unknown handoff
+  name, an empty body, and folding onto an existing dated file.
+- **A bug this found in its own first version:** the slug sanitiser silently
+  rewrote `../evil` to `evil`. It could not escape the folder — the character
+  class saw to that — but a caller who passed a path got a file somewhere else
+  with no indication anything had been reinterpreted. It now refuses and names
+  the offending character. Whitespace and underscores are still tidied, because
+  those are formatting rather than intent.
 
-**`secret_set`** — set an API key without it reaching any log, event, response
-or the store. Refuses `OPERATOR_*`: that namespace is the security boundary,
-not configuration.
+## Not verified
 
-**The map draws three graphs** — MISSIONS / VAULT / AGENTS — flat or solid,
-right-drag turns the camera in solid.
-
-## Two silent failures worth remembering
-
-Both cost hours and neither announced itself.
-
-**The agent worktree was 183 commits behind main.** Every job ran against a
-copy of Operator from two weeks earlier — Operator worked that out itself after
-failing to find its own capability layer. It also caused every semantic
-verification to be run against that worktree's stale diff, days earlier, which
-read as a flaky checker. `server/worktree.mjs` now fast-forwards before a turn
-when safe and tells the worker in its prompt when it cannot.
-
-**A timed-out delegation returned nothing, not an error.** `runTurn` reports an
-abort as `error: null` — deliberately, so Stop is not an error — and a timeout
-is an abort. The chat importer logged "0 chars" and moved on, losing whole
-windows. Delegated work now asks for `reasoning_effort: "none"` (DeepSeek spent
-13,788 characters of reasoning to produce 3,454 of answer), an empty reply is an
-error, and the timeout is 420s.
+The actions are **not live until the server restarts** — `server/` is loaded
+into memory at boot. Nothing has exercised them through
+`scripts/operator-action.mjs` yet, only in-process.
 
 ## Next
 
@@ -117,3 +107,5 @@ supervisor survives. Stop all three node PIDs, then
   copy if popped.
 - `data/chat-import-done.json` records which conversations were extracted end to
   end. Deleting it makes the next import redo everything.
+- `.agents/skills/` is untracked in the main checkout — six skill files, left
+  alone rather than swept into a commit.

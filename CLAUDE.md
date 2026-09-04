@@ -322,6 +322,14 @@ server/
                           not a slice of operator.json: a subscription carries
                           a per-device secret, and the state API would serve it
                           to anything that can already read his gym log
+  handoff.mjs           — docs/handoffs/, as four actions. The ONE place the
+                          capability layer writes a FILE rather than a slice of
+                          the store, and it must not become a general one: fixed
+                          paths, validated names, no path ever taken from a
+                          caller. Resolves from its own location, never
+                          process.cwd() — a job runs in the agent worktree and
+                          the app serves main's copy, so a cwd-relative write
+                          would succeed and be invisible
   uploads.mjs           — local files attached to a job. Staged outside
                           operator.json (10 MB cap), claimed onto a turn, the
                           worker gets told the local path. Swept when a job
@@ -608,6 +616,27 @@ Update it:
 Keep it short and current. It is a working note, not a record: overwrite it
 rather than appending a log. When the work reaches a milestone, fold it into a
 dated handoff in the same folder and reset `CURRENT.md` to the empty template.
+
+**Use the actions, not a text editor** (added 2026-09-04, `server/handoff.mjs`):
+
+```bash
+node scripts/operator-action.mjs handoff_read           # before you start
+node scripts/operator-action.mjs handoff_write '{"body":"# Current work\n…"}'
+node scripts/operator-action.mjs handoff_fold  '{"slug":"voice-latency"}'
+node scripts/operator-action.mjs handoff_list
+```
+
+Three reasons this is the route rather than `Write`, and all three are
+structural: **three of the four workers have no filesystem at all** (`gemini`,
+`airouter` and `ollama` run capability-actions-only, and they finish work too);
+**a job runs in the `agent` worktree while the app serves `main`'s copy**, so a
+handoff written by hand from a job was invisible on his phone until someone
+merged a branch; and the fold is a naming convention plus a reset, done at the
+end of a long turn, which is exactly the kind of thing that gets skipped.
+
+`handoff_fold` refuses to overwrite an existing dated file, and refuses a slug
+containing a path character rather than quietly stripping it. There is
+deliberately **no delete** — same bargain as the Knowledge Vault.
 
 If it is empty or stale, say so rather than guessing — a confident summary
 reconstructed from the diff is worse than "the last session left no note".
