@@ -234,13 +234,40 @@ step(`merged — main is now at ${await git(mainCwd, ["rev-parse", "--short", "H
 if (needsBuild && !SKIP_BUILD) {
   step("src/ changed — building in the main checkout (this takes a moment)…");
   try {
-    // `--prefix` so it is the main checkout's build, whatever directory this
-    // script happens to have been started from. The whole trap, in one flag.
-    const { stdout, stderr } = await run(
-      process.platform === "win32" ? "npm.cmd" : "npm",
-      ["--prefix", mainCwd, "run", "build"],
-      { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 },
-    );
+    /*
+      The build, run WITHOUT npm — measured, not preferred.
+
+      `execFile("npm.cmd", …)` throws `spawn EINVAL` on Node 24: since the 2024
+      argument-injection fix, a `.bat`/`.cmd` cannot be spawned without a shell.
+      That is the same EINVAL CLAUDE.md warns about for the terminal, and the
+      answer is the same — not `shell: true`, but calling the real executable.
+
+      It mattered more here than usual because of WHERE it failed: after the
+      merge. `git merge --ff-only` had already run, so main was advanced and
+      then the script died on the step that keeps `dist/` in step with it,
+      leaving exactly the stale-build state the whole script exists to prevent.
+
+      `npm run build` is `tsc -b && vite build`, so this runs those two through
+      `process.execPath` — the node actually running this script, never the
+      broken shim on PATH — against the MAIN checkout's own node_modules. The
+      `--prefix` trap the old comment describes is handled by `cwd` instead.
+    */
+    const steps = [
+      ["type check", ["node_modules/typescript/bin/tsc", "-b"]],
+      ["build", ["node_modules/vite/bin/vite.js", "build"]],
+    ];
+    let stdout = "";
+    let stderr = "";
+    for (const [what, argv] of steps) {
+      step(`  ${what}…`);
+      const res = await run(process.execPath, argv, {
+        cwd: mainCwd,
+        timeout: 10 * 60_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      stdout += res.stdout ?? "";
+      stderr += res.stderr ?? "";
+    }
     const tail = `${stdout}${stderr}`.trim().split("\n").slice(-3).join("\n");
     step("build clean.");
     if (tail) say(`       ${tail.replace(/\n/g, "\n       ")}`);
