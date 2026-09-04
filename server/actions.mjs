@@ -31,6 +31,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
+// No cycle: worktree.mjs imports nothing from here.
+import { state as worktreeState, sync as syncTree } from "./worktree.mjs";
 import {
   readHandoff,
   writeHandoff,
@@ -2176,6 +2178,62 @@ const ACTIONS = {
       "The Daily Routine for a date — every section, its steps, and which are done on that date.",
     params: "date? (YYYY-MM-DD or \"today\")",
     handler: routineDay,
+  },
+  /*
+    Stopping a job and syncing the worktree, as actions.
+
+    Both were desk-only chores, and both are things Operator should be able to
+    do to ITSELF. The gap showed on 2026-09-04: a job had been holding the
+    worktree for hours, the chat could see it (`jobs_list`) and could not end
+    it, and the worktree could not be brought up to date while it ran. A
+    control plane that can watch a stuck job and not stop it is a dashboard.
+
+    Neither is a general lever. `job_stop` takes an id and can only cancel;
+    `worktree_sync` is fast-forward-only and refuses a dirty tree, which are
+    `worktree.mjs`'s rules and not this layer's to relax.
+  */
+  job_stop: {
+    description:
+      "Stop a running or queued Orchestrator job. Use when a job is stuck, looping, or holding the agent worktree so it cannot be synced. Drops that job's queued turns too — a stop that lets the next one start is not a stop. Does not delete the tab; the thread and its transcript stay.",
+    params: 'id (e.g. "job-1"), why? (a short reason, shown in the thread)',
+    handler: async ({ id, why }) => {
+      required(id, "id");
+      // Lazy, like jobsList above: jobs.mjs imports THIS file for the
+      // capability layer, so a static import here would be a cycle.
+      const jobs = await import("./jobs.mjs");
+      const result = jobs.stop(String(id), why ? String(why).slice(0, 80) : "stopped from the capability layer");
+      if (!result.stopped && result.reason?.startsWith("no job")) throw new ActionError(result.reason);
+      return result;
+    },
+  },
+  worktree_sync: {
+    description:
+      "Fast-forward the agent worktree — the checkout every job runs in — up to main. Do this when a worker reports that an action, script or file is missing: that is what being behind looks like from the inside. Refuses if the tree has uncommitted changes (an agent's half-finished work is worth more than the drift) or if another job is running in it, and says which.",
+    params: "(none)",
+    handler: async () => {
+      const cwd = process.env.OPERATOR_JOB_CWD;
+      if (!cwd) throw new ActionError("no agent worktree is configured (OPERATOR_JOB_CWD is unset)");
+      const before = await worktreeState(cwd);
+      if (!before.ok) throw new ActionError(`cannot read the worktree: ${before.reason ?? "unknown"}`);
+      /*
+        `busy` is asked of the job runner rather than assumed. Passing false
+        here would let this fast-forward the tree out from under a running
+        turn, which is the one thing worktree.mjs refuses to do on its own.
+      */
+      const jobs = await import("./jobs.mjs");
+      const result = await syncTree(cwd, jobs.busy());
+      if (!result.synced && result.reason && result.reason !== "already up to date") {
+        throw new ActionError(`not synced — ${result.reason}. Behind by ${result.behind ?? "?"} commit(s).`);
+      }
+      return {
+        synced: Boolean(result.synced),
+        behind: result.behind ?? 0,
+        was: before.behind ?? 0,
+        note: result.synced
+          ? "the worktree now matches main; the next turn runs against current code"
+          : "already up to date",
+      };
+    },
   },
   jobs_list: {
     description:

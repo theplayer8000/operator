@@ -2050,7 +2050,22 @@ async function runTurn(job) {
     verification diffs against, and taking it first would make the sync itself
     look like this turn's work.
   */
-  const treeBefore = await syncWorktree(JOB_CWD, running.size > 0).catch(() => null);
+  /*
+    `busy` means SOMEONE ELSE is in the worktree — not "a turn is happening".
+
+    `running.size > 0` was always true here, because `pump()` does
+    `running.add(job.id)` before calling this. So every turn asked "is anything
+    running?" while being the thing that was running, and the answer was always
+    yes. The sync could not run with a job (it counted itself) and was never
+    called without one (nothing else calls it). Unreachable from both sides,
+    for as long as it has existed — the log says "a job is running in the
+    worktree" on turn 1 of a brand new job, which is the tell.
+
+    The owner closed his last job at 5am specifically so this could sync, and
+    it still did not. That is the bug, not the drift.
+  */
+  const othersInTree = [...running].some((id) => id !== job.id);
+  const treeBefore = await syncWorktree(JOB_CWD, othersInTree).catch(() => null);
   if (treeBefore?.synced) {
     console.log(`[operator] worktree fast-forwarded to main (was ${treeBefore.behind} behind)`);
   } else if (treeBefore?.behind) {
@@ -2810,6 +2825,36 @@ export function stopAll(why = "stopped by voice") {
 
   if (ids.length) console.log(`[operator] ${why} — cancelled ${ids.length} job(s)`);
   return { stopped: ids.length, ids };
+}
+
+/**
+ * Stop ONE job, by id. What the Stop button does, reachable by a worker.
+ *
+ * `stopAll` existed for the voice command and nothing could stop a single one,
+ * so a chat could watch a job it had no way to end — and the job holding the
+ * worktree is exactly the job you most need to stop. Mirrors `stopAll`'s body
+ * for one job rather than reimplementing it: the queue is dropped too, because
+ * a "stop" that lets the next queued turn start is not a stop.
+ */
+export function stop(id, why = "stopped") {
+  const job = jobs.get(id);
+  if (!job) return { stopped: false, reason: `no job called "${id}"` };
+
+  const live = job.proc || job.abort || job.status === "running" || job.status === "queued";
+  if (!live) return { stopped: false, id, status: job.status, reason: "not running" };
+
+  job.pending.length = 0;
+  // Status BEFORE halt, as in stopAll: the SDK path reads job.status as the
+  // turn unwinds to tell a cancellation from a failure.
+  setStatus(job, "cancelled", why);
+  if (job.proc || job.abort) halt(job);
+  dropQuestions(job.id, "cancelled");
+
+  const at = waiting.indexOf(id);
+  if (at >= 0) waiting.splice(at, 1);
+
+  console.log(`[operator] job ${id} ${why}`);
+  return { stopped: true, id, status: job.status };
 }
 
 /** Requeue the last failed/cancelled live attempt. Never retries automatically. */
