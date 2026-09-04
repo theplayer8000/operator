@@ -33,6 +33,13 @@ import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
 // No cycle: worktree.mjs imports nothing from here.
 import { state as worktreeState, sync as syncTree } from "./worktree.mjs";
+import { search as webSearch, SearchError, configured as searchConfigured } from "./websearch.mjs";
+import {
+  generate as runwayGenerate,
+  status as runwayStatus,
+  RunwayError,
+  configured as runwayConfigured,
+} from "./runway.mjs";
 import {
   readHandoff,
   writeHandoff,
@@ -2192,6 +2199,64 @@ const ACTIONS = {
     `worktree_sync` is fast-forward-only and refuses a dirty tree, which are
     `worktree.mjs`'s rules and not this layer's to relax.
   */
+  /*
+    The two outbound ones, approved by name on 2026-09-04 (CLAUDE.md's table).
+
+    Both are registered ONLY when their key exists. A worker handed an action
+    that fails on first use with "the key is not set" is worse off than one
+    that was never offered it — it will try, fail, and often try again, and the
+    catalogue is what it reasons from. Same rule providers.mjs applies to a
+    worker with no key.
+  */
+  ...(searchConfigured
+    ? {
+        web_search: {
+          description:
+            "Search the web. Use this for anything that could have changed since your training data — a current price, a library's present API, whether a service is down, what a product actually is. Do NOT use it for the owner's own data; that has actions. Sends only the query, and it is metered, so ask once with a good query rather than three times with vague ones.",
+          params:
+            'query, count? (1-20, default 5), freshness? ("pd" past day, "pw" past week, "pm" past month, "py" past year)',
+          handler: async (params) => {
+            try {
+              return await webSearch(params);
+            } catch (err) {
+              if (err instanceof SearchError) throw new ActionError(err.message);
+              throw err;
+            }
+          },
+        },
+      }
+    : {}),
+  ...(runwayConfigured
+    ? {
+        runway_generate: {
+          description:
+            "Start generating a video from an image plus a description. Returns a task id immediately — generation takes MINUTES, so do not wait on it; tell the owner it started and check later with runway_status. The image must be a URL or a data URI that you already have; there is deliberately no way to pass a file path.",
+          params:
+            "prompt (what should happen in the video), image (http(s) URL or data:image/… URI), duration? (1-10 seconds, default 5), ratio?, model?",
+          handler: async (params) => {
+            try {
+              return await runwayGenerate(params);
+            } catch (err) {
+              if (err instanceof RunwayError) throw new ActionError(err.message);
+              throw err;
+            }
+          },
+        },
+        runway_status: {
+          description:
+            "Check a video generation started by runway_generate. Returns its state and, once finished, where the result is. Output URLs expire, so download rather than storing the link.",
+          params: "taskId (from runway_generate)",
+          handler: async (params) => {
+            try {
+              return await runwayStatus(params);
+            } catch (err) {
+              if (err instanceof RunwayError) throw new ActionError(err.message);
+              throw err;
+            }
+          },
+        },
+      }
+    : {}),
   job_stop: {
     description:
       "Stop a running or queued Orchestrator job. Use when a job is stuck, looping, or holding the agent worktree so it cannot be synced. Drops that job's queued turns too — a stop that lets the next one start is not a stop. Does not delete the tab; the thread and its transcript stay.",
@@ -2638,6 +2703,9 @@ const SILENT_ACTIONS = new Set([
   "job_events",
   // Reading what Operator believes about him is not a change to it.
   "memory_list",
+  // Looking something up is not a change to anything of his.
+  "web_search",
+  "runway_status",
   "handoff_read",
   "handoff_list",
 ]);
