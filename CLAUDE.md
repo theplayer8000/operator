@@ -264,6 +264,19 @@ server/
   index.mjs             — JSON storage API (no deps). GET/PUT/DELETE /api/state
   dev.mjs               — read-only repo browser for the Dev page
   homelab.mjs           — TCP reachability probes for the Homelab tiles
+  health.mjs            — the checks that catch what compiles cleanly and is
+                          still wrong. Every one is drawn from a failure that
+                          actually happened: node --check across server/ and
+                          scripts/ (the gate tsc and vite do NOT cover, because
+                          neither opens a .mjs file), a dist/ older than src/,
+                          a running process older than server/, worktree drift,
+                          a stale handoff, backups, store growth, and env vars
+                          set in the registry but never forwarded. Serves
+                          GET /api/health/checks — NOT /api/health, which was
+                          already taken by the store's own polling path and was
+                          silently shadowed by the first version. Degrades to
+                          "could not check" with a reason; a health page that
+                          lies is worse than none
   auth.mjs              — who is calling. Tailscale device identity + token fallback.
                           Gates every /api/ route — see ADR 0010 before touching it
   terminal.mjs          — runs commands for authorised devices. No shell (argv only),
@@ -547,6 +560,7 @@ get broken most: **44px touch targets**, **never hide a control behind
 | Activity Log | `/log` | Built — read-only aggregator, owns no storage |
 | Contents | `/contents` | Built — hand-written index of every section. Keep in step with `docs/roadmap.md` |
 | Orchestrator | `/orchestrator` | Built — **renamed from "Claude" 2026-08-20**, the milestone rather than a relabel: `server/providers.mjs` now sits between `jobs.mjs` and the worker that runs a turn, so a job is a task dispatched to whichever worker is enabled, not "a Claude conversation." **Two workers are enabled** — `claude-code` (the Agent SDK, full tool access) and `gemini` (approved 2026-08-20, `server/gemini.mjs`, capability actions only, registered solely when `GEMINI_API_KEY` is set). `/chat` redirects here. Conversations are **jobs** (`server/jobs.mjs`, design-doc step 1): a tab strip, an append-only event log that outlives the request, a `session_id` per job with `--resume` so a tab remembers. Model is selectable, Opus 5 by default. **A permission is a question, not a dead end** (ADR 0012, option C, merged and live): a tool outside the pre-allow list suspends the turn and shows Allow / No / Allow-and-stop-asking, and the same turn resumes on the tap. The two the **standing profile** denies outright never become questions — that card hands you the command to run yourself instead. **Jobs can carry local file attachments** (`server/uploads.mjs`) — staged outside `operator.json`, claimed onto a turn, the worker gets the local path. **A failed, blocked, or cancelled turn can be retried** with one tap instead of retyping. Every attempt is recorded (`task`/`attempts`/`handoff` on the job) — dormant on the frontend today, the bookkeeping a future verifier or second worker will read, not something a person needs to see while there is only one worker and the owner reads results directly. Same gate as the terminal — armable from this page. **The worker is chosen when a conversation starts, not mid-thread**: a job holds one worker's session for life and the two aren't interchangeable (Claude Code's lives on disk and resumes; Gemini's is a replayed history in server memory and dies with a restart — the UI says which). The chat surface is `src/components/orchestrator/OrchestratorChat.tsx`, renamed from `dev/ClaudeChat.tsx` the day Gemini landed; it reads each job's provider and declared `capabilities` rather than assuming Claude Code's |
+| Health | `/health` | Built 2026-09-04 — one page for the failures that do not announce themselves. Not a uptime dashboard: `homelab.mjs` already answers "is it up". This answers "is what I am looking at actually what is running" — the stale build, the un-restarted server, the drifted worktree, the ceiling set from a phone that never reached the process. Server side is `server/health.mjs`; **it is a feature, not a Claude Code plugin** — ADR 0014 is explicit that a plugin reaches `claude-code` alone and can never become something Operator does |
 | Dev | `/dev` | Built — repo status, GitHub links, sandboxed read-only file browser, connected-client monitor, Claude service status, a **Builds** card (is the live app behind `src/`, is the API behind `server/`, is the dev server up), and a **terminal** for authorised devices, disarmed by default (ADR 0011). **Restart** reloads the server so it picks up its own code — see the two rules below |
 | Gym | `/gym` | Built — today's session as a tickable checklist, day stepper, rest-day and skipped states. Five sessions named by push/pull structure, keyed by ISO weekday. Ticks are stored per date (`gym.completions`), skipped days separately (`gym.skipped`). The programme itself — phases, percentages, deloads, nutrition — is owner content in `reference/gym-programme.md`, not `/docs` |
 | Learning | `/learning` | Not built — `ComingSoon` placeholder |
@@ -819,9 +833,16 @@ guessing; guessing is the failure mode this list exists to prevent.
 
    Grant-per-command remains rejected: it had produced 69 single-use rules that
    never expire, which is worse security than a considered standing profile.
-3. **Concurrency — DECIDED 2026-08-31: several, with a configurable ceiling.**
-   Not built. The owner's words: *"would like turns to run concurrently if
-   possible, but of course have a scale for it in place."*
+3. **Concurrency — DECIDED 2026-08-31 and BUILT.** `OPERATOR_MAX_CONCURRENT`
+   is live and set to **3** in production; `jobs.mjs` holds a `running` set and
+   honours it. Measured 2026-09-04: 6 of the last 139 recorded turns genuinely
+   overlapped another. This item said "Not built" for days after it was — the
+   original words are kept below because the reasoning still governs what may
+   be changed. Two comments in `jobs.mjs` still say "one job at a time" and are
+   also stale.
+
+   The owner's words: *"would like turns to run concurrently if possible, but
+   of course have a scale for it in place."*
 
    Both halves matter. **Several**, because the reason for one-at-a-time was
    never a good one — it matched a single user on a phone, and it means a long
@@ -846,9 +867,21 @@ guessing; guessing is the failure mode this list exists to prevent.
    - **The Orchestrator shows one thread at a time.** Several running jobs need
      the tab strip to say which are live, which is also what the mission map's
      live layer wants — see `docs/dashboard-graph-design.md`.
-4. **Usage ceiling — the accounting is DECIDED ([ADR 0013](docs/decisions/0013-usage-accounting.md),
-   2026-08-20), the ceilings are not built.** Read that ADR before writing
-   anything that counts tokens, cost or quota. The short version:
+4. **Usage ceiling — DECIDED ([ADR 0013](docs/decisions/0013-usage-accounting.md),
+   2026-08-20) and BUILT.** `server/usage.mjs` implements job, provider, daily
+   and quota ceilings (`checkCeiling`, `ceilingBlockFor`, `jobCeilingUsd`), and
+   production runs `OPERATOR_CEILING_JOB_USD=12` / `OPERATOR_CEILING_DAILY_USD=15`.
+   Read that ADR before writing anything that counts tokens, cost or quota.
+
+   **Two holes remain, and both are about what is NOT counted.** `delegate.mjs`
+   and `semantic.mjs` never call `recordTurn`, so a delegated sub-task's spend
+   and — more importantly — its QUOTA consumption are invisible to every
+   ceiling. Quota is the ledger that actually governs a flat-rate provider.
+   And `jobs.mjs` hardcodes `turns: 1` on every record while `airouter.mjs`
+   returns a real `usage.rounds`, so the field ADR 0013 added to catch
+   "this succeeded and was stupid" records nothing.
+
+   The short version of the ADR:
 
    - **Tokens are the stored record; USD is derived** from a versioned price
      table, so a mispricing is re-derivable rather than permanent.

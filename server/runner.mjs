@@ -19,6 +19,75 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+/*
+  What the in-app worker inherits from the desk machine, said out loud.
+
+  The SDK loads all three filesystem setting sources when `settingSources` is
+  omitted, and it was omitted here until 2026-09-04. So a probe of a session
+  started exactly the way this file starts one reported **60 visible commands**:
+  the five project skills in `.claude/skills/`, plus the command sets of every
+  plugin enabled in `~/.claude/settings.json`. None of that was decided for
+  Operator. It arrived because the harness the owner builds *with* and the
+  harness the in-app worker runs *inside* are the same files on disk.
+
+  This array is the SDK's own default, written down. It changes nothing about
+  what loads — verified in the shipped sdk.mjs, not just the types: the default
+  is the literal `["user","project","local"]` in `settingSources ?? QMe`. That
+  is the point. The owner asked to keep the inheritance ("I
+  also want to set it up for other stuff"), so the deliverable is that a reader
+  can see the answer here instead of inferring it from an absent option.
+
+  The three are not equivalent, and what each drags in matters:
+
+  - `user` — `~/.claude/settings.json`. The one carrying risk: it holds
+    `enabledPlugins`, so a plugin switched on for desk work is switched on
+    inside Operator too, with no Operator-side decision recorded anywhere.
+    ADR 0014 refused `greptile` because it indexes this whole repository on
+    `api.greptile.com` — the owner's calendar, gym history, missions and
+    homelab shape — and that refusal is now enforced by nothing but the word
+    `false` on one line of a file outside this repo. Flipping it back at the
+    desk arms it in here as well, silently. Same for the next plugin.
+
+  - `project` — `.claude/settings.json`. Load-bearing well beyond settings:
+    **`CLAUDE.md` is only read when this source is present.** Dropping it to
+    "tighten things up" would remove the file every agent is instructed to read
+    first, and the turn would look entirely normal while doing it.
+
+  - `local` — `.claude/settings.local.json`, resolved against the job's `cwd`,
+    which is the agent worktree and not this checkout. It is gitignored, so it
+    is a *different file* from the one a desk session edits and from the one
+    `security-scan` cleaned up in ADR 0014's amendment. A `permissions` block
+    there is a pre-approval Operator never wrote and no reviewer of this
+    repository can see.
+
+  This is NOT only convenience, and the sentence that stood here before was
+  wrong in the reassuring direction. A settings source supplies a whole
+  `Settings` object, and three of its keys are permission inputs in their own
+  right (verified in sdk.d.ts, v0.3.220):
+
+    - `hooks` — shell commands (`type: 'command'`) fired by matcher. The doc on
+      `SDKPermissionDeniedMessage` states verbatim that "PreToolUse hook denies
+      bypass canUseTool", so a hook in any of the three files decides before
+      the callback below is ever consulted.
+    - `permissions.deny` — the same doc lists "a deny rule" among the
+      auto-denies that short-circuit `canUseTool` with no prompt.
+    - `permissions.defaultMode` and `permissions.additionalDirectories` — mode
+      escalation and a widened filesystem scope. `~/.claude/settings.json`
+      carries `defaultMode: "auto"` today. `auto` is an escalating mode, and
+      the SDK trust-filters those from `project` ONLY — the `user` tier is not
+      filtered. Whether the explicit `permissionMode`
+      passed below outranks it is NOT measured; do not assume either answer.
+
+  `deniedTools`, `allowedTools`, `canUseTool` and the device gate in `jobs.mjs`
+  remain the boundary Operator *controls*. They are not the only thing with a
+  vote. The cost of the inheritance is that "what can this worker do?" now takes
+  three files to answer — two outside this repo, one outside this checkout.
+
+  `[]` is the SDK's isolation mode if that ever becomes the answer — but read
+  the `project` paragraph before reaching for it.
+*/
+const SETTING_SOURCES = ["user", "project", "local"];
+
 /**
  * Run one turn.
  *
@@ -79,6 +148,10 @@ export async function runTurn({
       // Without this the SDK hands the worker this process's environment,
       // Operator's own API keys included. See workerEnv() in jobs.mjs.
       ...(env ? { env } : {}),
+      // Deliberately the SDK's own default, spelled out rather than inherited
+      // by omission — see SETTING_SOURCES above for what that loads and for
+      // the fact that nobody chose it.
+      settingSources: SETTING_SOURCES,
       /*
         `default` is the mode that consults `canUseTool`. Leaving it unset does
         not: measured, an unallow-listed `hostname --fqdn` ran without the

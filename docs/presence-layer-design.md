@@ -484,9 +484,9 @@ the mission map is big-screen only, the wall display is its own screen — and
 having it explicit means the next surface does not have to re-litigate it.
 
 "Wall display" here means **a second monitor driven by this PC**, per the
-correction in point 3 above. `dashboard-graph-design.md` still describes it as a
-TV or projector; that is the framing he has now ruled out, and that document is
-the one to fix.
+correction in point 3 above. `dashboard-graph-design.md` described it as a TV
+or projector until 2026-09-04 and was corrected in the same pass; if that framing
+turns up anywhere else, it is the one he ruled out.
 
 | | Phone | Desk / big screen |
 |---|---|---|
