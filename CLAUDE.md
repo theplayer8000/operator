@@ -377,6 +377,15 @@ scripts/
   render.mjs            — render one file and print the PNG's path, for Reading
   app.mjs               — list / status / restart a hosted app (server/apps.mjs).
                           list and status are pre-allowed; restart asks first
+  land.mjs              — put the agent branch on main: fast-forward, then build
+                          or restart depending on what the DIFF says, which is the
+                          decision the two rules above describe and the one that
+                          fails silently when done by hand. `npm run land`,
+                          `--check` to see without doing. Refuses a dirty main
+                          (that is someone else's work) and anything that is not a
+                          fast-forward. **Never pushes** — that is denied to the
+                          agent session, and a script doing it on request would be
+                          a way around the denial rather than a convenience
   backup.mjs            — store snapshots. Standalone: no deps, no src/ imports,
                           never calls the API, so `npm run backup` works when
                           everything is down. index.mjs imports runBackup() and runs
