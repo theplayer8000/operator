@@ -1,74 +1,89 @@
 # Current work
 
-**Everything below is ON MAIN and NOT LOADED. The server has not been restarted
-since 23:12, and every change here is in `server/`.**
+**Four commits on main, NONE of them live. `server/` loads at boot.**
 
-## The uploads answer: it was built twice and never merged
+## Landed this session
 
-He asked why attaching a file in chat still did nothing. Both halves existed and
-neither was on `main`:
+**`cc2dc76` — the worktree is a loop now, not a one-way valve.** Four actions
+plus the check that was missing:
 
-- `data/job-resources/` carved out of `workspace.mjs`'s `data/` refusal, so a
-  claimed TEXT file is actually readable.
-- Image attachments turned into **vision parts** in `airouter.mjs` — base64
-  data URIs after the text, capped at 4 images / 5 MB each, skipped ones NAMED
-  rather than silently dropped, and a 400 from the router retries once with the
-  images stripped and repairs its own replay history.
+- `worktree_status` — behind / **ahead** / dirty. `ahead` is the new one and it
+  is the whole point: every existing check asked "is the agent running old
+  code", none asked "did finished work ever land". That question cost a day.
+- `worktree_land` — fast-forward main to the worktree branch. Lands **only what
+  is already committed** and never stages anything. That constraint is the
+  feature: an auto-lander that staged everything would have shipped
+  `roblox-studio.mjs` half-finished next to an `actions.mjs` that imports it,
+  which is a server that does not boot, landed automatically.
+- `worktree_stash` — asked for as "clear dirty trees", built as **stash**.
+  `checkout -- .` + `clean -fd` is unrecoverable and this project has no undo.
+  Returns the ref and the pop command.
+- `main_rollback` — reset, not revert (revert moves forward and still needs
+  landing and restarting; the case this is for is a server that will not start).
+  Four guards: never rewrite anything on origin/main, backwards only, stash
+  first, and report the pre-reset SHA so the undo is undoable.
+- `health.mjs` `git:unlanded` — grades committed-but-unlanded loud, and
+  uncommitted-only quiet.
 
-Both sat **uncommitted in the agent worktree** while the server serves `main`.
-So all four full restarts loaded a build that had never contained the fix. The
-work was fine; nothing had landed it.
+**Rejected: gating the merge on an automated check.** `tsc` and `vite build`
+never open a `.mjs`, so for `server/` changes a green gate means almost nothing,
+and `semantic.mjs` is a 3B model whose guess must not render as a status. A gate
+the agent's own work can satisfy replaces a real review with one blind to the
+bug class it guards against.
 
-Committed on `agent` as `9bc35be`, **by name** — deliberately NOT `actions.mjs`
-or `roblox-studio.mjs` (see below). Fast-forwarded onto main.
+**`f08b6c5` — line endings.** `core.autocrlf=true` with no `.gitattributes` left
+the tree mixed: 7 of 44 `server/` files CRLF, and they were the five an agent
+edits most. An agent matches exact text, so a multi-line LF match cannot match a
+CRLF file — which is why a session gave up on a ONE-WORD change to
+`providers.mjs` on 2026-09-04 and left the flag contradicting its own comment.
+`* text=auto eol=lf`, 14 files converted, content verified identical.
 
-Also flipped `providers.mjs` `attachments: false` → `true`. The session that
-wrote the feature left it false under a comment saying it should be true,
-because it could not make the edit land — honest about failing, and still a flag
-contradicting the comment directly above it.
+## Diagnosed, NOT fixed — needs his call
 
-## Also landed
+**Arm-on-restart cannot survive a full restart, structurally.** The intent rides
+exit code 76 to `supervise.mjs`, which sets `OPERATOR_TERMINAL=1` for one launch.
+But `operator_restart` exits **0** on purpose, so the supervisor exits too and
+Task Scheduler starts a fresh one with no memory of the request. So arming works
+on the Dev page restart and is **silently dropped** by the full restart — which
+is the one he actually uses.
 
-- **`9a90adb`** — the health credential check was blind to `BRAVE_SEARCH_API_KEY`
-  and `RUNWAY_API_KEY`. Both approved and shipped 2026-09-04, never added to
-  `APPROVED_CREDENTIALS`, so when he set them from his phone the page said
-  "nothing set in the registry is missing from the running server" — true of the
-  two names it looked at, silent about the two it did not. Regex also anchored
-  per alternative; `^(OPERATOR_|A|B$)` bound the `$` to the last one only, so
-  `AIROUTER_API_KEY_OLD` counted as the real thing.
-- **`CLAUDE.md` approval row for `apis.roblox.com`** (uncommitted as of writing).
-  The passthrough shipped in `8093110` with no row. The consent was clearly
-  given — he set the key and the module documents his intent — but the record
-  was missing, and a host in use and absent from that table is the exact thing
-  the rule prevents. Worth knowing: it is **the one approved host where a worker
-  can change state on a service he does not own** (mutating verbs, every scope
-  ticked).
+Two ways out, and the second is a boundary decision:
+1. `operator_restart` takes `arm` and reports it **refused**, the way the shallow
+   path already does when unsupervised. Honest, no new mechanism.
+2. Actually carry it — which needs the marker in the registry, i.e. the server
+   writing an `OPERATOR_*` variable. That is the self-granting escalation the
+   env-only rule exists to prevent, even though the caller already passed
+   `deviceMayManage`.
 
-## Outstanding, in order
+Recommend (1). Not built either way.
 
-1. **Full restart.** Nothing above is live. `restart operator now`.
-2. **Then prove the uploads path** — attach a text file AND an image to an AI
-   Router job. Neither layer has ever run.
-3. **Roblox Studio MCP is built but NOT landed.** `server/roblox-studio.mjs` is
-   still untracked in the agent worktree and `actions.mjs` imports it at the top
-   level — **committing one without the other is a server that will not boot.**
-   Land them together, open Studio, then probe `roblox_studio tools_list` first;
-   tool names are discovered, not hardcoded.
-4. **2 commits unpushed** (`9bc35be`, `9a90adb`) plus the CLAUDE.md commit.
-   Denied to this session; run it yourself:
+## Health page triage
+
+Two of the five are not defects: **"server changed since this process started"**
+is just this session building, and **"agent worktree behind + dirty"** is the
+Roblox pair waiting to land. **"4 commits unpushed"** is his to run.
+
+The two real ones:
+
+- **Store growth.** 1133 KB, and `remoteStore` refetches ALL of `/api/state`
+  whenever `updatedAt` moves — so the whole 1.1 MB crosses the wire on every
+  write, on 4G. `knowledge.notes` is 741 KB of it. The fix is per-slice fetching
+  and it touches client and server, so it is a proposal rather than a tidy-up.
+- **"23 of 187 turns ended in an error" is misleading.** Most are his own
+  restarts: `stopAll` cancels the running turn and it is recorded as failed. The
+  metric alarms in the wrong direction. Worth separating cancelled-by-restart
+  from genuinely failed.
+
+Also seen twice at 21:06–21:08: `memory_add` refusing a fact over 240 characters
+and asking for it to be split. Small, but it stopped a turn twice.
+
+## Outstanding
+
+1. **Full restart** — nothing above is live.
+2. **Land or stash the Roblox pair.** `actions.mjs` + `roblox-studio.mjs` must go
+   together or the server will not boot. Studio is open, so the probe is ready.
+3. **Push — 4 commits, denied to the session:**
    ```bash
    git -C D:\Projects\Operator push origin main
    ```
-
-## Loose ends
-
-- `BRAVE_API_KEY` (31 chars) is still in the registry alongside the correct
-  `BRAVE_SEARCH_API_KEY`. Nothing reads it. Harmless, and one more name than
-  there should be.
-- The agent worktree is now **1 behind main** and still dirty with the Roblox
-  Studio pair, so `worktree_sync` will refuse until those are committed — which
-  is correct, that IS half-finished work.
-- `server/roblox.mjs`'s header and base host come from Roblox's docs, not from a
-  call that succeeded. First real call is the test.
-- Job-1 has run 48 turns on one thread. Event logs die on the next restart; the
-  work log and this file are what survive.
+4. Prove the uploads path — still never run.
