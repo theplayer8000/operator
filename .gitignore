@@ -43,3 +43,16 @@ src-tauri/gen/schemas/
 # session on this repo should get — see docs/ecc-catalogue.md.
 .claude/settings.local.json
 .claude/*.bak
+
+# `.agents/skills/` is a duplicate of `.claude/skills/` — the same six files,
+# written by tooling that follows the newer `.agents/` convention. It is not the
+# chosen set: `.claude/skills/` is committed and is the one this repo means, per
+# the note above.
+#
+# Ignored rather than deleted because it is not this repo's to own, and ignored
+# rather than left untracked because it was not free: it shows in every
+# `git status`, and it made `worktree_sync` refuse a clean fast-forward — that
+# check counts untracked files, deliberately, on the grounds that an agent's
+# half-finished work outweighs the drift. This is not half-finished work, and
+# tripping the guard on it teaches you to override the guard.
+.agents/
