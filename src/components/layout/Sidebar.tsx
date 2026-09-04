@@ -22,6 +22,7 @@ import {
   ChevronsRight,
   X,
   BookOpen,
+  Activity,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -353,6 +354,15 @@ export default function Sidebar({ alertCount = 0 }: { alertCount?: number }) {
         </nav>
 
         <div className="p-2 border-t border-base-600 space-y-0.5 shrink-0">
+          {/*
+            In the footer group with Dev and Settings, not up in NAV_ITEMS.
+            That group is what Operator is FOR; this is Operator looking at
+            itself, and it sits beside the other two surfaces that do.
+          */}
+          <NavLink to="/health" className={navLinkClass}>
+            <Activity size={17} className="shrink-0" />
+            <span className={sidebarCollapsed ? "lg:hidden" : ""}>Health</span>
+          </NavLink>
           <NavLink to="/dev" className={navLinkClass}>
             <Terminal size={17} className="shrink-0" />
             <span className={sidebarCollapsed ? "lg:hidden" : ""}>Dev</span>

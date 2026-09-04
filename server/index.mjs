@@ -13,7 +13,10 @@
 //                              is how that mistake gets made.
 //   PUT  /api/state          → body is a whole { key: value } map (import/migrate),
 //                              bare — no envelope. Yes, the two differ.
-//   GET  /api/health         → { ok: true }
+//   GET  /api/health         → { ok: true }. The cheap one, polled constantly —
+//                              it also carries the store's `updatedAt`. Leave
+//                              it cheap; the checks live one level down.
+//   GET  /api/health/checks  → the verification pass (server/health.mjs)
 //
 // In production it also serves the built app from dist/.
 
@@ -47,6 +50,7 @@ import * as jobs from "./jobs.mjs";
 import { resourceLimit, stageUpload } from "./uploads.mjs";
 import { runBackup } from "../scripts/backup.mjs";
 import { buildStatus } from "./build.mjs";
+import { health, noteApiRequest } from "./health.mjs";
 import {
   DATA_FILE,
   SCHEMA_VERSION,
@@ -231,6 +235,20 @@ const server = createServer(async (req, res) => {
   // otherwise the Dev page watching for clients would keep itself permanently
   // "active" and be the loudest thing on the list.
   if (pathname !== "/api/clients") recordRequest(req);
+
+  /*
+    How long this request took, for /api/health/checks.
+
+    A `finish` listener rather than a wrapper around `json()`, because there are
+    forty-odd `return json(...)` sites plus the static path and the streams, and
+    a wrapper would measure whichever ones someone remembered. This fires once
+    the response is off the socket, so nothing here is on the request path — the
+    work is a subtraction and an array push into a fixed-length ring.
+  */
+  if (pathname.startsWith("/api/")) {
+    const began = performance.now();
+    res.on("finish", () => noteApiRequest(pathname, performance.now() - began, res.statusCode));
+  }
 
   try {
     /*
@@ -513,6 +531,39 @@ const server = createServer(async (req, res) => {
     */
     if (pathname === "/api/build") {
       return json(req, res, 200, await buildStatus(ROOT));
+    }
+
+    /*
+      The verification pass — server/health.mjs.
+
+      **`/api/health/checks`, and NOT `/api/health`.** That name was already
+      taken, by the cheapest and most-polled endpoint here: `remoteStore.ts`
+      hits it on a timer to read the store's `updatedAt` and notice a change it
+      did not make, and `useSettings` and the terminal panel use it as a
+      liveness probe. Claiming it for this would have put a sweep that spawns a
+      process per `.mjs` file onto the store's polling path — and because the
+      matches are exact and this one sits earlier in the router, the old route
+      would simply have stopped being reached. The app would have gone quiet
+      about external changes and nothing would have errored.
+
+      Not gated beyond the auth in front of this router, deliberately. It is
+      read-only, it runs no command a caller chooses, and it exposes strictly
+      less than `/api/dev/*` (which serves the repository) already does to the
+      same devices. Environment variables appear by NAME with a boolean; no
+      value is read anywhere in that file.
+
+      `?fresh=1` skips the 15s cache. The expensive half — parsing every .mjs —
+      is memoised on file mtime inside health.mjs, so a fresh call re-asks git
+      and the registry rather than re-spawning fifty processes.
+    */
+    /*
+      GET only. It spawns a process per .mjs, so answering a HEAD or a stray
+      POST with the full sweep makes this the most expensive route in the
+      server to hit by accident.
+    */
+    if (pathname === "/api/health/checks") {
+      if (req.method !== "GET") return json(req, res, 405, { error: "GET only" });
+      return json(req, res, 200, await health({ fresh: url.searchParams.get("fresh") === "1" }));
     }
 
     if (pathname === "/api/restart" && req.method === "POST") {

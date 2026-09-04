@@ -12,6 +12,7 @@ import Events from "@/pages/Events";
 import Updates from "@/pages/Updates";
 import Contents from "@/pages/Contents";
 import Dev from "@/pages/Dev";
+import Health from "@/pages/Health";
 import Orchestrator from "@/pages/Orchestrator";
 import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
@@ -85,6 +86,12 @@ export default function App() {
         <Route path="/contents" element={<Contents />} />
         <Route path="/orchestrator" element={<Orchestrator />} />
         <Route path="/dev" element={<Dev />} />
+        {/*
+          Beside /dev rather than inside it. The Dev page is where you go to
+          look at something; this is where you go to be TOLD something, and a
+          card at the bottom of a page nobody opens is the same as no check.
+        */}
+        <Route path="/health" element={<Health />} />
         <Route path="/learning" element={<ComingSoon title="Learning" />} />
         <Route path="/gym" element={<Gym />} />
         <Route path="/forex" element={<ComingSoon title="Forex Journal" />} />
