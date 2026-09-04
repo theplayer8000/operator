@@ -1,8 +1,9 @@
 # Current work
 
 **The handoff is now a capability action, so every worker can keep it.** On
-`main` as of 2026-09-04. `server/` changed — **a restart is needed** before the
-actions exist.
+`main` and **live** — the server was restarted at 00:36 on 2026-09-04 and the
+actions answer through `scripts/operator-action.mjs`. This note was written by
+`handoff_write`.
 
 The previous milestone is folded into
 [`2026-09-03-vault-pipeline-and-reroute.md`](2026-09-03-vault-pipeline-and-reroute.md).
@@ -18,9 +19,9 @@ is the answer.
 ## Landed 2026-09-04
 
 **`server/handoff.mjs` + four actions** — `handoff_read`, `handoff_write`,
-`handoff_fold`, `handoff_list`. The rule requiring this file has been in
-CLAUDE.md since restarts became routine, and it was followed roughly never.
-Three structural reasons, none of them "remember harder":
+`handoff_fold`, `handoff_list` (`20a9683`). The rule requiring this file has
+been in CLAUDE.md since restarts became routine, and it was followed roughly
+never. Three structural reasons, none of them "remember harder":
 
 1. **Three of the four workers have no filesystem.** `gemini`, `airouter` and
    `ollama` run capability-actions-only. They finish work too, and had no way to
@@ -35,26 +36,33 @@ Three structural reasons, none of them "remember harder":
 
 This is the **one place the capability layer touches a file rather than the
 store**, and it must not become a general file-writing action: the paths are
-fixed, the names are validated, and nothing takes a path from a caller.
+fixed, the names are validated, and nothing takes a path from a caller. There is
+deliberately no delete.
 
-**`scripts/land.mjs`** (`npm run land`) — written by Claude inside Operator,
-reviewed and committed from the desk. Merges `agent` → `main` and then does the
-*right* one of build / restart, which is the decision CLAUDE.md's table
+**`scripts/land.mjs`** (`npm run land`, `6310427`) — written by Claude inside
+Operator, reviewed and committed from the desk. Merges `agent` → `main` and then
+does the *right* one of build / restart, which is the decision CLAUDE.md's table
 describes and the one that fails silently when done by hand. Refuses a
 non-fast-forward, refuses a main checkout with uncommitted tracked changes,
 never pushes.
 
-**One defect fixed in the job system prompt.** The `mission` guidance added on
-09-03 was spliced into the middle of another sentence, so every worker was
-reading "…`needsOwner: true` ONLY when he actually PASS `mission` when the work
-belongs to one…". Order restored.
+**Two defects fixed along the way.**
+
+- The `mission` guidance added to the job system prompt on 09-03 was spliced
+  into the middle of another sentence, so every worker was reading "…`needsOwner:
+  true` ONLY when he actually PASS `mission` when the work belongs to one…".
+- `operator-action.mjs` printed "Is the server running?" after *every* failure,
+  including a rejected parameter — sending a worker to check infrastructure when
+  the line above had already told it what to fix (`42c27eb`).
 
 ## Verified
 
-- Read, list, write, fold, and a named read of a past milestone, against the
-  real folder.
+- All four actions through `scripts/operator-action.mjs` against the live
+  server, after the restart.
 - Refusals: `../evil` and `docs/handoffs/x.md` as a slug, an unknown handoff
   name, an empty body, and folding onto an existing dated file.
+- `npx tsc -b` and `npx vite build` clean; `node --check` on every changed
+  `.mjs` with the real `node.exe`, not the shim on PATH.
 - **A bug this found in its own first version:** the slug sanitiser silently
   rewrote `../evil` to `evil`. It could not escape the folder — the character
   class saw to that — but a caller who passed a path got a file somewhere else
@@ -64,9 +72,9 @@ belongs to one…". Order restored.
 
 ## Not verified
 
-The actions are **not live until the server restarts** — `server/` is loaded
-into memory at boot. Nothing has exercised them through
-`scripts/operator-action.mjs` yet, only in-process.
+No worker has yet been observed calling these on its own initiative. The prompt
+now names them; whether that is enough is the thing to watch on the next few
+jobs.
 
 ## Next
 
@@ -85,6 +93,11 @@ where they should read `derived`.
 the slowest) so it buys capacity, not speed. That is the point: 32GB means
 Kokoro and Whisper stay local and **ADR 0016 never needs an audio clause**.
 
+**The bundle is one 941 kB chunk** (266 kB gzipped) and Vite says so on every
+build. Not urgent over a tailnet, and the fix — lazy-loading the heavy routes,
+`MissionMap` above all — is a `src/` change worth doing deliberately rather than
+in passing.
+
 ## Environment
 
 `AIROUTER_API_KEY`, `OPERATOR_SEMANTIC_PROVIDER=airouter`,
@@ -98,10 +111,14 @@ Four workers: claude-code, gemini, airouter, ollama.
 
 `POST /api/restart` and `schtasks /End` do NOT reload the environment while the
 supervisor survives. Stop all three node PIDs, then
-`schtasks /Run /TN OperatorServe`.
+`schtasks /Run /TN OperatorServe`. (A pure *code* change is fine over
+`/api/restart` — that is what was used here.)
 
 ## Loose ends
 
+- `main` is **five commits ahead of `origin/main`** (including this one) and this
+  session cannot push.
+  `git push origin main` when you are back.
 - `stash@{0}` in the agent worktree holds its old `AGENTS.md`, kept rather than
   deleted when the worktree was fast-forwarded. It will conflict with main's
   copy if popped.
