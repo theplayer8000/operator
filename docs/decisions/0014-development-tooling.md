@@ -169,6 +169,68 @@ same things. Grade B (81) → A (96).
 `ALLOWED_TOOLS`. It would not have caught the mangled-newline rules found in
 `server/jobs.mjs` the same day.
 
+### Amended 2026-09-04 — `~/.claude/settings.json` is Operator RUNTIME config
+
+The connection this ADR did not make, and the one a future session would lose.
+
+Everything above is written as though a plugin only affects the agent *building*
+Operator. **It also affects the agent running INSIDE it.** `server/runner.mjs`
+starts each job through the Agent SDK, and the SDK loads all three filesystem
+setting sources unless told otherwise — which it was not, until 2026-09-04.
+A probe of a session started exactly the way `runner.mjs` starts one reported
+**60 visible commands**: the five project skills plus the command set of every
+plugin enabled at user scope.
+
+So `~/.claude/settings.json` is not only the desk machine's preferences. It is
+an input to Operator's runtime, and three of its keys are security-relevant:
+
+- **`enabledPlugins`.** This is how the refusal above stopped holding.
+  `greptile` was found ENABLED on 2026-09-04 — refused here for indexing the
+  whole repository on `api.greptile.com`, and its plugin payload is an HTTP MCP
+  server pointed at exactly that host. No `GREPTILE_API_KEY` was set, so nothing
+  had left the machine, and it is now `false`. But the refusal recorded in this
+  ADR was being enforced by one word in a file outside this repository, which
+  nothing checks and no reviewer sees.
+- **`permissions.deny` and `hooks`.** A settings source supplies a whole
+  `Settings` object. A deny rule short-circuits `canUseTool` before it is
+  consulted, and a `PreToolUse` hook is a shell command that can deny a call
+  the callback would have allowed. Neither is visible from `server/`.
+- **`permissions.defaultMode`.** It carries `"auto"` today, which the SDK
+  treats as an escalating mode and trust-filters only when it comes from the
+  `project` tier — the `user` tier is unfiltered.
+
+**Measured, so this is not left as a worry.** The explicit `permissionMode:
+"default"` that `runner.mjs` passes DOES outrank the inherited `auto`: a
+`Write` with `allowedTools: []` reached `canUseTool` and was refused, and the
+file was never created. [ADR 0012](0012-claude-agent-sdk.md)'s option C holds.
+The first probe used `Bash(hostname)` and saw no prompt, which looked like a
+bypass and was not — the SDK auto-approves trivially safe calls whatever the
+mode. **A read-only command proves nothing about permissions; probe with a
+write.**
+
+**The inheritance is kept deliberately.** The owner asked for it — he wants new
+skills and scheduled work to reach the in-app worker without a code change —
+and `project` cannot be dropped in any case, because that source is the only
+reason `CLAUDE.md` is read at all. Dropping it to "tighten things up" would
+remove the file every agent is instructed to read first, and the turn would
+look entirely normal while doing it.
+
+**What follows from it.** Enabling a plugin at the desk enables it inside
+Operator, silently, with no Operator-side decision recorded anywhere. That is
+now the rule to remember rather than a fact to rediscover: *a plugin decision is
+an Operator decision.* The refusals in this ADR are only as real as
+`enabledPlugins`, and that file is worth reading before wondering why a worker
+did something surprising.
+
+**One more copy than anyone expects.** `.claude/settings.local.json` resolves
+against the session's `cwd`. Jobs run in the agent worktree, so the file the
+in-app worker reads is a *different, gitignored* file from the one a desk
+session edits. On 2026-09-04 main's copy held 9 allow / 17 deny while the
+worktree's held 9 allow and **no deny block at all** — the `security-scan`
+cleanup recorded above had landed on one copy of two. `deniedTools` is passed
+programmatically by `jobs.mjs`, so the standing denials never depended on it;
+what had drifted was unreviewed *widening*, not a missing floor. Mirrored.
+
 ## Consequences
 
 **Good.** Three tools adopted at zero dependency cost — all read-only or
