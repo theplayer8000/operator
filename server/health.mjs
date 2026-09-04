@@ -303,8 +303,20 @@ async function buildChecks() {
     out.push(check("build:live", "ok", "Live app built", "dist/ matches src/.", { at: b.live.builtAt }));
   }
 
+  /*
+    `stale` and `supervised` are null when buildStatus() was not called from
+    inside the server — see its comment. Null is "could not check from here",
+    never a pass.
+  */
   out.push(
-    b.server.stale
+    b.server.stale === null
+      ? check(
+          "build:server",
+          "unknown",
+          "Server running current code",
+          "Cannot tell from here — this was asked from a process that is not the server, and the answer would describe that process instead.",
+        )
+      : b.server.stale
       ? check(
           "build:server",
           "warn",
@@ -318,7 +330,14 @@ async function buildChecks() {
   );
 
   out.push(
-    b.server.supervised
+    b.server.supervised === null
+      ? check(
+          "build:supervised",
+          "unknown",
+          "Supervised",
+          "Cannot tell from here — asked from outside the server process.",
+        )
+      : b.server.supervised
       ? check("build:supervised", "ok", "Supervised", "Restart relaunches it (scripts/supervise.mjs).")
       : check(
           "build:supervised",
