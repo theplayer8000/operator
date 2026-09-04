@@ -42,6 +42,11 @@ import {
   configured as runwayConfigured,
 } from "./runway.mjs";
 import {
+  call as robloxCall,
+  RobloxError,
+  configured as robloxConfigured,
+} from "./roblox.mjs";
+import {
   readHandoff,
   writeHandoff,
   foldHandoff,
@@ -2272,6 +2277,24 @@ const ACTIONS = {
     environment it was started with. So every key set with `secret_set` needed
     someone at the desk to stop two processes by hand. That is the gap.
   */
+  ...(robloxConfigured
+    ? {
+        roblox_cloud: {
+          description:
+            "Call Roblox Open Cloud with the stored OPEN_CLOUD_API_KEY attached automatically. Use it for anything on apis.roblox.com/cloud/… — users, groups, datastores, memory stores, inventory, sales, messaging, user restrictions. path must start with /cloud/; the key is scoped to that host and this is not a generic HTTP gateway. Returns { status, data }. 401/403 means the key or its scopes; 404 usually means the endpoint or an id in the path is wrong — Roblox's own error text comes back in the message.",
+          params:
+            "path (apis.roblox.com path, must start with /cloud/, query string allowed, e.g. /cloud/v2/users/{userId} or /cloud/v2/universes/{universeId}/datastores?limit=50), method? (GET default; also POST, PATCH, PUT, DELETE), body? (JSON object — sent only for POST/PATCH/PUT/DELETE)",
+          handler: async (params) => {
+            try {
+              return await robloxCall(params);
+            } catch (err) {
+              if (err instanceof RobloxError) throw new ActionError(err.message);
+              throw err;
+            }
+          },
+        },
+      }
+    : {}),
   operator_restart: {
     description:
       "Restart Operator COMPLETELY — stop it and have the launcher start it again, so it re-reads the environment. This is the one that makes a key set with secret_set take effect; the Dev page's Restart only reloads code. REQUIRES A CONFIRMATION PHRASE in `confirm` — ask him for it and pass exactly what he says; do not guess it and do not retry with variations. Running turns are cancelled and saved first. Event logs do not survive it, job tabs do. Takes about half a minute; the reply comes back before it happens.",
@@ -2747,6 +2770,10 @@ const SILENT_ACTIONS = new Set([
   // Looking something up is not a change to anything of his.
   "web_search",
   "runway_status",
+  // Roblox Open Cloud calls are exploration — same reasoning as web_search:
+  // reading a balance is not a change, and a probe session would otherwise
+  // buzz the phone at every endpoint it tries.
+  "roblox_cloud",
   "handoff_read",
   "handoff_list",
 ]);
