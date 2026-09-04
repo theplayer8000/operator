@@ -1,128 +1,107 @@
 # Current work
 
-**The handoff is now a capability action, so every worker can keep it.** On
-`main` and **live** — the server was restarted at 00:36 on 2026-09-04 and the
-actions answer through `scripts/operator-action.mjs`. This note was written by
-`handoff_write`.
+**Nothing in flight. Eleven commits on `main`, gates clean, nothing pushed.**
 
-The previous milestone is folded into
-[`2026-09-03-vault-pipeline-and-reroute.md`](2026-09-03-vault-pipeline-and-reroute.md).
-
-## FIRST THING TO CHECK — it is probably not broken
-
-Speech is **off by default and stored per device**, and the Tauri window is its
-own storage profile from the browser. Symptom: Operator answers correctly on
-screen and says nothing. The map prints the reply in gold with `muted — tap the
-speaker in the chat to hear replies` underneath; if that line is showing, that
-is the answer.
+**The server has NOT been restarted.** `server/` is loaded at boot, so the AI
+Router file tools and `/api/health/checks` do not exist until it is. That is
+deliberate — a restart destroys every job's event log, and it is his call.
 
 ## Landed 2026-09-04
 
-**`server/handoff.mjs` + four actions** — `handoff_read`, `handoff_write`,
-`handoff_fold`, `handoff_list` (`20a9683`). The rule requiring this file has
-been in CLAUDE.md since restarts became routine, and it was followed roughly
-never. Three structural reasons, none of them "remember harder":
+**AI Router can touch the code** (`85e8b05`). `server/workspace.mjs` — read,
+list, search, write, edit, and a fixed set of **named** checks. No shell:
+`run_check` picks which check runs, never what runs. `jobs.mjs` had always
+passed `onPermission` into every provider's turn and only the SDK path ever
+called it, so a write raises the same card on his phone with no second
+permission model. 24 boundary checks pass: `data/` refused (the store, the
+per-device push secret, the command audit), `.git/`, `.claude/`, `.env`,
+outside-project, write-outside-checkout, and "rm -rf /" as a check name.
+`tools` stays `"capability-actions"` — that exact value is the no-escalation
+guard — and the new flag is `files: true`, which the reroute also accepts.
+ADR 0016 amended: this lets the MODEL choose files where the 09-02 amendment
+approved files a CALLER hands down. `OPERATOR_WORKER_FILES=0` revokes it.
 
-1. **Three of the four workers have no filesystem.** `gemini`, `airouter` and
-   `ollama` run capability-actions-only. They finish work too, and had no way to
-   leave a note about it. A rule one worker in four can obey is not a rule.
-2. **The one worker that does have a filesystem writes the wrong copy.** Jobs run
-   in the `agent` worktree; the Updates page renders `main`'s. A handoff written
-   by a job was invisible on the phone until someone merged a branch — which
-   defeats the only thing this file is for. `handoff.mjs` resolves paths from its
-   own location, never `process.cwd()`, so it always writes the served copy.
-3. It needed a path remembered and a naming convention followed at the end of a
-   long turn. `operator-action.mjs` is already pre-allowed and already validated.
+**The Health page** (`2d68e50`), `/health` + `GET /api/health/checks`. Every
+check is a failure that actually happened: `node --check` across all 55 `.mjs`
+(the gate `tsc` and `vite` do not cover), a stale `dist/`, a server older than
+`server/`, worktree drift, backups, store growth, environment set in the
+registry but absent from the process. Degrades to "could not check" rather than
+to red. **Not a plugin** — ADR 0014 is explicit that one reaches `claude-code`
+alone.
 
-This is the **one place the capability layer touches a file rather than the
-store**, and it must not become a general file-writing action: the paths are
-fixed, the names are validated, and nothing takes a path from a caller. There is
-deliberately no delete.
+**The map opens up when you zoom** (`edb18de`). Separation grows faster than
+size, so the graph spills off screen and the strands stretch. Denser starfield,
+four parallax bands, drawn in screen space. **Nothing has rendered it** — no
+dev server was up, so the maths is verified and the look is not.
 
-**`scripts/land.mjs`** (`npm run land`, `6310427`) — written by Claude inside
-Operator, reviewed and committed from the desk. Merges `agent` → `main` and then
-does the *right* one of build / restart, which is the decision CLAUDE.md's table
-describes and the one that fails silently when done by hand. Refuses a
-non-fast-forward, refuses a main checkout with uncommitted tracked changes,
-never pushes.
+**The clap will never touch playback** (`e6d352f`). Removed from
+`presence-layer-design.md`, and the TV framing is gone from there and from
+`dashboard-graph-design.md`. Also a new section on scheduled and triggered
+tasks, which is where the templates he saw belong.
 
-**Two defects fixed along the way.**
+**The launcher stopped dropping settings** (`e6d352f`). It named each variable
+and had missed ten, including `AIROUTER_API_KEY` and the VAPID keys — the same
+silent no-op that made the ceilings unreachable, fourth time. Every `OPERATOR_*`
+in the registry is forwarded as a group now (23, where the list named ~9) and
+the banner logs **names only**, because the namespace now includes secrets.
 
-- The `mission` guidance added to the job system prompt on 09-03 was spliced
-  into the middle of another sentence, so every worker was reading "…`needsOwner:
-  true` ONLY when he actually PASS `mission` when the work belongs to one…".
-- `operator-action.mjs` printed "Is the server running?" after *every* failure,
-  including a rejected parameter — sending a worker to check infrastructure when
-  the line above had already told it what to fix (`42c27eb`).
+**`land.mjs` would have crashed after merging** (`0edef41`).
+`execFile("npm.cmd")` throws EINVAL on Node 24, and it failed *after*
+`git merge --ff-only` had advanced main.
 
-## Verified
+**The harness is written down** (`0b9ca2e`). `runner.mjs` now passes
+`settingSources` explicitly — the SDK's own default, so nothing changes. The
+point is that a probe measured 60 inherited commands and nobody had chosen
+them.
 
-- All four actions through `scripts/operator-action.mjs` against the live
-  server, after the restart.
-- Refusals: `../evil` and `docs/handoffs/x.md` as a slug, an unknown handoff
-  name, an empty body, and folding onto an existing dated file.
-- `npx tsc -b` and `npx vite build` clean; `node --check` on every changed
-  `.mjs` with the real `node.exe`, not the shim on PATH.
-- **A bug this found in its own first version:** the slug sanitiser silently
-  rewrote `../evil` to `evil`. It could not escape the folder — the character
-  class saw to that — but a caller who passed a path got a file somewhere else
-  with no indication anything had been reinterpreted. It now refuses and names
-  the offending character. Whitespace and underscores are still tidied, because
-  those are formatting rather than intent.
+## Two security findings, both fixed
 
-## Not verified
+**greptile was enabled** in `~/.claude/settings.json` — refused by ADR 0014 for
+indexing the whole repository on `api.greptile.com`, and its payload is an HTTP
+MCP server pointed there. No key was set, so nothing had left the machine. Off.
 
-No worker has yet been observed calling these on its own initiative. The prompt
-now names them; whether that is enough is the thing to watch on the next few
-jobs.
+**The agent worktree had its own permission file with no deny list.** Claude
+Code resolves `.claude/settings.local.json` against the session cwd, and jobs
+run in the worktree — so it is a *different gitignored file* from the one a desk
+session edits. Main had 9 allow / 17 deny; the worktree had 9 allow / **0
+deny**, and its allow rules were the single-use kind ADR 0014 called out.
+`jobs.mjs`'s `disallowedTools` still covered Operator's own jobs, so this
+mattered for a session opened by hand in that worktree. Mirrored; backup beside
+it. Written up in the vault as `verified`.
 
-## Next
+## Task splitting — analysed, and the answer is NO
 
-**Runway, for GENERATING video** — his ask, and a new external host, so it needs
-a named row in CLAUDE.md's approvals table first: the endpoint, and that an
-image-to-video call sends an image he supplies. Likely a capability action
-rather than a `runTurn` worker, since generation takes minutes and is not a
-conversation. Key goes in with `secret_set`.
+Measured against 139 recorded turns. **Two of the three things you would build
+it for already exist**: concurrency is live at 3, and `delegate.mjs` already
+does worker-to-worker hand-down and is pre-allowed. The third is unproven.
 
-**`runner.mjs` still discards the SDK's token counts** — five lines, and still
-the highest-value follow-up in the accounting. Claude's records read `reported`
-where they should read `derived`.
+The long tail is **not** one model thinking — `job-6/7` ran 895s for $1.11 while
+`job-7/7` ran 38s for $1.25. It is tool execution and waiting on a permission
+tap, and a split shortens neither. On a median request a merge round trip costs
+more than it saves.
 
-**RAM.** 2×8GB DDR4-3000 for £40 was checked and is compatible — DDR4 board,
-2 free slots of 4, takes him to 32GB. It will run at 2400 (mixed speeds drop to
-the slowest) so it buys capacity, not speed. That is the point: 32GB means
-Kokoro and Whisper stay local and **ADR 0016 never needs an audio clause**.
+Three things instead, cheapest first: pass `usage.rounds` through instead of the
+hardcoded `turns: 1`; have `delegate.mjs` and `semantic.mjs` call `recordTurn`
+so sub-task **quota** stops being invisible; then decide with a week of data.
 
-**The bundle is one 941 kB chunk** (266 kB gzipped) and Vite says so on every
-build. Not urgent over a tailnet, and the fix — lazy-loading the heavy routes,
-`MissionMap` above all — is a `src/` change worth doing deliberately rather than
-in passing.
+## Open, needs him
 
-## Environment
-
-`AIROUTER_API_KEY`, `OPERATOR_SEMANTIC_PROVIDER=airouter`,
-`OPERATOR_SEMANTIC_VERIFY=1`, `OPERATOR_TTS_IDLE_MS=14400000`,
-`OPERATOR_FOCUS_SCREEN=1`, `OPERATOR_MAX_CONCURRENT=3`,
-`OPERATOR_DEVICE_NAME="Tosin's PC"`.
-
-Four workers: claude-code, gemini, airouter, ollama.
-
-## The restart trap, still true
-
-`POST /api/restart` and `schtasks /End` do NOT reload the environment while the
-supervisor survives. Stop all three node PIDs, then
-`schtasks /Run /TN OperatorServe`. (A pure *code* change is fine over
-`/api/restart` — that is what was used here.)
+1. **Restart the server**, then ask AI Router to make a small change and watch
+   the permission card appear.
+2. **Look at the map in a browser.** Nothing rendered it.
+3. **Brave Search API** — vault note. New external host, needs its own named
+   approval row. Not touched.
+4. **Runway** for video generation — same, needs the row first.
+5. **`git push origin main`** — eleven commits ahead, this session cannot push.
 
 ## Loose ends
 
-- `main` is **five commits ahead of `origin/main`** (including this one) and this
-  session cannot push.
-  `git push origin main` when you are back.
-- `stash@{0}` in the agent worktree holds its old `AGENTS.md`, kept rather than
-  deleted when the worktree was fast-forwarded. It will conflict with main's
-  copy if popped.
-- `data/chat-import-done.json` records which conversations were extracted end to
-  end. Deleting it makes the next import redo everything.
-- `.agents/skills/` is untracked in the main checkout — six skill files, left
-  alone rather than swept into a commit.
+- **No capability action stops a running job.** `jobs_list` and `job_events` are
+  read-only, so a chat worker can watch a job it cannot stop. A note in this
+  file said he is building that; left alone rather than duplicated.
+- The bundle is one 953 kB chunk (269 kB gzipped). Lazy-loading the heavy
+  routes, `MissionMap` above all, is a deliberate `src/` change.
+- Two comments in `jobs.mjs` still say "one job at a time"; concurrency is 3.
+- `.agents/skills/` is an untracked duplicate of `.claude/skills/` — six
+  identical files in a directory nothing reads.
+- `stash@{0}` in the agent worktree holds its old `AGENTS.md`.
