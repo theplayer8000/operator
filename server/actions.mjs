@@ -33,6 +33,7 @@ import { existsSync } from "node:fs";
 import { withState, readState } from "./store.mjs";
 // No cycle: worktree.mjs imports nothing from here.
 import { state as worktreeState, sync as syncTree } from "./worktree.mjs";
+import { fullRestart, RestartRefused } from "./reboot.mjs";
 import { search as webSearch, SearchError, configured as searchConfigured } from "./websearch.mjs";
 import {
   generate as runwayGenerate,
@@ -2257,6 +2258,39 @@ const ACTIONS = {
         },
       }
     : {}),
+  /*
+    A FULL restart — the only action here that stops Operator.
+
+    It is in this catalogue so it can be asked for from a phone, and it is
+    gated harder than everything else in it: `MANAGEMENT_ACTIONS` in
+    server/index.mjs requires the same tier as the Restart button and the
+    terminal, not the tier that ticks a gym session. A device that can change
+    his gym log must not be able to take Operator down.
+
+    Why it exists at all: `POST /api/restart` reloads code and NOT the
+    environment, because the supervisor survives and hands the child the
+    environment it was started with. So every key set with `secret_set` needed
+    someone at the desk to stop two processes by hand. That is the gap.
+  */
+  operator_restart: {
+    description:
+      "Restart Operator COMPLETELY — stop it and have the launcher start it again, so it re-reads the environment. This is the one that makes a key set with secret_set take effect; the Dev page's Restart only reloads code. REQUIRES A CONFIRMATION PHRASE in `confirm` — ask him for it and pass exactly what he says; do not guess it and do not retry with variations. Running turns are cancelled and saved first. Event logs do not survive it, job tabs do. Takes about half a minute; the reply comes back before it happens.",
+    params:
+      "confirm (the restart phrase, exactly as he says it), reason? (one line, recorded in the log), graceSeconds? (5-120, default 20 — pass 5 when he wants it immediately)",
+    handler: async ({ reason, graceSeconds, confirm }) => {
+      const grace = Math.max(5, Math.min(Number(graceSeconds) || 20, 120)) * 1000;
+      try {
+        return await fullRestart({
+          reason: reason ? String(reason).slice(0, 120) : "restart requested from the capability layer",
+          graceMs: grace,
+          confirm,
+        });
+      } catch (err) {
+        if (err instanceof RestartRefused) throw new ActionError(err.message);
+        throw err;
+      }
+    },
+  },
   job_stop: {
     description:
       "Stop a running or queued Orchestrator job. Use when a job is stuck, looping, or holding the agent worktree so it cannot be synced. Drops that job's queued turns too — a stop that lets the next one start is not a stop. Does not delete the tab; the thread and its transcript stay.",
@@ -2605,7 +2639,14 @@ const GROUP_WORDS = {
  * Redaction is by PARAMETER NAME as well as by action, so a secret passed to
  * something else by mistake is still caught.
  */
-const SECRET_PARAMS = /^(value|secret|token|key|password|apikey|api_key)$/i;
+/*
+  `confirm` is here because of `operator_restart`. When
+  OPERATOR_RESTART_PHRASE is set the phrase is a second factor, and the job
+  event log is rendered in the app and replayed into later turns — so a
+  restart written down in full would publish the phrase to anything that can
+  read the thread. Redacted for the same reason `value` is.
+*/
+const SECRET_PARAMS = /^(value|secret|token|key|password|apikey|api_key|confirm)$/i;
 
 export function redactParams(action, params) {
   if (!params || typeof params !== "object") return JSON.stringify(params ?? {});

@@ -90,6 +90,15 @@ import {
 
 const gzip = promisify(gzipCb);
 
+/**
+ * Capability actions held to the MANAGEMENT tier rather than the capability
+ * tier — the same gate as the Restart button and the terminal.
+ *
+ * Short and explicit on purpose. Adding a name here is a security decision,
+ * and a pattern match would let one be added by naming a file well.
+ */
+const MANAGEMENT_ACTIONS = new Set(["operator_restart"]);
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OPERATOR_PORT ?? 5174);
 const HOST = process.env.OPERATOR_HOST ?? "0.0.0.0";
@@ -1143,6 +1152,10 @@ const server = createServer(async (req, res) => {
       doesn't exist — so it comes back as a 400 with the reason, which is what
       lets a model correct itself on the next turn rather than guessing.
     */
+    /*
+      Actions that stop or restart Operator, rather than change its data. See
+      the check inside the POST branch below.
+    */
     if (pathname === "/api/actions") {
       /*
         Tier 2, not tier 3 — see `deviceMayUseCapabilities` in terminal.mjs.
@@ -1161,6 +1174,28 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST") {
         const body = await readBody(req);
+        /*
+          A few actions are MANAGEMENT, not data.
+
+          The capability layer is gated at tier 2 on the reasoning that
+          everything in it is something the owner could already do through a
+          page. `operator_restart` is not that — it stops Operator — so it is
+          held to the same tier as the Restart button and the terminal.
+
+          Checked here rather than inside actions.mjs because identity lives
+          here; that file deliberately knows nothing about who is calling.
+          Adding an action to this set is a security decision, so the set is
+          short and explicit rather than a name pattern.
+        */
+        if (MANAGEMENT_ACTIONS.has(body?.action)) {
+          const manage = deviceMayManage(identity);
+          if (!manage.ok) {
+            console.warn(
+              `[operator] ${body?.action} refused for ${identity?.device ?? identity?.client}: ${manage.reason}`,
+            );
+            return json(req, res, 403, { error: "not authorised", reason: manage.reason });
+          }
+        }
         try {
           const result = await runAction(body?.action, body?.params);
           console.log(
