@@ -1,8 +1,15 @@
 # The presence layer — Operator that speaks first
 
-**Status:** proposed, nothing built. Needs the owner's decisions at the marked
+**Status:** partly built. The trigger loop and the schedule store are still
+proposed; the voice surface is live. Needs the owner's decisions at the marked
 points.
-**Date:** 2026-08-30
+**Date:** 2026-08-30, revised 2026-09-04
+
+**What is actually built since this was written**, because a document that says
+"nothing built" is one a session will act on: speech in and out, the clap
+detector, `focus_operator`, `listen_once`, intent matching, and
+`OPERATOR_MAX_CONCURRENT`. What is not: anything that starts a job without being
+asked — which is still the whole point of §2 and §2b.
 **Relates to:** [`control-plane-design.md`](control-plane-design.md) (a
 different axis — see below), [`vision.md`](vision.md),
 [ADR 0011](decisions/0011-remote-terminal-for-authorised-devices.md),
@@ -170,6 +177,159 @@ Rules that fall out of that:
 - Overlap is refused, not queued. An hourly job that takes 90 minutes must not
   stack.
 
+### 2b. Scheduled and triggered tasks — shaped 2026-09-04
+
+The phase above says *what* the trigger loop is. This says what the owner should
+be able to **make** with it, because he has now seen the shape working elsewhere
+— Claude Code's scheduled-task templates — and wants it here.
+
+Those templates are worth reading as **evidence of the shape, not as a list to
+copy**: a briefing on weekdays at 1:30pm, a system health check daily at 1pm,
+email and issue triage at fixed weekday times, a PR review digest at 7pm, a
+dependency check on Mondays, a flaky-test tracker on Mondays — and, the
+interesting one, a release-notes drafter fired **by a pull request closing**
+rather than by a clock.
+
+That last one is the finding. **There are two kinds of trigger and only one of
+them is a timer.**
+
+| Kind | Fires on | What Operator has today |
+|---|---|---|
+| **Clock** | a time, a weekday, an interval | the hourly `setInterval` in `server/index.mjs` |
+| **Event** | something happened | nothing general — see below |
+
+#### What Operator can schedule today, with no new integration
+
+This is the part that makes the section worth writing: the most valuable
+template on that list is also the one that needs **nothing approved and nothing
+new**.
+
+A **morning briefing** is four capability calls and a summarisation:
+`calendar_range` for what is on, `gym_day` for which session today is,
+`routine_day` for the steps, `missions_list` for what is moving — plus `now`,
+because a worker asked the date reads the calendar to guess it otherwise. Every
+one of those exists, is validated, and is already called by workers daily.
+There is no host to approve, because nothing leaves that is not already leaving
+when he types the same question by hand.
+
+Near neighbours, same story: an end-of-day roundup from `work_recent` and
+`handoff_read`; a Monday "what is blocked" pass over `missions_list` — the
+dependency count `/statistics` already derives, delivered rather than visited.
+
+A **system health check** is the honest half-case. The probes exist
+(`server/homelab.mjs`, `scripts/app.mjs status`) and neither is reachable as a
+capability action, so a scheduled worker asked "is anything down" would have to
+shell out or grep — which is exactly the failure `CLAUDE.md` records against
+`actions.mjs` ("a new feature needs a read action, not just writes", and the one
+time it did not have one it cost $0.92 to answer a question). **A health-check
+schedule wants a read action first.** That is a small, in-house piece of work,
+not an integration.
+
+#### What is not ours to schedule, named so nobody builds one by accident
+
+Most of the remaining templates are only interesting because they reach a host
+Operator does not own. Email triage needs a mailbox. Issue triage needs Linear
+or Jira. A PR digest, a dependency check, a flaky-test tracker and the
+release-notes drafter all need **GitHub**. An infrastructure alarm worth the
+name needs PagerDuty, Datadog or Sentry.
+
+**Not one of those is approved**, and a schedule is a peculiarly easy place to
+smuggle one in — the integration is three lines inside something whose headline
+is "briefing". `CLAUDE.md`'s rule is per host, in advance, by name, and it
+applies here exactly as it applies anywhere: ask, name the host, say what leaves
+the machine, wait. Naming them here so that the first person to build a PR
+digest finds this paragraph before they find the GitHub API.
+
+The event-trigger case doubles the ask. "When a pull request closes" is a
+**webhook** — an inbound route from a host on the internet, on a server whose
+entire security posture is that it is only reachable on a tailnet. That is a
+second decision, and a larger one than the API call it delivers.
+
+Which leaves event triggers, for now, as **polling**: the same loop, asking. Not
+elegant, and honest about what it is. Operator has no event bus — `jobs.mjs` has
+an append-only log per job and `store.mjs` funnels every data change through
+`withState()`, which are the two places a real one would eventually hang off.
+Worth noticing that the most useful internal events already exist there: a job
+finished, a job failed, a mission changed status, an app stopped answering.
+
+#### Where a schedule is stored — and the conflict in the phase above
+
+A schedule is state, so the architecture is not in question: **one namespace,
+one hook, one folder**, same as every feature. Call it `presence.schedules`,
+give it `usePresence`, and the Settings section in decision 4 becomes where it
+is edited.
+
+Except the phase above says triggers are **"environment or store config, never
+model-editable"**, and those two sentences disagree. A slice of `operator.json`
+is writable by any worker with `Write`, and by `PUT /api/state/<key>` on top of
+that. **A schedule a worker can edit is a worker that can schedule itself**,
+which is the `OPERATOR_APPS` reasoning verbatim.
+
+Three ways out, none free:
+
+- **Environment-only**, like `OPERATOR_APPS`. Safe and unusable — he is not
+  editing an env var from his phone, and this is a feature he will want to
+  change while looking at it.
+- **Its own file**, the `subscriptions.mjs` precedent: outside `operator.json`,
+  outside the state API, reached only through the two purpose-built routes that
+  own it (there is no capability action for a subscription). A worker with
+  `Write` can still reach the file, so this narrows the surface rather than
+  closing it.
+- **In the store, and accept it**, on the grounds that a worker able to edit
+  schedules is already a worker able to edit `server/`. True, and it gives away
+  the one thing an env var was protecting: the difference between a worker that
+  can act now and a worker that can arrange to act every morning at six.
+
+**Needs his decision.** The middle one is what this document would pick — the
+same shape push subscriptions already use, for the same reason: it is state, but
+it is not *his data*.
+
+#### A scheduled job is a job, and inherits everything
+
+It goes through `jobs.mjs` like any other. That is not a detail, it is most of
+the design:
+
+- **The permission envelope is unchanged** — the pre-allow list, and the two
+  denials that never become questions. A 6am job cannot do anything a 6pm one
+  cannot.
+- **The usage ceiling applies**, and `server/usage.mjs` now enforces one rather
+  than proposing it. This matters more here than anywhere: the trigger loop is
+  still the first thing in Operator that can spend while nobody is watching, and
+  a schedule that says "nothing today" 200 mornings a year pays full price for
+  each of them. Worth a cheap pre-check — rules first, the way `routing.mjs`
+  already decides — before a worker is woken at all.
+- **Routing picks the worker.** A briefing is a summary over four action calls;
+  that is the cheap worker's job, not Claude Code's. The expensive worker should
+  be reserved for the schedules that actually build something.
+
+#### Two things that only go wrong when nobody is there
+
+**A permission question at 3am.** `PERMISSION_TIMEOUT_MS` is 30 minutes and
+**timing out denies** — the right default, chosen so that walking away from your
+phone is never read as approval. For an unattended schedule that is still the
+right answer and a bad experience: the turn dies half-finished, and it holds a
+concurrency slot for half an hour first while doing nothing.
+
+So a scheduled job probably wants to be **stricter than an interactive one, not
+looser**: fail immediately on anything outside the pre-allow list, log what it
+would have asked, and let him answer it in the morning by re-running. A schedule
+that quietly waits half an hour for an answer nobody will give is worse than one
+that stops. **Needs his decision**, and it is the one most likely to be got
+wrong by defaulting.
+
+Related, and cheaper to get right: `notify.mjs` will happily push at 3am. Quiet
+hours are already on the list in decision 4 — this is the thing that makes them
+mandatory rather than polite.
+
+**`OPERATOR_MAX_CONCURRENT` is now real** (default 1, and his environment runs
+3). A scheduled job entering the queue competes with the one he is typing into,
+which is a new failure: he asks a question, and waits behind a briefing he
+forgot he set. Options are to reserve a slot for interactive work, or to let
+schedules run only when nothing else is. **Undecided.** The phase above's
+"overlap is refused, not queued" still holds *per schedule* — it stops one
+schedule stacking on itself, and says nothing about two different ones landing
+on the same minute, which is what a fixed-time list makes likely.
+
 ### 3. Operator reaches you
 
 Voice is useless if you are not on the page, so presence needs a way to
@@ -223,20 +383,25 @@ that; it will present as a permissions failure with no explanation.
 
 #### Two failure modes worth designing against
 
-- **The television problem.** Anything percussive triggers it — a door, a
-  dropped mug, applause on a video. Requiring *two* claps inside roughly
-  200–600ms with a quiet gap either side removes most of it, and the action
-  being harmless (switch view, start listening) means a false positive costs a
-  glance rather than an action.
+- **Anything percussive triggers it** — a door, a dropped mug, a snare on the
+  speakers. Requiring *two* claps inside roughly 200–600ms with a quiet gap
+  either side removes most of it, and the action being harmless (switch view,
+  start listening) means a false positive costs a glance rather than an action.
+  This one stopped being hypothetical almost immediately, and it is what forced
+  the correction in the next section.
 - **Feedback.** Operator speaking through the same speakers the mic can hear is
   how a clap detector triggers on itself. Detection must pause while
   `speech.speaking` is true.
 
-#### What the clap should actually do — refined 2026-08-31
+#### What the clap should actually do — refined 2026-08-31, corrected 2026-09-04
 
-His three: **pause whatever is playing, put Operator full screen, and be
-already listening before the view switches.** Each needs something different,
-and one of them cannot be done from a web page at all.
+Three things were asked for here: **pause whatever is playing, put Operator full
+screen, and be already listening before the view switches.**
+
+**The first of those three — pausing — is struck out; it is point 2 below.**
+It was wrong, the owner had said so before it was written down, and the
+correction below is kept in full rather than deleted quietly — because the
+reasoning is worth considerably more than the feature was.
 
 **1. Capture starts at the clap, not after the switch.** The important one, and
 the cheapest. The microphone is already open — that is how the clap was heard —
@@ -245,28 +410,69 @@ said during the transition. Otherwise the interaction is clap, wait, then talk,
 which is worse than pressing a key. Nothing extra is needed for this beyond
 being deliberate about where the buffer starts.
 
-**2. Pausing other audio needs the server, not the browser.** A page cannot
-pause Spotify or a video in another app; there is no API for it and there should
-not be. Operator can, because it has a machine-side half — a keystroke of the
-media-pause virtual key from PowerShell.
+**2. Pausing other audio — REMOVED. The symptom was real and the diagnosis was
+backwards.**
 
-That means a **new named capability action** rather than something the frontend
-does, and it is worth naming as a small widening: it is the first action that
-touches the OS rather than Operator's own data or a registered app. Benign — a
-media key — but the rule in `CLAUDE.md` is that capabilities are named and
-fixed, so this is `media_pause` and it can do exactly that.
+This section previously proposed a `media_pause` capability action fired by the
+gesture. It is withdrawn. **The clap does not touch playback, and no gesture
+should.**
+
+The reason is the part worth keeping, and it is **his account, given
+2026-09-04**, not something reconstructed from the logs afterwards:
+
+> *"sometimes i have my music play on speakers and that was what was firing the
+> clap detector like 11 times the other day i remember u mentioned it and took
+> it as a bug but yeah it was but wrong deduction lmao"*
+
+Music on speakers is percussive, so the music was **firing the detector**. That
+was read at the time as a bug in the detector's thresholds — a real symptom with
+the wrong cause attached. The detector heard precisely what it was built to
+hear, and the honest fix is not a tighter window, it is refusing to put the
+thing making the noise under the gesture's control.
+
+Two notes on the count, because the repo disagrees with itself and neither
+figure should be quoted as measured. His recollection is about eleven; the
+changelog entry *"Clapping arms the terminal, for twenty minutes"* says fifteen
+claps in an evening. Nothing counted false triggers as such, so both are
+impressions. And `server/index.mjs` records a *different* reason for not
+building the pause — that he would rather stop his own music than have a gesture
+reach into whatever holds the media session. Both reasons are his and they point
+the same way; this section keeps the argument rather than the arithmetic.
+
+Building the pause would have made it worse in the way that is hardest to
+notice. A gesture false-fired by music, whose first act is to silence the music,
+**covers its own tracks** — the false positives stop being visible at exactly
+the moment they start being expensive.
+
+`media_play_pause` **still exists** in `server/actions.mjs`, and is fine as it
+is: "pause that", asked for. What is removed is the clap firing it. That
+distinction is the whole rule — a named action he invokes is not the same object
+as an action a sharp noise invokes, even when the code underneath is identical.
+
+The other failure mode above — **Feedback**, Operator's own speech reaching the
+mic — survives untouched, and is the same class of problem seen from the other
+side: a detector that hears the room hears whatever Operator puts into the room.
 
 **3. Full screen is the one that does not work as asked.** Browsers only grant
 `requestFullscreen()` from a genuine user gesture, and a clap is not one — the
 call would be rejected, silently, on the machine where it matters most.
 
-The good version is to stop needing it: the wall display is **already its own
-screen** (see `dashboard-graph-design.md`), opened full screen once and left
-there. So "full screen Operator" is answered by the display being a display,
-not by a fullscreen call at all — which is also how it ends up working when the
-screen is a TV on the wall rather than a window on the desk.
+The good version is to stop needing it: the display is **already its own screen**
+(see `dashboard-graph-design.md`), opened full screen once and left there. So
+"full screen Operator" is answered by the window already being one, not by a
+fullscreen call at all.
 
-Where Operator *is* just a window, F11 once still beats an API that will refuse.
+An earlier draft framed that screen as a TV on the wall. **Dropped — he is not
+running Operator on a television**, and it was never load-bearing: a panel on a
+wall is still driven by the PC, so it is a monitor with a longer cable. The
+argument stands or falls on the browser refusing `requestFullscreen()`, which
+has nothing to do with what the panel is.
+
+Where Operator *is* just a window, F11 once still beats an API that will refuse
+— and since this was written, the machine side answers it directly:
+`focus_operator` raises and fullscreens the window from the PowerShell half,
+because a page cannot raise itself but a process on the machine can. It
+deliberately does nothing else, for the reason in point 2.
 
 ### 4c. The device split, named
 
@@ -276,6 +482,11 @@ at once: **the phone is a view and review panel; the PC is the dev side.**
 That is already how the decisions have been going without being stated —
 the mission map is big-screen only, the wall display is its own screen — and
 having it explicit means the next surface does not have to re-litigate it.
+
+"Wall display" here means **a second monitor driven by this PC**, per the
+correction in point 3 above. `dashboard-graph-design.md` still describes it as a
+TV or projector; that is the framing he has now ruled out, and that document is
+the one to fix.
 
 | | Phone | Desk / big screen |
 |---|---|---|
@@ -420,12 +631,16 @@ written to satisfy, applied to a system that now speaks first.
 
 1. ~~**Voice input: local transcription only?**~~ **DECIDED 2026-08-30** —
    local only, `faster-whisper` + Silero VAD. [ADR 0015](decisions/0015-hermes-agent.md).
-2. **Usage ceilings** — settled in principle by ADR 0013 and still unbuilt. A
-   stopgap is now in force: `OPERATOR_USAGE_BUDGET_USD=10`, read from the
-   registry by `scripts/operator-serve.cmd`. **It is weaker than it sounds** —
-   the counter is in memory so it resets every restart, and it sums *valuation*
-   dollars rather than money charged. It brakes a runaway within one run. It is
-   not the ceiling this phase needs.
+2. ~~**Usage ceilings**~~ **BUILT since this was written.** `server/usage.mjs`
+   implements ADR 0013 properly — `checkCeiling`, `ceilingBlock`,
+   `jobCeilingUsd`, per-basis aggregates — and `OPERATOR_CEILING_JOB_USD` /
+   `OPERATOR_CEILING_DAILY_USD` are live. The old `OPERATOR_USAGE_BUDGET_USD=10`
+   stopgap is superseded and its warning no longer applies.
+
+   **What this phase still needs is not a dollar ceiling.** A scheduled job
+   spends without anyone watching, so the question is how many *unattended*
+   turns may run before it stops and says so — a count, on a clock, separate
+   from the interactive ledger. That is unbuilt and undecided.
 3. **Does the presence layer get to arm the terminal?** Recorded as intended in
    the control-plane doc; the mitigations above are the version that keeps
    ADR 0011 intact.

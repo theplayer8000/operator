@@ -44,93 +44,76 @@ function Read-UserEnv([string]$name) {
     }
 }
 
-# Secrets and config, straight from the registry.
-$gemini = Read-UserEnv "GEMINI_API_KEY"
-if ($gemini) { $env:GEMINI_API_KEY = $gemini }
-
-# Operator's own spending brake. Read the note above BUDGET_USD in
-# server/jobs.mjs before trusting it: the counter is in memory and resets on
-# every restart, and it sums *valuation* dollars rather than money charged. It
-# brakes a runaway within one run; it is not a lifetime budget, and ADR 0013
-# supersedes it in principle.
-$budget = Read-UserEnv "OPERATOR_USAGE_BUDGET_USD"
-if ($budget) { $env:OPERATOR_USAGE_BUDGET_USD = $budget }
-
-# The ADR 0013 ceilings, forwarded as a GROUP rather than one at a time.
+# --- what the server actually runs with -----------------------------------
 #
-# This file names every variable it passes through, which is deliberate - it is
-# the one place that says what the server runs with. But it made the ceilings
-# unreachable: `secret_set` can now write OPERATOR_CEILING_JOB_USD from a
-# phone, `setx` puts it in the registry, and the server never saw it. A setting
-# that writes successfully and does nothing is worse than one that refuses.
+# Forwarded as GROUPS rather than one variable at a time, and that change is the
+# fix for a bug this file has now produced four times.
 #
-# Read from the registry rather than trusting $env:, for the same reason
-# everything else here does: Task Scheduler caches the environment it launched
-# with, so a value set after that is invisible until this reads it fresh.
-$ceilings = @()
+# Naming each variable was deliberate: this was meant to be the one place that
+# says what the server runs with. What it produced instead was a silent no-op
+# every time something new arrived. `secret_set` writes OPERATOR_CEILING_JOB_USD
+# from his phone and the server never saw it. AI Router was approved 2026-09-02
+# and AIROUTER_API_KEY was not on the list. Web Push landed 2026-09-01 and its
+# VAPID keys were not either. A setting that writes successfully and does
+# nothing is worse than one that refuses, and "remember to add it here" has now
+# been tried for months and does not work.
+#
+# So every OPERATOR_* in the registry is forwarded. That namespace IS Operator's
+# configuration, so a new one is always wanted - including the ones that are
+# security boundaries (OPERATOR_TERMINAL_DEVICES, OPERATOR_APPS,
+# OPERATOR_MAX_CONCURRENT). Those are registry-only precisely so a worker with
+# Write across the tree cannot reach them, and this is the only door they come
+# through.
+#
+# CREDENTIALS STAY A NAMED LIST. Matching *_API_KEY by pattern would sweep
+# unrelated keys off his account into a process that talks to third parties, and
+# the whole point of CLAUDE.md's approvals table is that each host is named. Add
+# a line here when a provider is approved - and only then.
+#
+# Always read from the registry, never trust $env:. Task Scheduler caches the
+# environment it launched with, so anything set afterwards is invisible until
+# something reads it fresh. That is the entire reason this file exists.
+
+$credentials = @("GEMINI_API_KEY", "AIROUTER_API_KEY")
+$extras = @("PHONEMIZER_ESPEAK_LIBRARY", "PHONEMIZER_ESPEAK_PATH", "ESPEAK_DATA_PATH")
+
+$secretsPresent = @()
+foreach ($name in $credentials) {
+    $value = Read-UserEnv $name
+    if ($value) {
+        Set-Item -Path "Env:$name" -Value $value
+        $secretsPresent += $name
+    }
+}
+
+foreach ($name in $extras) {
+    $value = Read-UserEnv $name
+    if ($value) { Set-Item -Path "Env:$name" -Value $value }
+}
+
+$forwarded = @()
 try {
     $envKey = Get-Item -Path "HKCU:\Environment" -ErrorAction Stop
     foreach ($name in $envKey.GetValueNames()) {
-        if ($name -like "OPERATOR_CEILING_*") {
+        if ($name -like "OPERATOR_*") {
             $value = $envKey.GetValue($name)
             if ($value) {
                 Set-Item -Path "Env:$name" -Value $value
-                $ceilings += "$name=$value"
+                $forwarded += $name
             }
         }
     }
 } catch { }
 
-# The hosted-app registry (server/apps.mjs). JSON, which is the reason this
-# file is PowerShell at all - see the header.
-$apps = Read-UserEnv "OPERATOR_APPS"
-if ($apps) { $env:OPERATOR_APPS = $apps }
-
-# The microphone the clap listener watches (server/listen.mjs). Absent means it
-# does not run at all - an always-open microphone is a decision, not a default,
-# which is also why this lives in the registry rather than anywhere a worker
-# could write to it.
-$listen = Read-UserEnv "OPERATOR_LISTEN"
-if ($listen) { $env:OPERATOR_LISTEN = $listen }
-
-# Where phone notifications go (server/notify.mjs). The URL is loopback - the
-# owner's own ntfy server, exposed to the tailnet by tailscale serve. Absent
-# means notifications are simply off, which is why nothing here has a default.
-# Environment rather than the store for the reason OPERATOR_APPS is: a worker
-# has Write everywhere, and a destination it could edit would be a general
-# outbound channel with Operator's own code doing the sending.
-$ntfyUrl = Read-UserEnv "OPERATOR_NTFY_URL"
-if ($ntfyUrl) { $env:OPERATOR_NTFY_URL = $ntfyUrl }
-$ntfyTopic = Read-UserEnv "OPERATOR_NTFY_TOPIC"
-if ($ntfyTopic) { $env:OPERATOR_NTFY_TOPIC = $ntfyTopic }
-$ntfyToken = Read-UserEnv "OPERATOR_NTFY_TOKEN"
-if ($ntfyToken) { $env:OPERATOR_NTFY_TOKEN = $ntfyToken }
-$appUrl = Read-UserEnv "OPERATOR_APP_URL"
-if ($appUrl) { $env:OPERATOR_APP_URL = $appUrl }
-
-# Which monitor the clap summons Operator onto (server/actions.mjs). Absent
-# means screen 2. Clamped in the action, so unplugging a monitor falls back to
-# the first rather than failing.
-$focusScreen = Read-UserEnv "OPERATOR_FOCUS_SCREEN"
-if ($focusScreen) { $env:OPERATOR_FOCUS_SCREEN = $focusScreen }
-
-# How many turns may run at once (server/jobs.mjs). Absent means 1, which is
-# how it behaved before concurrency existed. Environment-only because a worker
-# with Write everywhere could otherwise widen its own fan-out, and raising this
-# multiplies spend by N.
-$concurrent = Read-UserEnv "OPERATOR_MAX_CONCURRENT"
-if ($concurrent) { $env:OPERATOR_MAX_CONCURRENT = $concurrent }
-
-# Where espeak-ng lives, for Kokoro's phonemiser (server/tts.mjs).
-# Read explicitly rather than trusting inheritance, for the same reason every
-# other variable here is: Task Scheduler's environment has not been reliable,
-# which is the whole reason this script exists.
-$espeakLib = Read-UserEnv "PHONEMIZER_ESPEAK_LIBRARY"
-if ($espeakLib) { $env:PHONEMIZER_ESPEAK_LIBRARY = $espeakLib }
-$espeakExe = Read-UserEnv "PHONEMIZER_ESPEAK_PATH"
-if ($espeakExe) { $env:PHONEMIZER_ESPEAK_PATH = $espeakExe }
-$espeakData = Read-UserEnv "ESPEAK_DATA_PATH"
-if ($espeakData) { $env:ESPEAK_DATA_PATH = $espeakData }
+# Read back for the banner below, so what is logged is what the process holds
+# rather than what this script believes it set.
+$gemini = $env:GEMINI_API_KEY
+$budget = $env:OPERATOR_USAGE_BUDGET_USD
+$ntfyUrl = $env:OPERATOR_NTFY_URL
+$ntfyTopic = $env:OPERATOR_NTFY_TOPIC
+$espeakLib = $env:PHONEMIZER_ESPEAK_LIBRARY
+$concurrent = $env:OPERATOR_MAX_CONCURRENT
+$focusScreen = $env:OPERATOR_FOCUS_SCREEN
 
 # Roll the log if it has got large, keeping exactly one previous file.
 #
@@ -158,12 +141,26 @@ Add-Content -Path $log -Value "==== GEMINI_API_KEY: $geminiState ===="
 if ($budget) { $budgetState = "`$$budget" } else { $budgetState = "none" }
 Add-Content -Path $log -Value "==== usage ceiling: $budgetState ===="
 
-# Logged by NAME AND VALUE, unlike a key. A ceiling is a policy, not a secret,
-# and the whole problem was not being able to tell what the server was using.
-if ($ceilings.Count -gt 0) {
-    Add-Content -Path $log -Value ("==== ceilings: " + ($ceilings -join ", ") + " ====")
+# NAMES ONLY, and that is a deliberate change from the previous version.
+#
+# It used to log OPERATOR_CEILING_* as name=value, on the correct reasoning that
+# a ceiling is a policy rather than a secret. That reasoning does not survive
+# forwarding the whole namespace: OPERATOR_VAPID_PRIVATE and OPERATOR_NTFY_TOKEN
+# match OPERATOR_* too, and this log is read by the Dev page and by every worker
+# that greps it. A key in here is a key published to the tailnet - the same
+# mistake that cost the Gemini key a reissue, arriving by a different door.
+#
+# The names are what was actually missing anyway. "Is it reaching the server"
+# was the question every one of those four silent no-ops asked.
+if ($forwarded.Count -gt 0) {
+    Add-Content -Path $log -Value ("==== OPERATOR_* forwarded (" + $forwarded.Count + "): " + (($forwarded | Sort-Object) -join ", ") + " ====")
 } else {
-    Add-Content -Path $log -Value "==== ceilings: none set ===="
+    Add-Content -Path $log -Value "==== OPERATOR_* forwarded: none ===="
+}
+if ($secretsPresent.Count -gt 0) {
+    Add-Content -Path $log -Value ("==== credentials present: " + (($secretsPresent | Sort-Object) -join ", ") + " ====")
+} else {
+    Add-Content -Path $log -Value "==== credentials present: none ===="
 }
 
 if ($ntfyUrl -and $ntfyTopic) { $ntfyState = $ntfyUrl } else { $ntfyState = "off" }

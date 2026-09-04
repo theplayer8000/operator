@@ -74,8 +74,8 @@ So: a new register for the graph, not a rewrite of the board's.
 ### 2. DECIDED — the graph is big-screen only, and does not exist on a phone
 
 The owner's decision, 2026-08-30, and it is the one that makes the rest simple:
-**the graph is for the desk, and eventually for a TV or projector in the room.
-It is not built for a phone at all.**
+**the graph is for the desk, and eventually for a second screen driven by the
+PC. It is not built for a phone at all.**
 
 Not a degraded version. Not pan-and-zoom on 390px. Below the breakpoint the
 graph pane **is not offered and not mounted**, and the Dashboard is exactly
@@ -100,9 +100,16 @@ drains a phone battery for something nobody can see.
 
 ### 2b. The wall display — named now, built later
 
-His stated direction: a TV or projector in the room showing it. That is a
-**different surface to the desk view**, not the same one bigger, and naming it
-now stops the desk view being built in a way that cannot become it:
+**Corrected 2026-09-04.** This previously said "a TV or projector in the room",
+which he has now ruled out — *"im not running operator on a fucking tv... i mean
+i could actually but nah thats overly too much"*, and the practical objection is
+that the screen has to be driven by the PC anyway, so a television buys nothing a
+monitor does not.
+
+What survives is the part that was never about the hardware: a screen that is
+**left showing this and not interacted with** is a different surface to the desk
+view, not the same one bigger, and naming it now stops the desk view being built
+in a way that cannot become it:
 
 - **Read from across a room**, so type scales up and detail drops out. The
   desk view can afford labels the wall view cannot.
