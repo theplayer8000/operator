@@ -751,8 +751,29 @@ async function registryNames() {
  *
  * A provider approved by name goes in the launcher AND here, in that order.
  */
-const APPROVED_CREDENTIALS = ["AIROUTER_API_KEY", "GEMINI_API_KEY"];
-const INTERESTING = new RegExp(`^(OPERATOR_|${APPROVED_CREDENTIALS.join("|")}$)`);
+const APPROVED_CREDENTIALS = [
+  "AIROUTER_API_KEY",
+  "GEMINI_API_KEY",
+  // Approved by name on 2026-09-04 (CLAUDE.md's table, server/websearch.mjs and
+  // server/runway.mjs) and missing from this list until the day after, which is
+  // exactly the gap the comment above warns about: he set both from his phone,
+  // this check reported "nothing set in the registry is missing from the running
+  // server", and it was blind to both names. It was not lying about what it
+  // looked at; it was silent about what it did not, which reads the same.
+  "BRAVE_SEARCH_API_KEY",
+  "RUNWAY_API_KEY",
+];
+/*
+  Anchored per alternative, not once at the end.
+
+  `join("|")` inside `^(...|NAME$)` puts the `$` on the LAST alternative only, so
+  every other credential was prefix-matched — `AIROUTER_API_KEY_OLD` counted as
+  the real thing. Harmless so far and wrong in the direction that hides a
+  mistake, which is the wrong direction for this file.
+*/
+const INTERESTING = new RegExp(
+  `^(?:OPERATOR_|${APPROVED_CREDENTIALS.map((n) => `${n}$`).join("|")})`,
+);
 
 async function envChecks() {
   const inProcess = Object.keys(process.env).filter((n) => INTERESTING.test(n)).sort();
