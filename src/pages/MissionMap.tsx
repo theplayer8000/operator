@@ -602,6 +602,19 @@ export default function MissionMap() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const bodiesRef = useRef<Body[]>([]);
+  /*
+    Ring radii sized to their populations, and the repulsion cutoff that follows
+    from them. Computed once when the layout is built rather than per frame —
+    it depends only on the tier histogram, which does not change between
+    rebuilds, and the physics loop runs sixty times a second.
+
+    The defaults are the old fixed ladder, so a graph that has not been built
+    yet behaves exactly as before rather than collapsing to zero.
+  */
+  const spreadRef = useRef<{ ringRadius: number[]; cutoff: number }>({
+    ringRadius: Array.from({ length: 13 }, (_, t) => MIN_ORBIT * 0.7 + t * 190),
+    cutoff: 620,
+  });
   const edgesRef = useRef<Edge[]>([]);
   const [hovered, setHovered] = useState<MissionRecord | null>(null);
   /*
@@ -973,6 +986,58 @@ export default function MissionMap() {
       }
       frontier = next;
     }
+
+    /*
+      How big each ring has to be to actually hold what lands on it.
+
+      ## The bug this replaces
+
+      The ring was `MIN_ORBIT * 0.7 + tier * 190` — a fixed ladder that took no
+      account of how many nodes ended up on each rung. Measured against the real
+      vault on 2026-09-05:
+
+        tier 1: 154 nodes, ring r=354, circumference 2227, needs ~15400  (6.9x)
+        tier 2: 229 nodes, ring r=544, circumference 3421, needs ~22900  (6.7x)
+        tier 3: 190 nodes, ring r=734, circumference 4615, needs ~19000  (4.1x)
+
+      Nearly seven times more nodes than the circle has room for, held there by a
+      two-sided radial pull that is firmer than the repulsion trying to separate
+      them. That is the hairball — not a missing force, an impossible instruction.
+      It never showed up on the mission map because twelve nodes fit anywhere.
+
+      BFS from the eight biggest hubs over a graph averaging eight links a note
+      reaches nearly everything within three hops, so the middle tiers are always
+      where the crowd is. The ladder had to be a function of the crowd.
+
+      ## What it does instead
+
+      Each ring is pushed out until its circumference can hold its own
+      population, and never closer than MIN_GAP to the ring inside it. So a tier
+      with six notes sits just outside its parent, and a tier with two hundred
+      gets the radius two hundred notes need — the shells stay meaningful and
+      stop being a promise the geometry cannot keep.
+    */
+    const ARC_PER_NODE = 118;
+    const MIN_RING_GAP = 190;
+    const tierCounts: number[] = [];
+    for (const t of tier.values()) tierCounts[t] = (tierCounts[t] ?? 0) + 1;
+    const ringRadius: number[] = [];
+    for (let t = 0; t < Math.max(tierCounts.length, 13); t += 1) {
+      const count = tierCounts[t] ?? 0;
+      const needed = (count * ARC_PER_NODE) / (2 * Math.PI);
+      const floor = t === 0 ? MIN_ORBIT * 0.7 : ringRadius[t - 1] + MIN_RING_GAP;
+      ringRadius[t] = Math.max(floor, needed);
+    }
+    /*
+      The repulsion cutoff has to reach across a ring, or nodes on opposite sides
+      of one never learn about each other and the ring cannot inflate. The old
+      constant was 620 — smaller than tier 3's radius, so the force meant to
+      spread the crowd was switched off exactly where the crowd was.
+    */
+    spreadRef.current = {
+      ringRadius,
+      cutoff: Math.max(620, (ringRadius[Math.min(2, ringRadius.length - 1)] ?? 620) * 1.6),
+    };
 
     const LABEL_BUDGET = 24;
     const labelled = new Set(
@@ -1363,7 +1428,16 @@ export default function MissionMap() {
         Uncapped when the graph is small, because there the sum is free and the
         long-range term does help a dozen nodes spread evenly.
       */
-      const CUTOFF2 = bodies.length > 40 ? 620 * 620 : Infinity;
+      /*
+        Sized to the layout rather than fixed at 620.
+
+        620 was smaller than the radius of the tier holding the most nodes, so
+        two notes on opposite sides of that ring contributed nothing to each
+        other and the ring had no way to inflate. The cutoff now reaches across
+        the crowded rings — see the note where spreadRef is filled in.
+      */
+      const cutoff = spreadRef.current.cutoff;
+      const CUTOFF2 = bodies.length > 40 ? cutoff * cutoff : Infinity;
 
       /*
         Cool by about half a percent a frame, so a graph is most of the way
@@ -1510,7 +1584,8 @@ export default function MissionMap() {
             cloud into rings. Gentle, so the ordinary repulsion still decides
             where a node sits along its ring; this only decides which ring.
           */
-          const ring = MIN_ORBIT * 0.7 + a.tier * 190;
+          const rings = spreadRef.current.ringRadius;
+          const ring = rings[Math.min(a.tier, rings.length - 1)] ?? MIN_ORBIT * 0.7 + a.tier * 190;
           /*
             In solid mode a tier is a SPHERICAL SHELL, not a flat ring.
 
@@ -1526,7 +1601,16 @@ export default function MissionMap() {
             depth.
           */
           const radius = solid ? Math.hypot(a.x, a.y, a.z) || 1 : fromCore;
-          const pull = (radius - ring) * 0.012;
+          /*
+            Cooled with everything else — see the note on the spring constant.
+
+            Annealing scaled the repulsion and nothing else, so as the graph
+            cooled the only outward force fell to 6% while this one stayed at
+            full strength. Two renders ten seconds apart showed the result
+            exactly: a graph that fills the frame at 1s and has collapsed into a
+            lopsided clump by 10s.
+          */
+          const pull = (radius - ring) * 0.012 * hot;
           a.vx -= (a.x / radius) * pull;
           a.vy -= (a.y / radius) * pull;
           if (solid) a.vz -= (a.z / radius) * pull;
@@ -1545,7 +1629,27 @@ export default function MissionMap() {
         const dy = to.y - from.y;
         const d = Math.hypot(dx, dy) || 1;
         const rest = 210;
-        const k = (d - rest) * 0.0042;
+        /*
+          Cooled by the same heat as the repulsion, and this is the fix for the
+          vault collapsing as it settled.
+
+          The comment above the repulsion says "the thing pushing the graph
+          outward is also the thing that stops" — true, and it was the ONLY
+          thing that stopped. Springs and the radial ring pull were never
+          scaled, so annealing did not slow the system down, it changed the
+          balance of forces: outward decayed to 6% while inward stayed at 100%,
+          and the equilibrium the layout was converging to moved inward the
+          whole time it was converging.
+
+          Cooling every shaping force together makes heat mean what it should —
+          how FAST the graph is still rearranging — instead of which forces are
+          allowed to win. The settled shape is now the same shape you see it
+          heading towards, rather than a collapsed version of it.
+
+          Found by rendering the same page at 1s and at 10s. One render at one
+          arbitrary moment showed a graph that looked fine.
+        */
+        const k = (d - rest) * 0.0042 * hot;
         const fx = (dx / d) * k;
         const fy = (dy / d) * k;
         if (pointer.current.dragging !== from.id) {
@@ -2047,7 +2151,52 @@ export default function MissionMap() {
           strand(far, base, (0.16 + lift * 0.42) * 0.35, 0.7 + lift * 0.6);
           strand(nearEdges, base, (0.16 + lift * 0.42) * 1.25, 1.2 + lift * 1.2);
         } else {
-          strand(eds, base, 0.16 + lift * 0.42, 1 + lift * 1.2);
+          /*
+            Split by LENGTH, for the same reason solid mode splits by depth.
+
+            Once the rings were sized to their populations the layout stopped
+            clumping — and the edges became the thing you were actually looking
+            at. 1,660 chords drawn at one alpha across a wide disc is a mesh:
+            every long link crosses the middle, they all pile up there, and the
+            local structure that makes a vault readable is buried under them.
+
+            A short strand is real adjacency — two notes that belong together
+            and were placed together. A long one is a link between distant
+            parts of the graph: true, worth being able to see, and not worth
+            the same ink as everything else, because there are hundreds of them
+            and they all overlap in the centre.
+
+            Costs one extra stroke call, exactly like the depth split, so the
+            batching that stops 1,653 individual strokes from crashing the tab
+            is untouched.
+
+            Measured in WORLD units, not screen ones, and against the graph's
+            own outermost ring. Whether a link reaches across the vault is a
+            fact about the vault; using `sx`/`sy` would have made it a fact
+            about the current zoom, so the same edge would change group as you
+            scrolled and the picture would shimmer while you looked at it.
+          */
+          const reach = spreadRef.current.ringRadius;
+          const outer = reach[reach.length - 1] || 1;
+          const longAt = outer * 0.42;
+          const shortEdges: Edge[] = [];
+          const longEdges: Edge[] = [];
+          for (const e of eds) {
+            const a = byId.get(e.from);
+            const b = byId.get(e.to);
+            if (!a || !b) continue;
+            (Math.hypot(b.x - a.x, b.y - a.y) > longAt ? longEdges : shortEdges).push(e);
+          }
+          /*
+            Long edges fade; short ones are left exactly as they were.
+
+            The first attempt lifted the short group to 1.15x on the theory that
+            local structure deserved more ink. Rendered, it was worse: short
+            edges are precisely what fills the crowded middle, so brightening
+            them thickened the mat this split exists to thin. Only subtract.
+          */
+          strand(longEdges, base, (0.16 + lift * 0.42) * 0.3, 0.8 + lift * 0.9);
+          strand(shortEdges, base, 0.16 + lift * 0.42, 1 + lift * 1.2);
         }
       } else {
         /*
