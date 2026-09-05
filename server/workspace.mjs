@@ -495,6 +495,151 @@ async function runCheckTool({ name }, ctx) {
 
 // --- declarations -----------------------------------------------------------
 
+/*
+  Arbitrary commands, asked for by name on 2026-09-05.
+
+  ## What this changes, said plainly
+
+  Until now this file's fourth rule was "commands are named, never a shell":
+  `run_check` picked WHICH check ran and never what. That rule is now gone for
+  AI Router, and it should be recorded honestly rather than softened. A hosted
+  third-party model can execute commands as the owner, on his machine, with no
+  sandbox and no isolation — `threat-model.md` is explicit that the terminal has
+  neither, and this is the same execution surface.
+
+  ## Why it is nonetheless defensible
+
+  He already accepted this exact risk profile for Claude Code, which has had
+  full tool access since ADR 0012 under one arrangement: a broad pre-allow list
+  so ordinary work is quiet, anything outside it suspends the turn and asks on
+  his phone, and two things are denied outright and never become questions.
+  What was NOT defensible was granting the same power on a weaker arrangement.
+
+  So this is the same bargain, and the differences run in the safer direction:
+
+  - **Every command asks.** There is no pre-allow list here. `run_check` still
+    covers the quiet path — typecheck, build, syntax, git status/diff/log — so
+    the routine work that made a pre-allow list necessary for Claude does not
+    come through this tool at all.
+  - **The two standing denials hold**, and are refused BEFORE the card is
+    raised, so a mis-tap cannot wave one through. Publishing is public and
+    permanent; deleting is unrecoverable and this project has no undo.
+  - **It runs in the job's worktree**, so its blast radius is the checkout that
+    is already invisible to the running server until someone lands it.
+  - **argv only, `shell: false`** — the same choice ADR 0011 made for the
+    terminal. A pipeline is available by asking for `bash -c "…"` explicitly,
+    which keeps the audit line honest about the fact that a shell was wanted.
+
+  The residual risk that does NOT go away: the model deciding what to run is
+  hosted by a company ADR 0016 records as having no named legal entity and no
+  SLA, and "no prompt logging" as policy rather than structure. Claude Code's
+  turns go to Anthropic under a subscription. That is a real difference and the
+  permission card is the only thing standing in it.
+
+  `OPERATOR_WORKER_SHELL=0` revokes this without a deploy.
+*/
+const SHELL_ENABLED = (process.env.OPERATOR_WORKER_SHELL ?? "1") !== "0";
+
+/*
+  Refused outright, never asked. Mirrors `disallowedTools` in jobs.mjs — the
+  same two, for the same reasons, so a worker cannot reach by one route what it
+  is denied by another.
+
+  Deliberately matched on the ARGV, not on a rendered string: `git push` and
+  `git  push` and `git -C x push` are one intent, and a substring test on a
+  joined command is the kind of check that looks strict and is not.
+*/
+function forbiddenCommand(argv) {
+  const [exe, ...rest] = argv.map((a) => String(a));
+  const base = exe.toLowerCase().replace(/\.(exe|cmd|bat)$/, "").split(/[\\/]/).pop();
+
+  if (base === "git" && rest.some((a) => a.toLowerCase() === "push")) {
+    return "publishing is public and permanent, so `git push` is denied outright and never becomes a question. Write the command out for him to run himself.";
+  }
+  if (base === "rm" || base === "rmdir" || base === "del" || base === "erase") {
+    return "deleting is unrecoverable and this project has no undo (OPS-020), so file deletion is denied outright. Ask him, or archive instead.";
+  }
+  /*
+    A shell invocation is allowed — it is the documented way to get a pipe —
+    but the denials have to survive it, or `bash -c "git push"` is a hole wide
+    enough to drive the whole profile through.
+  */
+  if (["bash", "sh", "cmd", "powershell", "pwsh", "zsh"].includes(base)) {
+    const script = rest.join(" ").toLowerCase();
+    if (/\bgit\s+(-\S+\s+\S+\s+)*push\b/.test(script)) {
+      return "that shell line contains `git push`, which is denied outright — the denial applies through a shell too.";
+    }
+    /*
+      Token-boundary, not separator-prefixed.
+
+      The first version required `;`, `&` or `|` before the verb and so missed
+      the most obvious line of all — `bash -c "rm -rf /"` — because there `rm`
+      is preceded by `-c `. Caught by the test table below the module rather
+      than in production, which is the whole reason that table exists.
+
+      Deliberately broad: `echo rm x` is refused too. A false refusal costs one
+      sentence of explanation; a false permit is unrecoverable.
+    */
+    if (/(?:^|[\s;&|(])(rm|rmdir|del|erase|unlink)(?=\s|$)/.test(script) || /remove-item/.test(script)) {
+      return "that shell line deletes files, which is denied outright — the denial applies through a shell too. If the verb is only quoted or echoed, run it a different way; this check is deliberately blunt because a false permit here is unrecoverable.";
+    }
+  }
+  return null;
+}
+
+async function runCommandTool({ command, args, timeoutMs }, ctx) {
+  if (!SHELL_ENABLED) {
+    throw new WorkspaceError("running commands is switched off (OPERATOR_WORKER_SHELL=0). run_check still works for the named checks.");
+  }
+  const exe = String(command ?? "").trim();
+  if (!exe) throw new WorkspaceError("command is required");
+  const argv = Array.isArray(args) ? args.map((a) => String(a)) : [];
+
+  const refusal = forbiddenCommand([exe, ...argv]);
+  // Before the card, deliberately: a denial that renders as a question is a
+  // denial one mis-tap wide.
+  if (refusal) throw new WorkspaceError(refusal);
+
+  const rendered = [exe, ...argv].join(" ");
+  await permit(ctx, "run_command", rendered);
+
+  // The audit line is the point of ADR 0011 and it is written whether or not
+  // the command succeeds.
+  console.log(`[operator] worker command in ${ctx.cwd}: ${rendered.slice(0, 300)}`);
+
+  const timeout = Math.min(600_000, Math.max(1_000, Number(timeoutMs) || 120_000));
+  try {
+    const { stdout, stderr } = await run(exe, argv, {
+      cwd: ctx.cwd,
+      timeout,
+      maxBuffer: 8 << 20,
+      // argv only. See the note above on why a pipeline goes through `bash -c`.
+      shell: false,
+      signal: ctx.signal,
+    });
+    return {
+      command: rendered,
+      ok: true,
+      stdout: String(stdout).slice(0, 20_000),
+      stderr: String(stderr).slice(0, 4_000),
+    };
+  } catch (err) {
+    /*
+      A non-zero exit is a RESULT, not a tool failure — a failing build is
+      exactly what the worker asked to find out. Throwing here would make the
+      model retry the command instead of reading the error.
+    */
+    return {
+      command: rendered,
+      ok: false,
+      exitCode: err?.code ?? null,
+      killed: Boolean(err?.killed),
+      stdout: String(err?.stdout ?? "").slice(0, 20_000),
+      stderr: String(err?.stderr ?? err?.message ?? "").slice(0, 8_000),
+    };
+  }
+}
+
 const HANDLERS = {
   read_file: readFileTool,
   list_files: listFilesTool,
@@ -502,6 +647,7 @@ const HANDLERS = {
   write_file: writeFileTool,
   edit_file: editFileTool,
   run_check: runCheckTool,
+  run_command: runCommandTool,
 };
 
 /**
@@ -599,7 +745,7 @@ export const TOOLS = [
     function: {
       name: "run_check",
       description:
-        "Run one named check. VERIFY YOUR OWN WORK before saying it is done: 'typecheck' and 'build' are the project's gates, and 'syntax' is the one they do not cover because neither reads a .mjs file. Also: git_status, git_diff, git_log. You cannot run arbitrary commands.",
+        "Run one named check. VERIFY YOUR OWN WORK before saying it is done: 'typecheck' and 'build' are the project's gates, and 'syntax' is the one they do not cover because neither reads a .mjs file. Also: git_status, git_diff, git_log. These are free and never interrupt him — PREFER THEM over run_command, which asks him every time.",
       parameters: {
         type: "object",
         properties: {
@@ -609,6 +755,33 @@ export const TOOLS = [
           },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_command",
+      description:
+        "Run a command in the job's worktree. HE IS ASKED EVERY TIME and the turn waits for the tap, so use run_check for typecheck/build/syntax/git status/diff/log — those are free and silent. Reach for this for the things nothing else covers: committing by name, npm scripts, node one-liners, `node scripts/operator-action.mjs ...`. argv only, no shell: pass the executable in `command` and every argument separately in `args`. For a pipeline or a redirect, ask for it explicitly — command 'bash' with args ['-c', 'a | b']. TWO THINGS ARE REFUSED OUTRIGHT and never reach him, through a shell or otherwise: `git push` (publishing is permanent — write the command out for him instead) and deleting files (there is no undo here). A non-zero exit comes back as a result with stdout and stderr, not an error — read it rather than retrying.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "The executable, e.g. 'git', 'node', 'npm', 'bash'. Not a command line.",
+          },
+          args: {
+            type: "array",
+            items: { type: "string" },
+            description: "Arguments, one per element. e.g. ['commit', '-m', 'fix: the thing']",
+          },
+          timeoutMs: {
+            type: "number",
+            description: "1000-600000, default 120000. A build needs more than the default.",
+          },
+        },
+        required: ["command"],
       },
     },
   },

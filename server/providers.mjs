@@ -142,6 +142,20 @@ const AIROUTER = {
     tools: "capability-actions",
     files: true,
     /*
+      Arbitrary commands, from 2026-09-05, asked for by name.
+
+      `tools` deliberately still reads "capability-actions" — that exact value
+      is the no-escalation guard and is not this flag's to change. Shell is
+      declared beside it the way `files` was, so the Dev page can describe the
+      worker honestly without the guard losing its meaning.
+
+      Every command asks him; there is no pre-allow list on this path, and
+      `git push` and deleting files are refused before the card is raised. See
+      the long note above `runCommandTool` in workspace.mjs for the argument.
+      `OPERATOR_WORKER_SHELL=0` revokes it.
+    */
+    shell: "asks-every-time",
+    /*
       Attachments are local PATHS handed to a worker (server/uploads.mjs), which
       was meaningless to a worker that could not read a disk. It can now: since
       2026-09-04 `data/job-resources/` is carved out of workspace.mjs's `data/`
