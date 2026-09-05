@@ -157,3 +157,66 @@ export async function logToShell(text: string): Promise<void> {
     /* Logging must never be the thing that breaks. */
   }
 }
+
+/**
+ * Make external links work in the shell.
+ *
+ * ## The bug this fixes
+ *
+ * The Dev page links out to GitHub with ordinary `target="_blank"` anchors — the
+ * Repository button, a branch's commits, a file blob. In a browser they open a
+ * tab. In the Tauri window they do **nothing whatsoever**: there is no tab to
+ * open, and the webview does not hand an external URL to the OS on its own. The
+ * buttons simply did not respond, while the same page worked at :8443 — which
+ * reads exactly like a permissions problem and is not one. Custom commands are
+ * not gated by `capabilities/default.json`, which is why the rest of this file
+ * has worked all along.
+ *
+ * ## Why one document listener rather than fixing each link
+ *
+ * There are anchors on the Dev page, in the Updates changelog and in rendered
+ * markdown, and markdown links are generated at runtime — so there is no set of
+ * components to go and fix. One capturing listener covers every anchor that
+ * exists now and every one added later, including ones inside content nobody
+ * wrote by hand.
+ *
+ * A no-op in a browser, like everything else here — so the web app keeps its
+ * ordinary behaviour and nothing is intercepted for the phone.
+ *
+ * @returns a function that stops intercepting.
+ */
+export function interceptExternalLinks(): () => void {
+  if (!isDesktop() || typeof document === "undefined") return () => {};
+
+  const onClick = (event: MouseEvent) => {
+    // Let a modified click do whatever the platform would do, and ignore
+    // anything that another handler has already dealt with.
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+
+    // `anchor.href` is resolved against the page, so a relative in-app link
+    // reads as the app's own origin and is left alone for React Router.
+    const href = anchor.href;
+    if (!/^https?:/i.test(href)) return;
+    if (href.startsWith(window.location.origin)) return;
+
+    event.preventDefault();
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("open_external", { url: href });
+      } catch (err) {
+        // Said out loud rather than swallowed: a link that silently does
+        // nothing is the exact failure this function exists to end, and a
+        // silent catch here would recreate it one layer down.
+        void logToShell(`open_external failed for ${href}: ${String(err)}`);
+      }
+    })();
+  };
+
+  document.addEventListener("click", onClick, true);
+  return () => document.removeEventListener("click", onClick, true);
+}

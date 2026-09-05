@@ -251,6 +251,73 @@ fn set_mic_state(
  * own refinement: clapping while already looking at it should do nothing, and a
  * window that raises itself when it is already in front is just a flicker.
  */
+/// Open a link in the real browser.
+///
+/// ## Why this exists
+///
+/// The Dev page links out to GitHub — the Repository button, a branch's commits,
+/// a file blob — with plain `target="_blank"` anchors. In a browser those work.
+/// In this window they do **nothing at all**: there is no tab to open, and Tauri
+/// does not hand an external URL to the OS unless something asks it to. So the
+/// buttons looked broken while the same page worked fine at :8443, which is a
+/// convincing impression of a permissions bug and is not one — custom commands
+/// like this are not gated by `capabilities/default.json`, which is why the four
+/// beside it have worked the whole time.
+///
+/// ## Why a command and not tauri-plugin-opener
+///
+/// The plugin is the idiomatic v2 answer and it is a new Rust dependency plus a
+/// capability entry, to do what nine lines do. ADR 0015 bounded this shell to
+/// "only what the browser refused"; keeping it dependency-free keeps that
+/// promise cheaply.
+///
+/// ## Two walls, and the second one is the one that matters
+///
+/// **http and https only.** This hands a string to the operating system's URL
+/// handler, and the interesting schemes are exactly the ones that are not web
+/// pages. The page calling this is Operator's own, but it builds these URLs from
+/// repository metadata and the store, so the string is not automatically
+/// trustworthy.
+///
+/// **Not through `cmd`.** The obvious spelling is `cmd /C start "" <url>`,
+/// because `start` is a cmd builtin — and it is a command injection. `cmd`
+/// re-parses its arguments and treats `&` as a command separator, so a perfectly
+/// ordinary query string (`?a=1&b=2`) becomes two commands, and a hostile one
+/// becomes whatever it likes. Rust's argument escaping does not save you here:
+/// it escapes for the CreateProcess convention, and `cmd` then parses the result
+/// again by its own rules.
+///
+/// `explorer.exe` takes the URL as a single argument and hands it to the default
+/// handler with no shell in between, so there is nothing to re-parse. The
+/// character allowlist below is defence in depth rather than the load-bearing
+/// part — a space or a quote in argv reaching a Windows handler is worth
+/// refusing regardless.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("refusing: only http and https URLs can be opened".into());
+    }
+    if url.len() > 2000 {
+        return Err("refusing: that URL is implausibly long".into());
+    }
+    // Printable ASCII minus space, quote and backslash. Every character a real
+    // GitHub link needs is in here; anything else is refused rather than guessed
+    // at, which is the right default for a string about to reach the OS.
+    if let Some(bad) = url.chars().find(|c| {
+        !c.is_ascii() || c.is_ascii_control() || *c == ' ' || *c == '"' || *c == '\'' || *c == '\\'
+    }) {
+        return Err(format!("refusing: the URL contains {bad:?}"));
+    }
+
+    std::process::Command::new("explorer.exe")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("could not open the browser: {e}"))?;
+    log(&format!("[operator] opened externally: {url}"));
+    Ok(())
+}
+
 #[tauri::command]
 fn summon_window(app: tauri::AppHandle) {
     summon(&app);
@@ -283,7 +350,13 @@ fn main() {
             detector: Mutex::new(None),
             dictation: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![set_mic_state, summon_window, exit_fullscreen, log_line])
+        .invoke_handler(tauri::generate_handler![
+            set_mic_state,
+            summon_window,
+            exit_fullscreen,
+            log_line,
+            open_external
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
 
