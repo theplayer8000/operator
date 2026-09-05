@@ -1,89 +1,76 @@
 # Current work
 
-**Four commits on main, NONE of them live. `server/` loads at boot.**
+**Restart done and verified.** All four worktree actions, `web_search`, `runway_*`
+and the new `git:unlanded` health check are live. That check already reads
+correctly: "Nothing committed is waiting to land. 2 file(s) uncommitted in agent
+— work in progress, not stranded."
 
-## Landed this session
+## Landed
 
-**`cc2dc76` — the worktree is a loop now, not a one-way valve.** Four actions
-plus the check that was missing:
+- `df5567e` AI Router `run_command` — every command asks, `git push` and delete
+  refused before the card, denials survive a shell. 12-case table.
+- `cd4fa2e` external links in the Tauri shell. Not a permissions problem;
+  `target="_blank"` is inert in a webview. `open_external` via `explorer.exe`,
+  deliberately not `cmd` (`cmd /C start "" <url>` is a command injection — `&`
+  separates commands). Shell rebuilt; both hotkeys register on start.
+- `5f53189` the vault graph. Two measured defects, below.
 
-- `worktree_status` — behind / **ahead** / dirty. `ahead` is the new one and it
-  is the whole point: every existing check asked "is the agent running old
-  code", none asked "did finished work ever land". That question cost a day.
-- `worktree_land` — fast-forward main to the worktree branch. Lands **only what
-  is already committed** and never stages anything. That constraint is the
-  feature: an auto-lander that staged everything would have shipped
-  `roblox-studio.mjs` half-finished next to an `actions.mjs` that imports it,
-  which is a server that does not boot, landed automatically.
-- `worktree_stash` — asked for as "clear dirty trees", built as **stash**.
-  `checkout -- .` + `clean -fd` is unrecoverable and this project has no undo.
-  Returns the ref and the pop command.
-- `main_rollback` — reset, not revert (revert moves forward and still needs
-  landing and restarting; the case this is for is a server that will not start).
-  Four guards: never rewrite anything on origin/main, backwards only, stash
-  first, and report the pre-reset SHA so the undo is undoable.
-- `health.mjs` `git:unlanded` — grades committed-but-unlanded loud, and
-  uncommitted-only quiet.
+## The graph, and how it was found
 
-**Rejected: gating the merge on an automated check.** `tsc` and `vite build`
-never open a `.mjs`, so for `server/` changes a green gate means almost nothing,
-and `semantic.mjs` is a 3B model whose guess must not render as a status. A gate
-the agent's own work can satisfy replaces a real review with one blind to the
-bug class it guards against.
+**Annealing changed the balance of forces, not the rate.** Heat scaled the
+repulsion and nothing else — springs and the radial pull were never multiplied
+by it — so as the graph cooled the only outward force fell to 6% while every
+inward force stayed at 100%. It was guaranteed to collapse.
 
-**`f08b6c5` — line endings.** `core.autocrlf=true` with no `.gitattributes` left
-the tree mixed: 7 of 44 `server/` files CRLF, and they were the five an agent
-edits most. An agent matches exact text, so a multi-line LF match cannot match a
-CRLF file — which is why a session gave up on a ONE-WORD change to
-`providers.mjs` on 2026-09-04 and left the flag contradicting its own comment.
-`* text=auto eol=lf`, 14 files converted, content verified identical.
+Invisible to one screenshot. Rendered at 1s it filled the frame; at 10s it had
+collapsed into a lopsided clump with a detached fragment, which is what he had
+been looking at. **His call, and it was the whole diagnosis: "ur viewing at
+certain moments not when it fully loads."** Sample the settle, not a frame.
 
-## Diagnosed, NOT fixed — needs his call
+**Rings could not hold their populations.** `MIN_ORBIT*0.7 + tier*190` ignored
+how many nodes land on each rung: 68 nodes on a ring with room for 19, 82 on one
+with room for 29. Now sized to population. The repulsion cutoff (620) was
+smaller than those rings' radii, so the spreading force was off exactly where
+the crowd was.
 
-**Arm-on-restart cannot survive a full restart, structurally.** The intent rides
-exit code 76 to `supervise.mjs`, which sets `OPERATOR_TERMINAL=1` for one launch.
-But `operator_restart` exits **0** on purpose, so the supervisor exits too and
-Task Scheduler starts a fresh one with no memory of the request. So arming works
-on the Dev page restart and is **silently dropped** by the full restart — which
-is the one he actually uses.
+Still wrong: the settled graph is off-centre and keeps a detached fragment.
 
-Two ways out, and the second is a boundary decision:
-1. `operator_restart` takes `arm` and reports it **refused**, the way the shallow
-   path already does when unsupervised. Honest, no new mechanism.
-2. Actually carry it — which needs the marker in the registry, i.e. the server
-   writing an `OPERATOR_*` variable. That is the self-granting escalation the
-   env-only rule exists to prevent, even though the caller already passed
-   `deviceMayManage`.
+## Renderer reliability — UNSOLVED, and one theory is dead
 
-Recommend (1). Not built either way.
+`scripts/render.mjs` against the live map either finishes in 7-10s or **hangs
+until the timeout and writes nothing**. Not slowness: raising the timeout from
+20s to 90s changed nothing. Baseline measured 5 ok / 3 failed over 8 runs,
+across both flat and solid.
 
-## Health page triage
+**Theory tested and WRONG:** that the shared `--user-data-dir` was the lock, so
+back-to-back renders blocked on each other. Gave each render its own profile.
+Result: **1 ok / 5 failed** — materially worse. Reverted; `server/render.mjs` is
+back at HEAD, unchanged.
 
-Two of the five are not defects: **"server changed since this process started"**
-is just this session building, and **"agent worktree behind + dirty"** is the
-Roblox pair waiting to land. **"4 commits unpushed"** is his to run.
+Next theory, untested: the page polls `/api/state`, and Chromium's virtual-time
+budget waits on pending network fetches — so a poll in flight when the budget
+should expire stalls it indefinitely. That would explain the intermittency and
+the binary outcome. Would mean not relying on `--virtual-time-budget` for a page
+that polls.
 
-The two real ones:
+**This matters more than it looks.** Looking at the map is the whole reason the
+renderer is wanted, and a coin-flip renderer is worse than none — you cannot
+tell a failed render from a broken layout.
 
-- **Store growth.** 1133 KB, and `remoteStore` refetches ALL of `/api/state`
-  whenever `updatedAt` moves — so the whole 1.1 MB crosses the wire on every
-  write, on 4G. `knowledge.notes` is 741 KB of it. The fix is per-slice fetching
-  and it touches client and server, so it is a proposal rather than a tidy-up.
-- **"23 of 187 turns ended in an error" is misleading.** Most are his own
-  restarts: `stopAll` cancels the running turn and it is recorded as failed. The
-  metric alarms in the wrong direction. Worth separating cancelled-by-restart
-  from genuinely failed.
+**Runway cannot help here** and was considered: it GENERATES video from a
+prompt, it does not capture a page. Pointed at this it would invent a plausible
+graph animation rather than show what the code draws, which is the opposite of
+evidence.
 
-Also seen twice at 21:06–21:08: `memory_add` refusing a fact over 240 characters
-and asking for it to be split. Small, but it stopped a turn twice.
+## Open
 
-## Outstanding
-
-1. **Full restart** — nothing above is live.
-2. **Land or stash the Roblox pair.** `actions.mjs` + `roblox-studio.mjs` must go
-   together or the server will not boot. Studio is open, so the probe is ready.
-3. **Push — 4 commits, denied to the session:**
+1. Off-centre settle + detached fragment in the vault graph.
+2. Renderer reliability — the unlock for him doing UI work with his own agent.
+3. Roblox Studio pair still uncommitted in the worktree (`actions.mjs` +
+   `roblox-studio.mjs` must land together or the server will not boot). Studio
+   is open.
+4. Push — denied to this session:
    ```bash
    git -C D:\Projects\Operator push origin main
    ```
-4. Prove the uploads path — still never run.
+5. Asked for, not started: rework the Operator chat UI.
