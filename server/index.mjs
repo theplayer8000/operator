@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzip as gzipCb } from "node:zlib";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { listTree, readTextFile, repoMeta } from "./dev.mjs";
 import { checkServices } from "./homelab.mjs";
@@ -58,6 +59,7 @@ import {
   DATA_FILE,
   SCHEMA_VERSION,
   load,
+  readState,
   setState,
   mergeState,
   deleteState,
@@ -1123,6 +1125,53 @@ const server = createServer(async (req, res) => {
     if (pathname === "/api/state" && req.method === "GET") {
       const store = await load();
       return json(req, res, 200, store);
+    }
+
+    /*
+      What changed, without sending the data — the other half of a cheap poll.
+
+      `remoteStore` already polls `/api/health` for the store's `updatedAt`
+      rather than the store itself, which is the right shape. The problem is
+      what happens when the answer is yes: it refetches ALL of `/api/state`,
+      and the store is now 1.1 MB of which `knowledge.notes` is 741 KB. So
+      ticking one gym box on a phone pulls the entire vault down 4G, and the
+      Health page has been saying so.
+
+      This is a fingerprint per slice. The client compares it against what it
+      already holds and asks only for the slices that actually moved — which
+      for a gym tick is one small array instead of everything.
+
+      **Hashed on demand, not tracked on write.** The alternative is
+      bookkeeping in `store.mjs` on every mutation, which means touching the
+      race-safe read-modify-write path that every action goes through, to
+      optimise a read. Hashing 1.1 MB is a couple of milliseconds and this is
+      only asked for after `updatedAt` has already moved — so it costs nothing
+      on the polling path, and `store.mjs` is left exactly as it is.
+
+      MUST stay above the generic `/api/state/<key>` GET below, or "meta" is
+      read as the name of a slice.
+    */
+    if (pathname === "/api/state/meta" && req.method === "GET") {
+      const store = await load();
+      const state = store?.state ?? {};
+      const keys = {};
+      for (const [key, value] of Object.entries(state)) {
+        // Short on purpose: this is a change detector, not a checksum, and the
+        // whole map is sent on every poll that finds a change.
+        keys[key] = createHash("sha1").update(JSON.stringify(value ?? null)).digest("hex").slice(0, 12);
+      }
+      return json(req, res, 200, { updatedAt: store?.updatedAt ?? null, keys });
+    }
+
+    /*
+      One slice. The point of the fingerprints above — without this the client
+      knows what changed and still has to fetch everything to get it.
+    */
+    if (pathname.startsWith("/api/state/") && req.method === "GET") {
+      const key = decodeURIComponent(pathname.slice("/api/state/".length));
+      if (!key) return json(req, res, 400, { error: "missing key" });
+      const value = await readState(key);
+      return json(req, res, 200, { key, value: value ?? null });
     }
 
     // Bulk write — used once by the client to migrate existing localStorage

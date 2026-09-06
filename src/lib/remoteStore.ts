@@ -145,6 +145,31 @@ export function load(): Promise<void> {
       setStatus("online");
       await flushPending();
       touched.forEach(notify);
+
+      /*
+        Seed the fingerprints so the NEXT change can be incremental.
+
+        They cannot be computed here: matching the server's hash would need
+        `crypto.subtle`, and Operator is used over Tailscale at a bare IP where
+        browsers withhold it (see the secure-context note in CLAUDE.md). So the
+        server is asked — one small request, once per full load.
+
+        Cleared first, and left empty on failure. An empty map makes the next
+        refresh a full reload, which is exactly the behaviour this had before,
+        so an old server or a flaky moment costs correctness nothing.
+      */
+      fingerprints.clear();
+      try {
+        const res = await fetch(`${API}/meta`, { headers: { accept: "application/json" } });
+        if (res.ok) {
+          const meta = (await res.json()) as StateMeta;
+          if (meta?.keys) {
+            Object.entries(meta.keys).forEach(([k, v]) => fingerprints.set(k, v));
+          }
+        }
+      } catch {
+        /* Older server, or offline. Next refresh reloads in full. */
+      }
     } catch (err) {
       if (err instanceof ApiAuthError) {
         console.warn("[operator] storage server refused this device:", err.reason);
@@ -166,6 +191,108 @@ export function retry(): Promise<void> {
   return load();
 }
 
+/*
+  Fingerprints of what the server last told us, per slice.
+
+  Empty until the first successful meta fetch, and cleared by `load()` — a full
+  reload has no idea which slices it agreed with, so claiming a fingerprint
+  afterwards would let the next incremental sync skip a slice that had moved.
+*/
+const fingerprints = new Map<string, string>();
+
+type StateMeta = { updatedAt: string | null; keys: Record<string, string> };
+
+/**
+ * Fetch only the slices that actually changed.
+ *
+ * ## What this replaces
+ *
+ * The poll on `/api/health` is cheap and correct — it asks "did anything
+ * change" for a few dozen bytes. The refetch behind it was not: any change at
+ * all pulled the whole of `/api/state`, which is 1.1 MB and of which
+ * `knowledge.notes` alone is 741 KB. So ticking one gym box on a phone
+ * downloaded the entire vault over 4G, and the Health page had been reporting
+ * exactly this for days.
+ *
+ * ## Why it falls back rather than failing
+ *
+ * `/api/state/meta` and the per-key GET are new, and `server/` only loads at
+ * boot — so a browser running this build will be talking to a server that does
+ * not have them yet, until the next restart. Anything unexpected returns false
+ * and the caller does the full `load()` it always did. That is not defensive
+ * padding: it is what makes this change safe to ship without a restart, and it
+ * remains the honest behaviour afterwards for an offline or half-answered poll.
+ *
+ * @returns true when the cache is up to date, false to fall back.
+ */
+async function syncChangedSlices(): Promise<boolean> {
+  // Nothing to compare against — the first sync after a load has to be a load.
+  if (fingerprints.size === 0) return false;
+
+  let meta: StateMeta;
+  try {
+    const res = await fetch(`${API}/meta`, { headers: { accept: "application/json" } });
+    if (res.status === 401) throw await authErrorFrom(res);
+    if (!res.ok) return false;
+    meta = (await res.json()) as StateMeta;
+  } catch (err) {
+    if (err instanceof ApiAuthError) throw err;
+    return false;
+  }
+  if (!meta?.keys || typeof meta.keys !== "object") return false;
+
+  const changed = Object.keys(meta.keys).filter((k) => fingerprints.get(k) !== meta.keys[k]);
+  /*
+    Slices the server no longer has. Rare — `deleteState` is a Settings action —
+    but a key left in the cache after being cleared would read as live data, and
+    the whole point of this path is that the cache stays true.
+  */
+  const removed = [...fingerprints.keys()].filter((k) => !(k in meta.keys));
+
+  /*
+    Past a certain fraction, one request for everything beats many for most of
+    it. An import or a migration touches every slice, and this path would then
+    make twenty round trips to do worse than the thing it replaced.
+  */
+  if (changed.length > 6) return false;
+
+  const fetched: Array<[string, unknown]> = [];
+  for (const key of changed) {
+    try {
+      const res = await fetch(`${API}/${encodeURIComponent(key)}`, {
+        headers: { accept: "application/json" },
+      });
+      if (res.status === 401) throw await authErrorFrom(res);
+      if (!res.ok) return false;
+      const body = (await res.json()) as { value?: unknown };
+      fetched.push([key, body?.value ?? null]);
+    } catch (err) {
+      if (err instanceof ApiAuthError) throw err;
+      return false;
+    }
+  }
+
+  /*
+    Applied only once every fetch has succeeded. A partial application would
+    leave the cache holding some slices from after the change and some from
+    before, with fingerprints claiming all of it was current — which the next
+    sync would then believe.
+  */
+  for (const [key, value] of fetched) {
+    cache.set(key, value);
+    serverKeys.add(key);
+    fingerprints.set(key, meta.keys[key]);
+  }
+  for (const key of removed) {
+    cache.delete(key);
+    serverKeys.delete(key);
+    fingerprints.delete(key);
+  }
+  setStatus("online");
+  [...changed, ...removed].forEach(notify);
+  return true;
+}
+
 let refreshing: Promise<void> | null = null;
 
 /**
@@ -175,8 +302,26 @@ let refreshing: Promise<void> | null = null;
  */
 export function refresh(): Promise<void> {
   if (refreshing) return refreshing;
-  loadPromise = null;
-  refreshing = load().finally(() => {
+  /*
+    Try the incremental path first, and fall back to the full reload this always
+    did. `syncChangedSlices` returns false for anything it is not completely
+    sure about — a server without the new routes, a partial fetch, or too many
+    slices to be worth the round trips — so the fallback is the ordinary case
+    rather than the error case.
+  */
+  refreshing = (async () => {
+    try {
+      if (await syncChangedSlices()) return;
+    } catch (err) {
+      if (err instanceof ApiAuthError) {
+        console.warn("[operator] storage server refused this device:", err.reason);
+        setStatus("unauthorised");
+        return;
+      }
+    }
+    loadPromise = null;
+    await load();
+  })().finally(() => {
     refreshing = null;
   });
   return refreshing;
