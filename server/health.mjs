@@ -870,7 +870,7 @@ async function storeChecks() {
             "store:growth",
             "warn",
             "Store growth",
-            `${grown.toFixed(1)}x the oldest restore point across ${sizes.length} states (~${days}d). Largest single step +${kb(jump.bytes)} at ${jump.name}. remoteStore refetches all of /api/state whenever updatedAt moves, so the whole ${kb(info.size)} crosses the wire on every write.`,
+            `${grown.toFixed(1)}x the oldest restore point across ${sizes.length} states (~${days}d). Largest single step +${kb(jump.bytes)} at ${jump.name}. Since 2026-09-06 a write no longer costs the whole ${kb(info.size)}: the client compares per-slice fingerprints and fetches only what moved. Growth still matters for the load, the backup and the parse.`,
             { ratio: grown, jumpBytes: jump.bytes },
           )
         : check(
@@ -1249,13 +1249,23 @@ async function perfChecks() {
           "perf:turns",
           p95 > 120_000 ? "warn" : "ok",
           "Turn duration",
-          `p50 ${(p50 / 1000).toFixed(1)}s, p95 ${(p95 / 1000).toFixed(1)}s over the last ${durations.length} turns` +
-            (failed ? `. ${failed} genuinely failed` : ".") +
-            (cancelled ? `, ${cancelled} cancelled (a restart cancels every running turn — not a failure)` : "") +
-            (unclassified
-              ? `, ${unclassified} recorded before cancellations were told apart from failures, so those are unclassified`
-              : "") +
-            (failed || cancelled || unclassified ? "." : ""),
+          /*
+            Built as clauses and joined, not concatenated with conditional
+            punctuation. The first version produced "over the last 200 turns.,
+            26 recorded before..." the moment `failed` was zero and something
+            else was not — which is the shape of bug that makes a health page
+            look untrustworthy about the things it IS right about.
+          */
+          [
+            `p50 ${(p50 / 1000).toFixed(1)}s, p95 ${(p95 / 1000).toFixed(1)}s over the last ${durations.length} turns`,
+            failed ? `${failed} genuinely failed` : null,
+            cancelled ? `${cancelled} cancelled (a restart cancels every running turn — not a failure)` : null,
+            unclassified
+              ? `${unclassified} predate cancellations being told apart from failures, so they are unclassified`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(". ") + ".",
           { p50, p95, samples: durations.length, errors, failed, cancelled, unclassified, window: recent.length },
         ),
       );
