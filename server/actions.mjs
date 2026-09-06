@@ -53,6 +53,11 @@ import {
   configured as robloxConfigured,
 } from "./roblox.mjs";
 import {
+  call as studioCall,
+  StudioError,
+  configured as studioConfigured,
+} from "./roblox-studio.mjs";
+import {
   readHandoff,
   writeHandoff,
   foldHandoff,
@@ -2301,6 +2306,24 @@ const ACTIONS = {
         },
       }
     : {}),
+  ...(studioConfigured
+    ? {
+        roblox_studio: {
+          description:
+            "Drive Roblox Studio through the official Studio MCP server (studio-rust-mcp-server) — the layer that actually builds games: explore the data model, read/edit Luau scripts, run code in the open Studio session. One passthrough action to any tool the connected server exposes. Roblox Studio must be open on this machine with the MCP side connected, or calls fail. Start with tool \"tools_list\" to discover what the session offers (the toolset evolves; this action does not hardcode names). No secrets involved — the MCP server authenticates locally against Studio. Every code call mutates the real open place: that is the point, not a sandbox.",
+          params:
+            "tool (an MCP tool name from tools_list — e.g. a Luau runner like run_code; call \"tools_list\" first to see names and argument schemas), args? (JSON object of the tool's arguments), timeoutMs? (1000-300000, default 60000 — a long run_code can outlive the default)",
+          handler: async (params) => {
+            try {
+              return await studioCall(params);
+            } catch (err) {
+              if (err instanceof StudioError) throw new ActionError(err.message);
+              throw err;
+            }
+          },
+        },
+      }
+    : {}),
   operator_restart: {
     description:
       "Restart Operator COMPLETELY — stop it and have the launcher start it again, so it re-reads the environment. This is the one that makes a key set with secret_set take effect; the Dev page's Restart only reloads code. REQUIRES A CONFIRMATION PHRASE in `confirm` — ask him for it and pass exactly what he says; do not guess it and do not retry with variations. Running turns are cancelled and saved first. Event logs do not survive it, job tabs do. Takes about half a minute; the reply comes back before it happens.",
@@ -2847,6 +2870,10 @@ const SILENT_ACTIONS = new Set([
   // reading a balance is not a change, and a probe session would otherwise
   // buzz the phone at every endpoint it tries.
   "roblox_cloud",
+  // Studio MCP calls are the same class of thing — a session tool that a
+  // build turn calls many times; notifying on each would buzz the phone for
+  // every script write. Job summaries cover what actually moved.
+  "roblox_studio",
   "handoff_read",
   "handoff_list",
 ]);
