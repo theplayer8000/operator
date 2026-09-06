@@ -66,6 +66,13 @@ const STATUS_COLOR: Record<MissionStatus, [number, number, number]> = {
 const CORE_R = 62;
 /** Missions settle outside this, so nothing parks on top of the core. */
 const MIN_ORBIT = 235;
+/*
+  One array, forever, for "this graph draws no jobs".
+
+  A fresh `[]` would be a new identity on every render and would defeat the
+  whole point of `jobsForGraph` — the memo would rebuild anyway.
+*/
+const NO_JOBS: JobSummary[] = [];
 
 /**
  * How much the layout OPENS UP as you zoom in, over and above the plain
@@ -788,6 +795,29 @@ export default function MissionMap() {
     ids, which is why one renderer serves both: a mission's `dependsOn` and a
     note's `links` are the same structure with different names.
   */
+  /*
+    Jobs matter to the AGENTS graph and to nothing else — so only that graph
+    should rebuild when they move.
+
+    They were a dependency of the node list in every mode. The poll below
+    replaces `jobs` whenever the drawn shape differs, and `turns` is part of
+    that shape — so while a turn was running, the count ticked every three
+    seconds, the node list recomputed, and the layout effect rebuilt the whole
+    graph: breadth-first tiers over 220 vault notes, ring radii, every body
+    re-created, and `hasFitted` reset so the camera re-framed itself. In the
+    vault and missions views, where no job is drawn at all.
+
+    That is why Operator felt worst exactly when it was busiest, and why it
+    showed up as four separate complaints — a map that looked like it was doing
+    nothing, a chat arriving in lumps, and taps going sluggish are all one main
+    thread rebuilding a graph it did not need to rebuild.
+
+    A stable empty array rather than a conditional inside the memo: the
+    dependency has to change identity only when it genuinely matters, and
+    `NO_JOBS` keeps that true across every render of the other two modes.
+  */
+  const jobsForGraph = source === "agents" ? jobs : NO_JOBS;
+
   const nodes = useMemo(() => {
     if (source === "agents") {
       /*
@@ -804,7 +834,7 @@ export default function MissionMap() {
         with no jobs simply draws no node, which is the honest picture anyway.
       */
       const workers = new Map<string, { id: string; label: string; count: number }>();
-      const jobNodes = jobs.map((j) => {
+      const jobNodes = jobsForGraph.map((j) => {
         const provider = j.provider || "unknown";
         const wid = `worker:${provider}`;
         const w = workers.get(wid) || { id: wid, label: provider, count: 0 };
@@ -899,7 +929,7 @@ export default function MissionMap() {
       worker: null,
       tier: undefined as number | undefined,
     }));
-  }, [source, active, vault.active, jobs]);
+  }, [source, active, vault.active, jobsForGraph]);
 
   const edges = useMemo<Edge[]>(() => {
     const ids = new Set(nodes.map((n) => n.id));
