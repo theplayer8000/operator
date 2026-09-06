@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useEvents } from "@/hooks/useEvents";
 import MonthGrid from "@/components/events/MonthGrid";
 import DayPanel from "@/components/events/DayPanel";
 import { EVENT_KIND_META } from "@/components/events/eventMeta";
-import { relativeDay } from "@/lib/time";
+import { fromDateKey, relativeDay, toDateKey } from "@/lib/time";
 
 export default function Events() {
   const {
@@ -62,6 +62,22 @@ export default function Events() {
   }, [mobilePanelOpen]);
 
   const inYear = upcoming.filter((e) => e.date.startsWith(String(year)));
+
+  /**
+   * The next seven calendar days as date keys, for the This-week agenda.
+   * Built from todayKey rather than from `upcoming` so the window is a fixed
+   * seven days no matter what the recurrence expansion does at the edges.
+   */
+  const weekKeys = useMemo(() => {
+    const start = fromDateKey(todayKey) ?? new Date();
+    const keys: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + i);
+      keys.push(toDateKey(day));
+    }
+    return keys;
+  }, [todayKey]);
 
   /**
    * Months already gone are hidden by default. Twelve grids is a lot to scroll
@@ -203,6 +219,66 @@ export default function Events() {
               />
             </div>
           )}
+
+          {/* This week — the at-a-glance agenda. The month grids answer "when
+              is it", this answers "what is coming up" without a tap: seven
+              days grouped by day, each row opening that day's panel. */}
+          <div className="card-base p-4 sm:p-5 animate-fade-up">
+            <h2 className="font-display text-sm font-medium text-ink-300 mb-3">This week</h2>
+            {weekKeys.map((key) => {
+              const date = fromDateKey(key);
+              const dayName = date
+                ? date.toLocaleDateString("en-GB", { weekday: "short" })
+                : key;
+              const isToday = key === todayKey;
+              const dayEvents = byDay.get(key) ?? [];
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setYear(Number(key.slice(0, 4)));
+                    openDay(key);
+                  }}
+                  className="w-full flex items-start gap-2 min-h-[44px] py-2 px-2 -mx-2 rounded-badge hover:bg-base-700/60 text-left transition-colors"
+                >
+                  <span
+                    className={`w-16 shrink-0 pt-0.5 font-mono text-[11px] leading-tight ${
+                      isToday ? "text-xp" : "text-ink-700"
+                    }`}
+                  >
+                    {dayName}
+                    <span className={`block ${isToday ? "text-xp" : "text-ink-700"}`}>
+                      {relativeDay(key)}
+                    </span>
+                  </span>
+                  <span className="flex-1 min-w-0 space-y-1">
+                    {dayEvents.length === 0 ? (
+                      <span className="block text-xs text-ink-700/70 py-0.5">Nothing</span>
+                    ) : (
+                      dayEvents.map((event) => (
+                        <span key={event.id} className="flex items-center gap-2 min-w-0">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              EVENT_KIND_META[event.kind].dot
+                            }`}
+                            aria-hidden
+                          />
+                          <span className="text-sm text-ink-300 truncate flex-1">
+                            {event.title}
+                          </span>
+                          {event.time && (
+                            <span className="text-[11px] font-mono text-ink-700 shrink-0">
+                              {event.time}
+                            </span>
+                          )}
+                        </span>
+                      ))
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
           <div className="card-base p-4 sm:p-5 animate-fade-up">
             <h2 className="font-display text-sm font-medium text-ink-300 mb-3">Next up</h2>

@@ -65,6 +65,7 @@ import {
   deleteState,
 } from "./store.mjs";
 import { runAction, listActions, ActionError } from "./actions.mjs";
+import { startReminders } from "./reminders.mjs";
 import { listLogs, tailLog } from "./logs.mjs";
 /*
   Web Push replaced ntfy on 2026-09-01. `notify.mjs` keeps the same interface,
@@ -1421,6 +1422,10 @@ server.listen(PORT, HOST, () => {
     () => void scheduledBackup("scheduled"),
     BACKUP_EVERY_MS
   );
+  // The presence layer's first slice: timed calendar events become phone
+  // pushes. Read-only + notify-only, no jobs, no models — see reminders.mjs.
+  startReminders();
+
   // Don't hold the event loop open on shutdown.
   timer.unref();
   console.log(

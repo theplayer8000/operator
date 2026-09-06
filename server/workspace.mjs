@@ -62,6 +62,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve, relative, isAbsolute, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveExecutable } from "./terminal.mjs";
 
 const run = promisify(execFile);
 
@@ -149,7 +150,7 @@ const DENIED = [
   { test: (rel) => /(^|[\\/])\.env(\.|$)/i.test(rel), why: "environment files hold API keys" },
   { test: (rel) => rel === ".git" || rel.startsWith(`.git${sep}`), why: "the git object store is every version of every file, including ones deleted deliberately" },
   { test: (rel) => rel === ".claude" || rel.startsWith(`.claude${sep}`), why: "these are permission rules — a worker that can edit them can widen its own reach" },
-  { test: (rel) => rel.startsWith(`node_modules${sep}`) || rel === "node_modules", why: "dependencies — read the source, not the package" },
+  { test: (rel) => (rel === "node_modules" || rel.startsWith(`node_modules${sep}`)) && rel.split(sep).length > 2, why: "dependencies — the package NAMES are fine to list (npm is how you look inside a dependency); reading their contents is not the job" },
   { test: (rel) => rel === "dist" || rel.startsWith(`dist${sep}`), why: "build output; read src/ instead" },
   { test: (rel) => rel.startsWith(join("src-tauri", "target")), why: "Rust build output" },
   { test: (rel) => /\.log$/i.test(rel), why: "logs carry command audit lines and can be enormous" },
@@ -609,7 +610,22 @@ async function runCommandTool({ command, args, timeoutMs }, ctx) {
 
   const timeout = Math.min(600_000, Math.max(1_000, Number(timeoutMs) || 120_000));
   try {
-    const { stdout, stderr } = await run(exe, argv, {
+    // Windows ships npm/npx/gh as .cmd shims, and execFile with shell:false
+    // cannot spawn a .cmd, so a worker running `npm install` used to come back
+    // ENOENT while the human terminal (which resolves the same name through
+    // `where`) worked. Pre-resolve extensionless names through the terminal's
+    // resolver; real exes (git.exe, node.exe) are unaffected, only the shims
+    // get rerouted to the interpreter + script they point at.
+    let runExe = exe;
+    let prefixArgs = [];
+    if (process.platform === "win32" && !/\.[A-Za-z0-9]{1,8}$/.test(exe)) {
+      const resolved = await resolveExecutable(exe);
+      if (resolved?.exe) {
+        runExe = resolved.exe;
+        prefixArgs = resolved.prefixArgs ?? [];
+      }
+    }
+    const { stdout, stderr } = await run(runExe, [...prefixArgs, ...argv], {
       cwd: ctx.cwd,
       timeout,
       maxBuffer: 8 << 20,
