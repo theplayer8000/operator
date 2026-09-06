@@ -1801,6 +1801,17 @@ async function runViaSdk(job, prompt) {
     durationMs: Date.now() - startedMs,
     turns: 1,
     error: Boolean(result.error),
+    /*
+      `job.status` is already correct here and was being thrown away.
+
+      `stopAll` sets the status to "cancelled" BEFORE halting the worker,
+      precisely so the turn can tell a cancellation from a failure as it
+      unwinds — the comment above it says so. Everything downstream then
+      collapsed both into `error: true`, so the Health page read the owner's own
+      restarts as failed turns: "26 of 200 ended in an error" on 2026-09-06,
+      most of them his.
+    */
+    outcome: job.status === "cancelled" ? "cancelled" : result.error ? "failed" : "complete",
   });
 
   const cost = typeof record.usd === "number" ? record.usd : 0;
@@ -2439,6 +2450,8 @@ function ingest(job, line) {
         durationMs: typeof msg.duration_api_ms === "number" ? msg.duration_api_ms : null,
         turns: typeof msg.num_turns === "number" ? msg.num_turns : 1,
         error: Boolean(msg.is_error),
+        // Same as the SDK path above — a cancelled job is not a failed turn.
+        outcome: job.status === "cancelled" ? "cancelled" : msg.is_error ? "failed" : "complete",
       });
       const cost = typeof record.usd === "number" ? record.usd : 0;
       if (cost > 0) job.costUsd += cost;

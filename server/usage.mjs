@@ -418,6 +418,23 @@ export function normaliseRecord({
   durationMs = null,
   turns = null,
   error = false,
+  /*
+    WHY the turn ended, not just whether it went wrong.
+
+    `error` was a bare boolean, so a turn cancelled because he restarted the
+    server and a turn that genuinely failed were indistinguishable in the log —
+    and the Health page counted both. On 2026-09-06 it read "26 of 200 ended in
+    an error" while most of those 26 were his own restarts: `stopAll` cancels
+    the running turn on the way down and it was recorded as a failure. A metric
+    that alarms at the owner for restarting is worse than no metric, because the
+    real failures hide in the noise it makes.
+
+    "complete" | "failed" | "cancelled" | "blocked". Defaults from `error` so a
+    caller that has not been updated still records something true, and records
+    written before this existed simply have no `outcome` — read by health.mjs as
+    "unclassified" rather than silently folded into either bucket.
+  */
+  outcome = null,
   at = new Date(),
 }) {
   const basis = basisFor(provider);
@@ -470,6 +487,7 @@ export function normaliseRecord({
       durationMs: durationMs ?? null,
       turns: turns ?? null,
       error: Boolean(error),
+      outcome: outcome ?? (error ? "failed" : "complete"),
     };
   }
 
@@ -496,6 +514,12 @@ export function normaliseRecord({
     */
     turns: turns ?? null,
     error: Boolean(error),
+    /*
+      Derived when a caller has not said. `error` alone cannot distinguish a
+      cancellation from a failure, which is the whole reason this field exists —
+      so a caller that knows should pass it rather than rely on this.
+    */
+    outcome: outcome ?? (error ? "failed" : "complete"),
   };
 }
 

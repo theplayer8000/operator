@@ -1214,7 +1214,24 @@ async function perfChecks() {
     }
     const recent = records.slice(-TURN_WINDOW);
     const durations = recent.map((r) => Number(r.durationMs)).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
-    const errors = recent.filter((r) => r.error).length;
+    /*
+      A cancelled turn is not a failed one, and counting it as one made this row
+      alarm at him for restarting his own server.
+
+      `stopAll` cancels every running turn on the way down, so each restart
+      produced a "failure". On 2026-09-06 this read "26 of 200 ended in an
+      error" — and most of the 26 were his six restarts that afternoon, which is
+      exactly the noise a real failure then hides in.
+
+      Records written before `outcome` existed carry only `error: true` and are
+      genuinely unclassifiable, so they are counted separately and SAID rather
+      than folded into either bucket. Guessing would put this row straight back
+      to reporting a number it cannot support.
+    */
+    const failed = recent.filter((r) => r.outcome === "failed").length;
+    const cancelled = recent.filter((r) => r.outcome === "cancelled").length;
+    const unclassified = recent.filter((r) => !r.outcome && r.error).length;
+    const errors = failed + unclassified;
 
     if (durations.length === 0) {
       out.push(check("perf:turns", "unknown", "Turn duration", `${recent.length} turn(s) recorded, none with a duration.`));
@@ -1233,8 +1250,13 @@ async function perfChecks() {
           p95 > 120_000 ? "warn" : "ok",
           "Turn duration",
           `p50 ${(p50 / 1000).toFixed(1)}s, p95 ${(p95 / 1000).toFixed(1)}s over the last ${durations.length} turns` +
-            (errors ? `, ${errors} of ${recent.length} ended in an error.` : "."),
-          { p50, p95, samples: durations.length, errors, window: recent.length },
+            (failed ? `. ${failed} genuinely failed` : ".") +
+            (cancelled ? `, ${cancelled} cancelled (a restart cancels every running turn — not a failure)` : "") +
+            (unclassified
+              ? `, ${unclassified} recorded before cancellations were told apart from failures, so those are unclassified`
+              : "") +
+            (failed || cancelled || unclassified ? "." : ""),
+          { p50, p95, samples: durations.length, errors, failed, cancelled, unclassified, window: recent.length },
         ),
       );
     }
