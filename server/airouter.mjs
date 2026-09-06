@@ -174,10 +174,69 @@ function pruneHistory(messages, onEvent) {
   let dropped = 0;
   let freed = 0;
   const last = messages.length - KEEP_RECENT;
+
+  /*
+    Three places carry bulk, and the first version only reached one of them.
+
+    It stubbed `role: "tool"` messages and nothing else, so it ran, reported
+    success, and the very next turn returned 413 again. The two it missed are
+    both larger than the one it caught:
+
+      - IMAGES, in a user message's parts array. An attached photo is a base64
+        data URI that outweighs an entire conversation, and it was being replayed
+        on every later turn forever. An image is evidence for the turn it arrived
+        in; keeping it after that is what guarantees the wall.
+      - TOOL CALL ARGUMENTS, on an assistant message. `write_file` puts a whole
+        file in `arguments`, so the file is in the history TWICE — once going in
+        as an argument and once coming back as a result — and only the result
+        was being pruned.
+
+    Ordered by what costs least to lose: images first (huge, and their moment has
+    passed), then write arguments, then tool results.
+  */
+
+  // 1. Old images.
+  for (let i = 0; i < last && total > HISTORY_BUDGET; i += 1) {
+    const m = messages[i];
+    if (!Array.isArray(m?.content)) continue;
+    const kept = [];
+    let removed = 0;
+    for (const part of m.content) {
+      if (part?.type === "image_url") {
+        removed += part.image_url?.url?.length ?? 0;
+        continue;
+      }
+      kept.push(part);
+    }
+    if (!removed) continue;
+    kept.push({ type: "text", text: "[an image sent earlier in this conversation was dropped to stay under the request size limit]" });
+    m.content = kept;
+    freed += removed;
+    total -= removed;
+    dropped += 1;
+  }
+
+  // 2. Old tool-call arguments — where write_file hides a whole file.
+  for (let i = 0; i < last && total > HISTORY_BUDGET; i += 1) {
+    const m = messages[i];
+    if (!Array.isArray(m?.tool_calls)) continue;
+    for (const call of m.tool_calls) {
+      const args = call?.function?.arguments;
+      if (typeof args !== "string" || args.length <= STUB_OVER) continue;
+      if (args.startsWith('{"pruned"')) continue;
+      const was = args.length;
+      call.function.arguments = JSON.stringify({ pruned: true, was });
+      freed += was - call.function.arguments.length;
+      total -= was - call.function.arguments.length;
+      dropped += 1;
+    }
+  }
+
+  // 3. Old tool results.
   for (let i = 0; i < last && total > HISTORY_BUDGET; i += 1) {
     const m = messages[i];
     if (m?.role !== "tool" || typeof m.content !== "string") continue;
-    if (m.content.length <= STUB_OVER || m.content.startsWith("{\"pruned\"")) continue;
+    if (m.content.length <= STUB_OVER || m.content.startsWith('{"pruned"')) continue;
     const was = m.content.length;
     m.content = JSON.stringify({
       pruned: true,
@@ -186,6 +245,17 @@ function pruneHistory(messages, onEvent) {
     freed += was - m.content.length;
     dropped += 1;
     total -= was - m.content.length;
+  }
+
+  /*
+    Say so when it was not enough, instead of sending a request that will be
+    rejected. A 413 from the gateway tells him nothing about which part was
+    oversized; this names the number.
+  */
+  if (total > HISTORY_BUDGET) {
+    onEvent?.("text", {
+      text: `_Still ${Math.round(total / 1000)}KB after trimming, over the ${Math.round(HISTORY_BUDGET / 1000)}KB budget — the recent ${KEEP_RECENT} messages are kept whole and one of them is large. If this turn fails with 413, that is why._`,
+    });
   }
 
   if (dropped) {
@@ -233,8 +303,27 @@ const VISION_MODELS = new Set(["Qwen3.8", "DeepSeek-V4-Flash"]);
   4/3 of the file — a 10 MB phone photo would eat a 262K window before the
   text arrives. Skipped images are named in a text part, not dropped silently.
 */
-const MAX_IMAGE_BYTES = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGE_BYTES || 5 * 1024 * 1024);
-const MAX_IMAGES_PER_TURN = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGES || 4);
+/*
+  Sized against the REQUEST BODY LIMIT, not the context window.
+
+  These were 5 MB and 4 images, and the reasoning written beside them was about
+  a 262K context window — "one phone photo would eat the window before the text
+  arrives". That was the wrong ceiling, and the right one is three orders of
+  magnitude tighter: base64 is 4/3 of a file, so a single 5 MB image is 6.7 MB
+  on the wire against an nginx `client_max_body_size` of 1 MB. One attached photo
+  was six times over the limit on its own, before any conversation.
+
+  It is the same mistake the history cap made — reasoning about tokens when the
+  thing that rejects the request counts bytes — and it produced the same 413
+  twice in one afternoon.
+
+  600 KB of base64 across the whole turn leaves comfortable room for the prose,
+  the tool schemas and the replayed history underneath the 1 MB wall.
+*/
+const MAX_IMAGE_BYTES = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGE_BYTES || 420 * 1024);
+const MAX_IMAGES_PER_TURN = Number(process.env.OPERATOR_AIROUTER_MAX_IMAGES || 2);
+/** Total base64 an entire turn's images may contribute to the body. */
+const MAX_IMAGE_BUDGET = Number(process.env.OPERATOR_AIROUTER_IMAGE_BUDGET || 600 * 1024);
 
 /**
  * The capability layer, as OpenAI tool declarations.
@@ -417,13 +506,29 @@ async function userMessage(prompt, attachments, model) {
   };
   const parts = [{ type: "text", text: prompt }];
   const skipped = [];
+  /*
+    A running total, because a per-image cap alone does not bound the REQUEST.
+
+    Two images each just under the limit are still two images, and the gateway
+    counts the body, not the attachments. This is the number that has to stay
+    under 1 MB, so this is where it is enforced.
+  */
+  let budget = MAX_IMAGE_BUDGET;
   for (const image of images) {
     try {
       const buf = await readFile(image.path);
       if (buf.length > MAX_IMAGE_BYTES) {
-        skipped.push(`${image.name} (${Math.round(buf.length / 1024)} KB)`);
+        skipped.push(`${image.name} (${Math.round(buf.length / 1024)} KB — over the ${Math.round(MAX_IMAGE_BYTES / 1024)} KB limit per image)`);
         continue;
       }
+      // 4/3 for base64, plus the data: prefix. Checked BEFORE encoding, so an
+      // oversized file is never turned into a string half the size of the wall.
+      const onWire = Math.ceil((buf.length * 4) / 3) + 64;
+      if (onWire > budget) {
+        skipped.push(`${image.name} (would not fit in what is left of the request)`);
+        continue;
+      }
+      budget -= onWire;
       const ext = (image.name ?? "").split(".").pop()?.toLowerCase() ?? "";
       const mime = /^image\//.test(image?.type ?? "")
         ? image.type
