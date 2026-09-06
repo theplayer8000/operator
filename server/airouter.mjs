@@ -104,6 +104,103 @@ const conversations = new Map();
 let counter = 0;
 const newSessionId = () => `air-${Date.now().toString(36)}-${(counter += 1)}`;
 
+/*
+  How big the replayed conversation may get before the oldest tool output is
+  thrown away.
+
+  ## The failure
+
+  This worker has no session on the provider's side, so every turn re-sends the
+  ENTIRE conversation. The comment above `conversations` said the cap belongs on
+  rounds rather than history length "because a long conversation is the thing a
+  262K context window is for" — true of the context window, and beside the point
+  for the thing that actually broke. On 2026-09-06, at turn 59, the router
+  answered **413 Request Entity Too Large**: an HTTP body limit, measured in
+  bytes, sitting well below the token ceiling anyone was reasoning about. The job
+  could not continue and the only way out was starting a new one, which throws
+  the thread away.
+
+  ## Why caching is not the answer
+
+  Prompt caching stops a provider RECOMPUTING a prefix. It does not stop us
+  SENDING it — the request body is byte-identical either way, so a 413 lands
+  exactly the same. Caching would buy latency and cost; only pruning buys a turn
+  60.
+
+  ## What gets dropped, and why it is the right thing
+
+  Tool output, oldest first. The prose — what he asked and what the model
+  answered — is small and is the whole point of a thread. A 20KB command dump or
+  a whole file read forty turns ago is enormous and almost never load-bearing
+  again; if the model needs that file it can read it, and now it will.
+
+  The message is STUBBED IN PLACE, never removed. Deleting a `tool` message
+  orphans its `tool_call_id` and the API rejects the request — a fix that
+  produces a 400 instead of a 413 is not a fix. Replacing the content keeps every
+  id paired and the structure intact, and the stub says what happened so the
+  model reads "this was dropped" rather than "this was empty".
+
+  The most recent rounds are never touched: those are what the turn is actively
+  working from.
+*/
+const HISTORY_BUDGET = Math.max(
+  50_000,
+  Number(process.env.OPERATOR_AIROUTER_HISTORY_BYTES || 300_000) || 300_000,
+);
+/** Recent messages left alone however big they are — the live working set. */
+const KEEP_RECENT = 12;
+/** Below this a tool result is not worth stubbing; the stub costs bytes too. */
+const STUB_OVER = 400;
+
+const sizeOf = (messages) => {
+  try {
+    return JSON.stringify(messages).length;
+  } catch {
+    return 0;
+  }
+};
+
+/**
+ * Bring the replayed history under the budget, in place.
+ *
+ * Returns nothing: it mutates, because the array it is handed is the same one
+ * stored in `conversations` and the point is that the session shrinks too, not
+ * only this one request.
+ */
+function pruneHistory(messages, onEvent) {
+  let total = sizeOf(messages);
+  if (total <= HISTORY_BUDGET) return;
+
+  let dropped = 0;
+  let freed = 0;
+  const last = messages.length - KEEP_RECENT;
+  for (let i = 0; i < last && total > HISTORY_BUDGET; i += 1) {
+    const m = messages[i];
+    if (m?.role !== "tool" || typeof m.content !== "string") continue;
+    if (m.content.length <= STUB_OVER || m.content.startsWith("{\"pruned\"")) continue;
+    const was = m.content.length;
+    m.content = JSON.stringify({
+      pruned: true,
+      note: `output of ${was} characters dropped to keep this conversation under the request size limit — read the file or run the command again if it still matters`,
+    });
+    freed += was - m.content.length;
+    dropped += 1;
+    total -= was - m.content.length;
+  }
+
+  if (dropped) {
+    /*
+      Said out loud in the thread. A conversation that quietly forgets what it
+      was told is the worst kind of bug to debug from the outside — he would see
+      the model re-reading files it had already read and conclude it was being
+      stupid rather than that it had been trimmed.
+    */
+    onEvent?.("text", {
+      text: `_Trimmed ${dropped} old tool result${dropped === 1 ? "" : "s"} (${Math.round(freed / 1000)}KB) from this conversation's replayed history — it was approaching the request size limit. Recent turns are untouched._`,
+    });
+  }
+}
+
 /**
  * Per-REQUEST timeout, not per turn.
  *
@@ -250,7 +347,28 @@ async function call({
           onFallback?.();
           continue;
         }
-        throw new Error(`AI Router returned ${res.status}: ${text.slice(0, 300)}`);
+        /*
+          Say what happened, not what nginx said.
+
+          A gateway answers in HTML, and the raw body was going straight into
+          the failure message — so a push notification on his lock screen read
+          "<html><head><title>413 Request Entity Too Large</title>..." and he
+          had to work out from that what to do next. 413 in particular has a
+          specific, actionable cause here and deserves to say so.
+        */
+        const looksHtml = /^\s*<(?:!doctype|html)/i.test(text);
+        if (res.status === 413) {
+          throw new Error(
+            "AI Router returned 413 — the request body was too large for its gateway. " +
+              "This worker has no session on their side, so the whole conversation is re-sent every turn " +
+              "and old tool output (files read, command output) is what fills it. The history is pruned " +
+              `automatically above ${Math.round(HISTORY_BUDGET / 1000)}KB; if this still happens, lower ` +
+              "OPERATOR_AIROUTER_HISTORY_BYTES or start a new job.",
+          );
+        }
+        throw new Error(
+          `AI Router returned ${res.status}${looksHtml ? " (an HTML error page from its gateway, not the API)" : `: ${text.slice(0, 300)}`}`,
+        );
       }
       return await res.json();
     } finally {
@@ -441,6 +559,7 @@ export async function runTurn({
     */
     const maxRounds = files ? 40 : 10;
     for (; rounds < maxRounds; rounds += 1) {
+      pruneHistory(messages, onEvent);
       const body = await call({
         model: model || DEFAULT_MODEL,
         messages,
