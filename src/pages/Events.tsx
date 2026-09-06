@@ -280,38 +280,7 @@ export default function Events() {
             })}
           </div>
 
-          <div className="card-base p-4 sm:p-5 animate-fade-up">
-            <h2 className="font-display text-sm font-medium text-ink-300 mb-3">Next up</h2>
-            {upcoming.length === 0 ? (
-              <p className="text-sm text-ink-700">Nothing scheduled.</p>
-            ) : (
-              <ul className="space-y-2">
-                {upcoming.slice(0, 8).map((event) => (
-                  <li key={event.id}>
-                    <button
-                      onClick={() => {
-                        setYear(Number(event.date.slice(0, 4)));
-                        openDay(event.date);
-                      }}
-                      className="w-full flex items-center gap-2 min-h-[44px] px-2 -mx-2 rounded-badge hover:bg-base-700/60 text-left transition-colors"
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${EVENT_KIND_META[event.kind].dot}`}
-                        aria-hidden
-                      />
-                      <span className="flex-1 min-w-0">
-                        <span className="block text-sm text-ink-300 truncate">{event.title}</span>
-                        <span className="block text-[11px] font-mono text-ink-700">
-                          {relativeDay(event.date)}
-                          {event.time && ` · ${event.time}`}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          
         </div>
       </div>
     </div>
