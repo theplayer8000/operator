@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, X, Loader2, ChevronDown, Volume2, VolumeX } from "lucide-react";
-import { useJobs } from "@/hooks/useJobs";
+import { ArrowUp, X, Loader2, ChevronDown, Paperclip, Volume2, VolumeX } from "lucide-react";
+import { useJobs, type JobResource } from "@/hooks/useJobs";
 import { useSpeech } from "@/hooks/useSpeech";
 
 /**
@@ -36,7 +36,9 @@ import { useSpeech } from "@/hooks/useSpeech";
  * ## What it deliberately does not do
  *
  * No model picker, no attachments, no tab strip, no retry. Those live on
- * `/orchestrator`, which is still there. This is the everyday surface — ask a
+ * `/orchestrator`, which is still there. Attachments ARE here (2026-09-06 —
+ * the owner's pictures never made it because this surface had no button
+ * while the wiring existed). This is the everyday surface — ask a
  * thing, read the answer, unblock a turn — and keeping it that small is what
  * makes it fit under a map on a phone.
  */
@@ -65,6 +67,15 @@ export default function OperatorChat({
 }) {
   const jobs = useJobs();
   const [draft, setDraft] = useState("");
+  /*
+    Local files picked for the next message, uploaded only when Send is hit —
+    an eager upload would leave a staged resource with no turn to belong to
+    (server/uploads.mjs stages at job start, not picker close). Same shape as
+    OrchestratorChat, keeping the everyday surface to pick → chip → send.
+  */
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   /*
@@ -166,7 +177,7 @@ export default function OperatorChat({
 
   /** One place that actually sends, so voice and the button cannot diverge. */
   const sendText = useCallback(
-    async (text: string) => {
+    async (text: string, resources: JobResource[] = []) => {
       if (!text.trim() || jobs.busy) return;
       setExpanded(true);
       // Before sending, so a fast reply cannot arrive before the record of
@@ -185,8 +196,8 @@ export default function OperatorChat({
       const live = jobs.selected?.id ?? null;
 
       try {
-        if (live) await jobs.send(live, text);
-        else await jobs.create(text, undefined, [], worker ?? undefined);
+        if (live) await jobs.send(live, text, resources);
+        else await jobs.create(text, undefined, resources, worker ?? undefined);
       } catch (err) {
         /*
           A job can also disappear between the check and the send — another
@@ -195,7 +206,7 @@ export default function OperatorChat({
         */
         if (String((err as Error)?.message ?? "").includes("no such job")) {
           try {
-            await jobs.create(text, undefined, [], worker ?? undefined);
+            await jobs.create(text, undefined, resources, worker ?? undefined);
           } catch {
             /* useJobs owns the error surface; it renders below. */
           }
@@ -205,14 +216,35 @@ export default function OperatorChat({
     [jobs, worker],
   );
 
+  function addFiles(files: FileList | null) {
+    if (!files?.length) return;
+    setAttachments((current) => {
+      const next = [...current];
+      for (const file of Array.from(files)) {
+        const dup = next.some(
+          (item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified,
+        );
+        if (!dup) next.push(file);
+      }
+      return next;
+    });
+    // Reset the input value so picking the SAME file again re-fires onChange.
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
   const send = async () => {
     const text = draft.trim();
     if (!text || jobs.busy) return;
+    setUploading(true);
+    const resources = attachments.length ? await jobs.upload(attachments) : [];
+    setUploading(false);
+    if (resources === null) return;
     setDraft("");
+    setAttachments([]);
     setExpanded(true);
     // One path for both, so the button and the voice cannot diverge — which is
     // how only one of them carried the stale-id bug.
-    await sendText(text);
+    await sendText(text, resources);
   };
 
   const answer = async (permissionId: string, decision: "allow" | "deny", remember = false) => {
@@ -506,7 +538,47 @@ export default function OperatorChat({
         </p>
       )}
 
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {attachments.map((file) => (
+            <span
+              key={`${file.name}-${file.lastModified}-${file.size}`}
+              className="inline-flex items-center gap-1 rounded-badge border border-base-600 bg-base-700/40 pl-2 pr-1 h-8 text-xs text-ink-400 max-w-full"
+            >
+              <Paperclip size={11} className="shrink-0 text-ink-600" />
+              <span className="truncate max-w-[13rem]">{file.name}</span>
+              <button
+                type="button"
+                onClick={() => setAttachments((current) => current.filter((item) => item !== file))}
+                aria-label={`Remove ${file.name}`}
+                disabled={uploading}
+                className="w-7 h-7 shrink-0 rounded-badge text-ink-600 hover:text-ink-100 transition-colors"
+              >
+                <X size={13} className="mx-auto" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          className="sr-only"
+          onChange={(e) => addFiles(e.target.files)}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={jobs.busy || uploading}
+          aria-label="Attach files"
+          title="Attach files (up to 10 MB each)"
+          className="shrink-0 min-h-[48px] min-w-[48px] rounded-badge border border-base-600 flex items-center justify-center text-ink-500 hover:text-ink-100 hover:border-base-500 disabled:opacity-40 transition-colors"
+        >
+          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+        </button>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

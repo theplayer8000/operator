@@ -507,6 +507,150 @@ async function gitChecks() {
 
 const HOUR = 3_600_000;
 
+/*
+  Idea 3 of the security sweep: credentials in work it is about to push.
+
+  The git group says HOW MUCH is waiting to land; this group asks WHAT is in
+  it. A key that reaches origin is gone — the copy on GitHub is the breach,
+  and rotation is the recovery. Catching it on THIS disk, before push, is the
+  only place the check has value.
+
+  Three sources, each named in the detail:
+    - uncommitted changes in the agent worktree, tracked AND untracked (git
+      diff cannot see a `??` file, and untracked is where a stray .env lands)
+    - commits on the agent branch not yet on main (`main...HEAD`)
+    - commits on main not yet on origin (`origin/main..main`, same last-fetch
+      honesty as the git:ahead row — nothing here fetches)
+
+  Only lines being ADDED are scanned; a line that stops containing a secret
+  is the opposite of a leak. The detail names the FILE and the PATTERN, never
+  the value — a health page that echoed a credential would itself be the
+  leak. High-confidence shapes (private keys, provider tokens) are failures;
+  a generic `key = "..."` assignment is a warning, because it can be a
+  test fixture. Individual sources degrade to "skipped" rather than failing
+  the row, so one unreadable file cannot hide the rest.
+*/
+const SECRET_PATTERNS = [
+  { re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, name: "private key", severity: "fail" },
+  { re: /\bsk-[A-Za-z0-9]{20,}\b/, name: "sk- API key", severity: "fail" },
+  { re: /\bAKIA[0-9A-Z]{16}\b/, name: "AWS access key", severity: "fail" },
+  { re: /\bghp_[A-Za-z0-9]{36}\b/, name: "GitHub personal token", severity: "fail" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/, name: "Slack token", severity: "fail" },
+  { re: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b/, name: "JWT", severity: "fail" },
+  {
+    re: /\b(?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?([A-Za-z0-9_\-./+]{16,})["']?\b/,
+    name: "possible key assignment",
+    severity: "warn",
+  },
+];
+
+/** One added line; returns the first pattern it trips, if any. */
+function secretMatch(line) {
+  const value = line[0] === "+" ? line.slice(1) : line;
+  for (const p of SECRET_PATTERNS) {
+    if (p.re.test(value)) return p;
+  }
+  return null;
+}
+
+async function secretsChecks() {
+  const out = [];
+  const hits = [];
+
+  const scanLines = (text, source, file) => {
+    if (!text || text.length > 2_000_000) return;
+    for (const line of text.split(/\r?\n/)) {
+      // Diff context: only the added side. A `+` that is not the `+++` file
+      // header. Raw file contents (untracked) have no `+` prefix at all.
+      if (line.startsWith("+++ ")) continue;
+      if (line.startsWith("+") || !text.includes("diff --git")) {
+        const content = line.startsWith("+") ? line.slice(1) : line;
+        const p = secretMatch(content);
+        if (p) hits.push({ source, file, pattern: p.name, severity: p.severity });
+      }
+    }
+  };
+
+  const cwd = process.env.OPERATOR_JOB_CWD ?? null;
+
+  // 1. Uncommitted worktree changes: tracked diffs, then untracked contents.
+  if (cwd) {
+    try {
+      const diff = await git(cwd, ["diff"]);
+      scanLines(diff, "worktree (uncommitted)", "tracked changes");
+      const staged = await git(cwd, ["diff", "--cached"]);
+      scanLines(staged, "worktree (staged)", "staged changes");
+    } catch {
+      /* git unavailable in the worktree — the git:worktree row already says so */
+    }
+    try {
+      const untracked = (await git(cwd, ["status", "--porcelain", "--untracked-files=all"]))
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("?? "))
+        .map((l) => l.slice(3));
+      for (const rel of untracked.slice(0, 20)) {
+        const path = join(cwd, rel);
+        try {
+          const body = await readFile(path, "utf8");
+          if (body.includes("\u0000")) continue; // binary
+          scanLines(body, "worktree (untracked)", rel);
+        } catch {
+          /* vanished between listing and read — skip, not fail */
+        }
+      }
+    } catch {
+      /* status failed — skip the untracked scan entirely */
+    }
+  }
+
+  // 2. Agent commits not yet on main.
+  if (cwd) {
+    try {
+      const diff = await git(cwd, ["diff", "main...HEAD"]);
+      scanLines(diff, "agent branch", "main...HEAD");
+    } catch {
+      /* no main ref in the worktree */
+    }
+  }
+
+  // 3. Main not yet pushed. Same local-ref honesty as git:ahead.
+  try {
+    const diff = await git(ROOT, ["diff", "origin/main..main"]);
+    scanLines(diff, "main (unpushed)", "origin/main..main");
+  } catch {
+    /* no origin/main ref — nothing fetched yet, nothing to compare */
+  }
+
+  if (hits.length === 0) {
+    out.push(
+      check("git:secrets", "ok", "No credentials in pending work", "Added lines in the worktree and unpushed commits match no secret patterns."),
+    );
+    return out;
+  }
+
+  const worst = hits.some((h) => h.severity === "fail") ? "fail" : "warn";
+  const byFile = {};
+  for (const h of hits) {
+    byFile[h.file] = byFile[h.file] ?? new Set();
+    byFile[h.file].add(h.pattern);
+  }
+  const files = Object.entries(byFile)
+    .map(([f, pats]) => `${f} (${[...pats].join(", ")})`)
+    .slice(0, 4);
+  const shown = files.join("; ") + (hits.length > 4 ? `; +${hits.length - 4} more` : "");
+  out.push(
+    check(
+      "git:secrets",
+      worst,
+      "Credentials in pending work",
+      `${hits.length} added line(s) match ${worst === "fail" ? "credential" : "possibly-credential"} patterns. Values are not echoed here — look at: ${shown}`,
+      { hits: hits.length, sources: [...new Set(hits.map((h) => h.source))] },
+    ),
+  );
+  return out;
+}
+
 async function handoffChecks() {
   const h = await readHandoff();
   const age = h.updatedAt ? Date.now() - new Date(h.updatedAt).getTime() : null;
@@ -1160,6 +1304,12 @@ const GROUPS = [
     title: "Git",
     subtitle: "Drift between the checkouts, and work only on this disk",
     build: () => attempt("git", "Git", gitChecks),
+  },
+  {
+    id: "git-secrets",
+    title: "Git security",
+    subtitle: "Credentials in work it is about to push",
+    build: () => attempt("git-secrets", "Git security", secretsChecks),
   },
   {
     id: "handoff",
