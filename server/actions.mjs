@@ -2948,6 +2948,24 @@ function summarise(name, params, result, before) {
     return { title: `Routine — ${verb}`, message: `${what}${when}` };
   }
 
+  /*
+    The one action whose entire purpose is telling him something finished, and
+    it was falling through to the generic line below — so a completed piece of
+    work arrived on his lock screen as "Operator / work record" while carrying a
+    one-sentence description of exactly what happened in `summary`.
+
+    `needsOwner` is the distinction worth putting in the title. Most records are
+    a ledger entry he will read later; the ones waiting on him are the reason to
+    look now.
+  */
+  if (name === "work_record") {
+    const who = params?.by ? ` (${String(params.by)})` : "";
+    return {
+      title: params?.needsOwner ? "Finished — needs you" : "Work finished",
+      message: `${String(params?.summary ?? "something finished").slice(0, 140)}${who}`,
+    };
+  }
+
   return { title: "Operator", message: verb };
 }
 
