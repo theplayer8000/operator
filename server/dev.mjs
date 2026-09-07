@@ -24,7 +24,7 @@ const run = promisify(execFile);
 // It holds real client data, and while the extension allowlist below stops its
 // .db and .pdf contents being served, `listTree` would still expose tenancy
 // document *filenames*. The Dev browser exists to browse Operator.
-const DENY = new Set(["node_modules", ".git", "dist", "data", ".vite", "Darams-CRM"]);
+const DENY = new Set(["node_modules", ".git", "dist", "data", ".vite", "Darams-CRM", "outbox"]);
 const MAX_BYTES = 400_000;
 
 const TEXT_EXT = new Set([

@@ -68,6 +68,35 @@ export default function OperatorChat({
   const jobs = useJobs();
   const [draft, setDraft] = useState("");
   /*
+    The draft survives a swipe-out / rotation / reload — "twice now this has
+    happened, me accidentally swiping out and losing my prompt because the
+    chat closes" (7 Sep). An unsent prompt is raw data; flushing it to
+    localStorage on every keystroke means the worst case is being a snippet
+    behind, never gone. One draft per thread: switching jobs swaps in that
+    thread's text, so there is no cross-thread bleed. Sending clears it the
+    same way it clears the box — setDraft("") writes "" over the key.
+  */
+  const draftKey = () => {
+    const id = jobs.selected?.id ?? null;
+    return id ? `op.chat.draft.${id}` : "op.chat.draft.unthreaded";
+  };
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(draftKey());
+      if (saved != null) setDraft(saved);
+    } catch {
+      /* private browsing / locked-down webview: the draft is in-memory only */
+    }
+    // Restore on mount AND when the thread changes.
+  }, [jobs.selected?.id]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(draftKey(), draft);
+    } catch {
+      /* same — nothing durable to hang the draft on */
+    }
+  }, [draft, jobs.selected?.id]);
+  /*
     Local files picked for the next message, uploaded only when Send is hit —
     an eager upload would leave a staged resource with no turn to belong to
     (server/uploads.mjs stages at job start, not picker close). Same shape as

@@ -16,6 +16,8 @@ data/
 # GitHub remote. Ignored rather than tracked; the proper fix is moving it out
 # to a sibling directory.
 Darams-CRM/
+# Outbox — the owner's documents, returned for pickup. His data: never committed or landed.
+outbox/
 tsconfig.tsbuildinfo
 
 # Python bytecode from the transcriber helper
