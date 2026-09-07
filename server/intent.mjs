@@ -91,6 +91,7 @@ export const EMITTED_ACTIONS = [
   "routine_toggle_task",
   "mission_set_progress",
   "mission_set_status",
+  "auto_mode",
 ];
 
 /**
@@ -990,6 +991,37 @@ function matchGymQuestion(text) {
   };
 }
 
+/*
+  The master auto-mode switch — "auto mode on" / "auto mode off".
+
+  A toggle, spoken as a bare command: no lookup, no data to decide between.
+  Narrow on purpose — only the two words plus an optional leading verb, so a
+  question ("is auto mode on", caught above) and a mission ("the auto mode
+  mission is at 60 percent", caught below) can never land here. Off is as
+  cheap as on, which is what makes it safe: the owner can undo this with his
+  voice while his hands are busy.
+*/
+const AUTOMODE_ON = /^(?:turn|switch|put|set|enable)?\s*auto\s*mode\s+on$/;
+const AUTOMODE_OFF = /^(?:turn|switch|put|set|disable)?\s*auto\s*mode\s+off$/;
+const AUTOMODE_END = /^(?:turn|switch)\s+(on|off)\s+auto\s+mode$/;
+
+function matchAutoMode(text) {
+  let on = null;
+  if (AUTOMODE_ON.test(text)) on = true;
+  else if (AUTOMODE_OFF.test(text)) on = false;
+  else {
+    const end = AUTOMODE_END.exec(text);
+    if (end) on = end[1] === "on";
+  }
+  if (on === null) return null;
+  return {
+    action: "auto_mode",
+    params: { on },
+    needs: null,
+    why: on ? "switching auto mode on for every job" : "switching auto mode off for every job",
+  };
+}
+
 export function matchIntent(transcript) {
   const asked = /\?/.test(String(transcript ?? ""));
   const text = normalise(transcript);
@@ -1016,6 +1048,9 @@ export function matchIntent(transcript) {
   if (device) return device;
 
   // Before the negation guard — a skip is usually phrased as a negative.
+  const auto = matchAutoMode(text);
+  if (auto) return auto;
+
   const skip = matchGymSkip(text);
   if (skip) return skip;
   if (NEGATED.test(text)) return null;
@@ -1101,6 +1136,10 @@ const MUST_MATCH = [
   ["tick off bench press", "routine_toggle_task"],
   ["tick bench press off", "routine_toggle_task"],
   ["cross off squats", "routine_toggle_task"],
+  ["auto mode on", "auto_mode"],
+  ["turn auto mode on", "auto_mode"],
+  ["switch auto mode off", "auto_mode"],
+  ["turn off auto mode", "auto_mode"],
 ];
 
 const MUST_NOT = [
@@ -1182,6 +1221,10 @@ const MUST_NOT = [
   "i didnt tick off bench press",
   "im going to tick off bench press later",
   "tick off bench press and delete the gym mission",
+  // Auto mode is a toggle, so the shapes that are not an instruction stay out.
+  "is auto mode on",
+  "auto mode is on already",
+  "turn auto mode on tomorrow",
 ];
 
 async function selfTest() {
@@ -1299,6 +1342,16 @@ async function selfTest() {
   const nOk = ns?.params.status === "not_started" && ns?.needs.match === "epyc";
   if (!nOk) fail.push('"not started" must not be read as the substring "started"');
   out.push(line(nOk, `not started → ${ns?.params.status} on ${JSON.stringify(ns?.needs.match)}`));
+
+  const am = matchIntent("turn auto mode off");
+  const amOk = am?.action === "auto_mode" && am?.params.on === false;
+  if (!amOk) fail.push('"turn auto mode off" should emit auto_mode with on:false');
+  out.push(line(amOk, `auto mode off → ${am?.action} on=${am?.params.on}`));
+
+  const amOn = matchIntent("auto mode on");
+  const amOnOk = amOn?.action === "auto_mode" && amOn?.params.on === true;
+  if (!amOnOk) fail.push('"auto mode on" should emit auto_mode with on:true');
+  out.push(line(amOnOk, `auto mode on → ${amOn?.action} on=${amOn?.params.on}`));
 
   out.push("", "ACTION NAMES EXIST");
   const { listActions } = await import("./actions.mjs");

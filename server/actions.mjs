@@ -2438,6 +2438,39 @@ const ACTIONS = {
       return jobs.requestAuto(String(jobId));
     },
   },
+  auto_mode: {
+    description:
+      "The GLOBAL auto-mode master switch — the external toggle. On: every job's writes stop producing phone questions (hard refusals like git push and deletes are unchanged). Off: jobs ask again. Persisted, so it survives a restart, and it covers jobs that never requested auto mode. The asking IS the gate: when a job calls this, the call itself is a permission card only the owner can allow — a worker cannot flip it on by itself.",
+    params: "on (true or false, required)",
+    handler: async ({ on } = {}) => {
+      const enabled =
+        on === true || on === "on" || on === "true" || on === "yes"
+          ? true
+          : on === false || on === "off" || on === "false" || on === "no"
+            ? false
+            : null;
+      if (enabled === null) throw new ActionError("on must be true or false (or \"on\" / \"off\")");
+      // Persist first, then flip the live flag — a failed write changes nothing.
+      const stored = await withState("operator.autoMode", () => enabled);
+      const jobs = await import("./jobs.mjs");
+      jobs.setGlobalAutoMode(Boolean(stored));
+      void notify(
+        enabled ? "Auto mode ON" : "Auto mode OFF",
+        enabled
+          ? "Every job now runs without permission prompts. Hard refusals (git push, deletes) still hold. Say \"auto mode off\" to switch back."
+          : "Jobs ask before their writes again. Say \"auto mode on\" to flip the switch back.",
+        { priority: "high" },
+      );
+      return {
+        autoMode: Boolean(stored),
+        scope: "all jobs",
+        persisted: true,
+        note: enabled
+          ? "hard refusals (git push, deletes) are unchanged; per-job auto still works when this is off"
+          : "per-job auto mode (granted on a permission card) is unaffected",
+      };
+    },
+  },
   worktree_status: {
     description:
       "Where the agent worktree stands: how far BEHIND main it is (running stale code), how far AHEAD (work finished in there that never landed — the expensive one), and what is uncommitted. Read this before concluding that a feature is missing or that a fix did not work.",

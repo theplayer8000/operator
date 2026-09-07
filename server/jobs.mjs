@@ -85,6 +85,42 @@ import {
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /*
+  The GLOBAL auto-mode master switch — auto mode's "external toggle".
+
+  Per-job auto mode only ever flips from the owner's permission answer
+  (answerPermission), so a worker can ask but never grant itself. This flag is
+  the other half the owner asked for: one switch that makes EVERY job run
+  without phone prompts, with no per-job setup to remember. Set through the
+  `auto_mode` capability action (itself behind a permission card a worker
+  cannot self-allow), persisted in the store under "operator.autoMode", and
+  hydrated here at boot so a restart keeps the switch where it was left.
+
+  It does not weaken anything: hard refusals (git push, deletes) never reach
+  ask() at all, and the owner turns it off the same way he turned it on.
+*/
+let globalAuto = false;
+
+/** True when the master switch is on — every job runs without phone prompts. */
+export function globalAutoMode() {
+  return globalAuto;
+}
+
+/** Flip the master switch. Returns the new value (already coerced). */
+export function setGlobalAutoMode(on) {
+  globalAuto = Boolean(on);
+  return globalAuto;
+}
+
+// Hydrate from the persisted store at boot without holding up the server. A
+// store that is unreadable stays off rather than on — the safe default.
+import("./store.mjs")
+  .then((m) => m.readState("operator.autoMode"))
+  .then((v) => {
+    globalAuto = Boolean(v);
+  })
+  .catch(() => {});
+
+/*
   Where Claude works — deliberately not necessarily where Operator runs.
 
   Jobs used to spawn in ROOT, the same checkout serving the app. That is how
@@ -1453,11 +1489,15 @@ function ask(job, req) {
     profile pre-approves the job's writes — no phone question, and no
     30-minute death timer either, because that timer lives inside this promise
     and this path never starts one. Counted so the audit trail shows what the
-    standing consent let through.
+    standing consent let through. The global master switch (`auto_mode`) is
+    the owner's own half of the same gate: one flip that covers every job,
+    and off the same way — see `globalAutoMode()`.
   */
-  if (job.auto) {
+  if (job.auto || globalAutoMode()) {
     job.autoUses = (job.autoUses ?? 0) + 1;
-    console.log(`[operator] auto: ${job.id} auto-allowed ${req.tool} (${job.autoUses}x)`);
+    console.log(
+      `[operator] auto: ${job.id} auto-allowed ${req.tool} (${job.autoUses}x${job.auto ? "" : ", master switch"})`
+    );
     return Promise.resolve(true);
   }
 
@@ -1604,7 +1644,13 @@ export function answerPermission(id, decision, remember, identity) {
 export function requestAuto(id) {
   const job = jobs.get(id);
   if (!job) return { requested: false, reason: `no job ${id}` };
-  if (job.auto) return { requested: true, already: true, job: { id, auto: true } };
+  if (job.auto || globalAutoMode()) {
+    return {
+      requested: true,
+      already: true,
+      job: { id, auto: job.auto, globalAuto: globalAutoMode() },
+    };
+  }
   const fresh = !job.autoRequested;
   job.autoRequested = true;
   if (fresh) {
