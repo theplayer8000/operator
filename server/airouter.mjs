@@ -248,26 +248,16 @@ function pruneHistory(messages, onEvent) {
   }
 
   /*
-    Say so when it was not enough, instead of sending a request that will be
-    rejected. A 413 from the gateway tells him nothing about which part was
-    oversized; this names the number.
+    Not announced in the thread — the owner asked for it gone (the "_Trimmed…_"
+    lines were clutter in a long conversation). Kept in the server log so a
+    small context window is still diagnosable from outside, just not on screen.
   */
-  if (total > HISTORY_BUDGET) {
-    onEvent?.("text", {
-      text: `_Still ${Math.round(total / 1000)}KB after trimming, over the ${Math.round(HISTORY_BUDGET / 1000)}KB budget — the recent ${KEEP_RECENT} messages are kept whole and one of them is large. If this turn fails with 413, that is why._`,
-    });
-  }
-
-  if (dropped) {
-    /*
-      Said out loud in the thread. A conversation that quietly forgets what it
-      was told is the worst kind of bug to debug from the outside — he would see
-      the model re-reading files it had already read and conclude it was being
-      stupid rather than that it had been trimmed.
-    */
-    onEvent?.("text", {
-      text: `_Trimmed ${dropped} old tool result${dropped === 1 ? "" : "s"} (${Math.round(freed / 1000)}KB) from this conversation's replayed history — it was approaching the request size limit. Recent turns are untouched._`,
-    });
+  if (total > HISTORY_BUDGET || dropped) {
+    console.warn(
+      `[airouter] trimmed ${dropped} old tool result(s) (freed ${Math.round(freed / 1000)}KB); ` +
+        `history still ${Math.round(total / 1000)}KB of ${Math.round(HISTORY_BUDGET / 1000)}KB budget` +
+        (total > HISTORY_BUDGET ? " — budget exceeded, a 413 is possible" : ""),
+    );
   }
 }
 
