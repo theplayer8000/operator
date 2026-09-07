@@ -1,0 +1,15 @@
+# https://editorconfig.org — matches .gitattributes (`* text=auto eol=lf`).
+# The config half of the CRLF fix: editors now know to write LF, so
+# edit_file's exact-match stops bricking on line endings. The tree still
+# needs `git add --renormalize .` (in the MAIN checkout) to finish it.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
