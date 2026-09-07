@@ -1,26 +1,36 @@
-# LIVE — Mon 7 Sep 2026, morning (job 6)
+# LIVE — Mon 7 Sep ~08:40 (job 6)
 
-## Done this morning
-- **LANDED 4 commits onto main** (now at 0f39873), build clean where needed:
-  - 6a3c00b = 06210e3 + 4f6a58a (overnight): calendar duplicate "Next up" card dropped **+** airouter stops announcing context trims.
-  - c62f930 **auto-land hook**: jobs.mjs lands committed worktree work the moment the runner drains idle — "committed work never lands on its own" fixed at last. Fires from pump() when nothing is running/queued (so it can never count itself busy — the 5am sync bug shape), merges ff into main, rebuilds when src/ changed, never restarts, notifies. It will land its own successors automatically.
-  - 0f39873 .editorconfig (LF) — config half of the CRLF fix.
-- Wrote the two time-critical money items to DURABLE memory (overnight job kept failing to save them).
-- Unblocked landing this morning by committing the stale CURRENT.md checkpoint (cc39138) that was refusing every land.
+## Landed on main (c2bbfa4, build clean, NOT pushed — origin still behind)
+- calendar: duplicate Next-up card gone; airouter: trim announcements → server log only
+- .editorconfig (CRLF fix — renormalize was a no-op: core.autocrlf=true, LF always stored)
+- auto-land hook (jobs.mjs): queue drains idle → ff-merge to main → rebuild src/ → notify. Never restarts, never pushes.
+- worktree land(): build/restart hint from the WHOLE merged range, not just HEAD
 
-## NEEDS a RESTART (server/ changed) — his act, Dev page Restart or --restart
-- 4f6a58a airouter quieter thread, c62f930 auto-land. Not done from a job: a restart wipes job event logs.
+## NEEDS ONE RESTART (then all of the above goes live, incl. auto-land)
+Dev Restart or scripts/app.mjs restart. A restart also makes the reborn auto-land land whatever is committed at that point.
 
-## Waiting on owner
-- SD502 Part 1 (NHS pension short-service refund): print, fill, hand to the GEH pension officer BEFORE **Thu 10 Sep**. £301.34 YTD not refundable any other way.
-- **Call creditor TOMORROW (Tue 8 Sep) morning**: move 17 Sep £427.43 final → ~24 Sep (payday), else 18 Sep (Friday, dad's £100 wage), else split; if refused, £200 top-up on 8th+11th halves final to £227.43; pay manually, never auto-debit.
-- `git push origin main` — agent never pushes; main is 6 ahead of origin. His command.
+## STATS FIX — written + verified, NOT committed (owner declined the commit 08:40)
+actions.mjs workRecent: collapse duplicate needsOwner rows by shape (by|jobId|summary|detail) — the "58 waiting on you" was the same failures retried (413 / empty memory write / aborted), ~8 are real decisions. waitingOnYou = deduped count; each row gets dupCount.
 
-## Scoped, next (desk-session-sized)
-- **Auto Mode** (approval override, no suspended-turn death, wake-up report) + **Update Handler** (build → verify → done → chain next): design banked 02:47 by desk session; trigger phrase "build auto mode".
-- Owner said a "statistics problem" was brought up last night — **no trace in any work record or handoff**; still need to ask him what it is rather than guess.
-- CRLF **renormalize** still pending (main checkout, dev session): `git add --renormalize .` + commit.
+## AUTO MODE — written + verified, NOT committed (same refusal)
+- job flags: auto / autoRequested / autoUses (blankJob)
+- ask(): if job.auto → grant silently + count + log. No phone, no 30-min death (timer lives inside that promise).
+- requestAuto(id) export + auto_mode_request action (model-callable, safe: grants nothing)
+- CONSENT = answerPermission: owner's "allow" on ANY card of an autoRequested job flips auto=true (owner-only by construction). Deny → stays off.
+- Off switch: "turn auto mode off" (voice/prompt).
+- UI "Operator tab modal" he mentioned: checked src/ — not built. Batch doesn't depend on it; card answer IS the toggle.
+
+## UNCOMMITTED right now (agent worktree — 6 edits, both gates green)
+server/jobs.mjs (4 hunks) + server/actions.mjs (2 hunks). Owner declined the commit — do NOT retry, ask what he wants. Dirty tree blocks land/sync until committed or stashed (stash keeps it; the restore command comes in the stash reply).
+
+## Owner's plate
+- git push origin main (he said he would)
+- Restart (he offered; needs his confirm phrase, or he taps Dev Restart himself)
+- SD502 Part 1 → GEH pension officer BEFORE Thu 10 Sep (in memory)
+- Call creditor Tue 8 Sep morning: 17 Sep £427.43 final (in memory)
+- Auto mode first test: have a job call auto_mode_request, then allow its next card
 
 ## Notes
-- handoff writes did NOT dirty main's CURRENT.md this session (verified: main clean other than 2 untracked; agent only calendar-check.png). The live handoff read shows the 00:05 version — the write API and the read may disagree; re-verify after restart.
-- land()'s build/restart hint only inspects HEAD's files, not the whole landed range — c62f930 (server/) landed under 0f39873 (root-only) and the hint said "no build" — it restarted-flag did NOT fire for the server change. Worth fixing: inspect the merge range.
+- handoff_write dirties main's CURRENT.md → blocks next land until someone commits it (hit 3× today). Possible fix: commit handoffs as part of land. NOT fixed.
+- git push is refused for agents by policy — always his/desk command.
+- calendar-check.png untracked in worktree — leftover render, cannot delete from here.
