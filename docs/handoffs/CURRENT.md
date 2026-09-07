@@ -1,25 +1,26 @@
-# CURRENT HANDOFF — Tue 7 Sept 2026 ~00:05
+# LIVE — Mon 7 Sep 2026, morning (job 6)
 
-Owner heading to sleep; he will pick up the dev build in the morning. Keep it brief, it's past 10pm — no prose, facts only.
+## Done this morning
+- **LANDED 4 commits onto main** (now at 0f39873), build clean where needed:
+  - 6a3c00b = 06210e3 + 4f6a58a (overnight): calendar duplicate "Next up" card dropped **+** airouter stops announcing context trims.
+  - c62f930 **auto-land hook**: jobs.mjs lands committed worktree work the moment the runner drains idle — "committed work never lands on its own" fixed at last. Fires from pump() when nothing is running/queued (so it can never count itself busy — the 5am sync bug shape), merges ff into main, rebuilds when src/ changed, never restarts, notifies. It will land its own successors automatically.
+  - 0f39873 .editorconfig (LF) — config half of the CRLF fix.
+- Wrote the two time-critical money items to DURABLE memory (overnight job kept failing to save them).
+- Unblocked landing this morning by committing the stale CURRENT.md checkpoint (cc39138) that was refusing every land.
 
-## State: on main (landed, LIVE)
-- cfe4c4e: presence/calendar reminders loop, worker npm fix, week agenda — landed, built, restart done. Reminders VERIFIED live tonight: log shows `[presence] reminded at 00:15: ⏰ reminder loop test` (test event created + deleted after). 09:00 CSV reminder event armed for Tue 7 Sept.
-- npm install done in worktree; typecheck + syntax (63 mjs) GREEN.
-- No more: This-week agenda visible on main only — Next up card was removed locally (see next section).
+## NEEDS a RESTART (server/ changed) — his act, Dev page Restart or --restart
+- 4f6a58a airouter quieter thread, c62f930 auto-land. Not done from a job: a restart wipes job event logs.
 
-## PENDING — committed on agent branch, NOT landed (land refuses while a job runs; after idle, LAND)
-- 1a26a45: calendar — drop duplicate Next up card, keep This week agenda; lockfile sync from npm install.
-- 4f6a58a: airouter — stop announcing context trims (`_Trimmed …_ / _Still …KB_`) in the thread; log to server log instead. THIS was the clutter the owner asked to remove tonight.
-- Sequence when idle: land both, then `npm run build` in MAIN checkout D:\Projects\Operator, then refresh. Reminder: land logic drops the build hint when a commit touches both src/ AND server/ — the airouter commit is server/-only so build is optional; 1a26a45 is src/ so NEEDS the build.
+## Waiting on owner
+- SD502 Part 1 (NHS pension short-service refund): print, fill, hand to the GEH pension officer BEFORE **Thu 10 Sep**. £301.34 YTD not refundable any other way.
+- **Call creditor TOMORROW (Tue 8 Sep) morning**: move 17 Sep £427.43 final → ~24 Sep (payday), else 18 Sep (Friday, dad's £100 wage), else split; if refused, £200 top-up on 8th+11th halves final to £227.43; pay manually, never auto-debit.
+- `git push origin main` — agent never pushes; main is 6 ahead of origin. His command.
 
-## Owner rules recorded in memory (do not re-derive)
-- 8ac18a1d: new feature's live test IS the self-verification gate; if test returns true/good, may land — owner handles authorization.
-- 7589bd49: wants committed work landed as soon as a job finishes and nothing is processing (currently only blocks on an OPEN job; fix is an Orchestrator hook "job idle → land if ahead of main").
-- Memory calls: ALWAYS pass real text — sending empty params throws "a fact needs some text" and annoys him. Happened twice.
+## Scoped, next (desk-session-sized)
+- **Auto Mode** (approval override, no suspended-turn death, wake-up report) + **Update Handler** (build → verify → done → chain next): design banked 02:47 by desk session; trigger phrase "build auto mode".
+- Owner said a "statistics problem" was brought up last night — **no trace in any work record or handoff**; still need to ask him what it is rather than guess.
+- CRLF **renormalize** still pending (main checkout, dev session): `git add --renormalize .` + commit.
 
-## CRLF/LF — root cause found, fix scoped for dev session (NOT done: 00:05, tree-wide rewrite)
-- .gitattributes already declares `* text=auto eol=lf` (added 04/09 after providers.mjs incident).
-- Gap: tree never renormalized (`git add --renormalize .` + commit in main checkout); no .editorconfig; edit_file only exact-matches, CRLF bricks it.
-
-## Housekeeping
-- calendar-check.png untracked in worktree root (leftover render copy — can't delete from agent, leave it).
+## Notes
+- handoff writes did NOT dirty main's CURRENT.md this session (verified: main clean other than 2 untracked; agent only calendar-check.png). The live handoff read shows the 00:05 version — the write API and the read may disagree; re-verify after restart.
+- land()'s build/restart hint only inspects HEAD's files, not the whole landed range — c62f930 (server/) landed under 0f39873 (root-only) and the hint said "no build" — it restarted-flag did NOT fire for the server change. Worth fixing: inspect the merge range.
