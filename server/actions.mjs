@@ -1606,11 +1606,34 @@ async function workRecent({ limit = 10, by, needsOwner, since }) {
     if (Number.isFinite(from)) list = list.filter((e) => new Date(e.at).getTime() >= from);
   }
   const capped = Math.max(1, Math.min(50, Number(limit) || 10));
+  /*
+    The "waiting on you" pile is mostly the same failure repeated — a retried
+    job records each attempt as a fresh ask for the owner (413 body too large,
+    an empty memory write, an aborted run), so the counter said ~58 when the
+    real open decisions were maybe eight. Collapse by shape so one failure
+    appears once, with a count.
+  */
+  const shape = (e) => `${e.by ?? ""}|${e.jobId ?? ""}|${e.summary}|${e.detail ?? ""}`;
+  const collapse = (rows) => {
+    const out = new Map();
+    for (const e of rows) {
+      const k = shape(e);
+      const prev = out.get(k);
+      if (prev) {
+        prev.dupCount = (prev.dupCount ?? 1) + 1;
+        if (e.at > prev.at) prev.at = e.at;
+      } else {
+        out.set(k, { ...e });
+      }
+    }
+    return [...out.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
+  };
+  const unique = collapse(list);
   return {
-    count: Math.min(list.length, capped),
+    count: Math.min(unique.length, capped),
     of: all.length,
-    waitingOnYou: all.filter((e) => e.needsOwner).length,
-    entries: list.slice(0, capped),
+    waitingOnYou: collapse(all.filter((e) => e.needsOwner)).length,
+    entries: unique.slice(0, capped),
   };
 }
 
@@ -2404,6 +2427,17 @@ const ACTIONS = {
     already recorded `needsOwner: true` and "land it", and had no way to do
     either or to make anyone look.
   */
+  // --- auto mode ---------------------------------------------------------
+  auto_mode_request: {
+    description:
+      "Ask the owner to grant auto mode to a job — its writes stop producing phone questions. Asking is safe: it only turns on when the owner allows a later permission card. Use jobs_list to get the id.",
+    params: "jobId (required)",
+    handler: async ({ jobId } = {}) => {
+      if (!jobId) throw new ActionError("jobId is required — the id from jobs_list");
+      const jobs = await import("./jobs.mjs");
+      return jobs.requestAuto(String(jobId));
+    },
+  },
   worktree_status: {
     description:
       "Where the agent worktree stands: how far BEHIND main it is (running stale code), how far AHEAD (work finished in there that never landed — the expensive one), and what is uncommitted. Read this before concluding that a feature is missing or that a fix did not work.",

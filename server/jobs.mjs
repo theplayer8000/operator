@@ -1051,6 +1051,12 @@ function blankJob(id) {
     touchIdle: null,
     /** Questions outstanding. Non-zero means waiting on a person, not stuck. */
     awaitingPermission: 0,
+    /** Owner-granted (see answerPermission): tools pre-approved — no phone. */
+    auto: false,
+    /** The job has asked for auto mode; the first allowed card flips `auto`. */
+    autoRequested: false,
+    /** Audit counter — how many tools auto mode has let through. */
+    autoUses: 0,
     /** Local files attached to this conversation, never stored in operator.json. */
     resources: [],
     /** The orchestrator's provider-neutral description of the current work. */
@@ -1441,6 +1447,20 @@ function ask(job, req) {
   */
   if (req.signal?.aborted) return Promise.resolve(false);
 
+  /*
+    Auto mode is a standing consent the owner granted on a permission card
+    (flipped in answerPermission, only from his answer). Granting the whole
+    profile pre-approves the job's writes — no phone question, and no
+    30-minute death timer either, because that timer lives inside this promise
+    and this path never starts one. Counted so the audit trail shows what the
+    standing consent let through.
+  */
+  if (job.auto) {
+    job.autoUses = (job.autoUses ?? 0) + 1;
+    console.log(`[operator] auto: ${job.id} auto-allowed ${req.tool} (${job.autoUses}x)`);
+    return Promise.resolve(true);
+  }
+
   const id = `perm-${++questionSeq}`;
   return new Promise((resolve) => {
     let settled = false;
@@ -1552,11 +1572,49 @@ export function answerPermission(id, decision, remember, identity) {
   if (allowed && remember) remembered.add(q.rule);
   q.finish(allowed, allowed ? "allowed" : "denied", identity?.device ?? null);
 
+  // The owner's answer is the gate for auto mode: if this job asked to run
+  // without phone questions, their very next "allow" flips it on. Only his
+  // answer can reach here, so this is consent by construction — audited in
+  // the log and announced, and off is as easy as saying "turn auto mode off".
+  const flipping = jobs.get(q.jobId);
+  if (flipping && !flipping.auto && flipping.autoRequested) {
+    if (allowed) {
+      flipping.auto = true;
+      flipping.autoRequested = false;
+      console.log(`[operator] auto: owner approved — ${flipping.id} is now auto mode`);
+      void notify("Auto mode on", `${flipping.id} will no longer ask about its writes. Say "turn auto mode off" to stop it.`, { priority: "high" });
+    } else {
+      flipping.autoRequested = false;
+      console.log(`[operator] auto: owner declined — ${flipping.id} stays in normal mode`);
+    }
+  }
+
   console.log(
     `[operator] ${allowed ? "allowed" : "denied"} by ${identity?.device ?? "unknown"}: ${q.rule}` +
       (allowed && remember ? " (and won't ask again)" : "")
   );
   return { answered: true, rule: q.rule, decision, remembered: Boolean(allowed && remember) };
+}
+
+/**
+ * The "at its own consent" half of auto mode: a job may ASK, but the flag only
+ * flips on the owner's later permission answer (see answerPermission). Safe by
+ * construction — this never grants anything by itself.
+ */
+export function requestAuto(id) {
+  const job = jobs.get(id);
+  if (!job) return { requested: false, reason: `no job ${id}` };
+  if (job.auto) return { requested: true, already: true, job: { id, auto: true } };
+  const fresh = !job.autoRequested;
+  job.autoRequested = true;
+  if (fresh) {
+    console.log(`[operator] auto: ${id} requested auto mode`);
+    void notify(
+      "Auto mode requested",
+      `${id} asked to skip permission prompts. Allow its next permission card to switch it on — or deny, and it stays off.`,
+    );
+  }
+  return { requested: true, job: { id, auto: job.auto, autoRequested: job.autoRequested } };
 }
 
 /** Questions outstanding on one job — so a reopened tab knows what it owes. */
