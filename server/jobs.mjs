@@ -57,11 +57,12 @@
 // armed-plus-listed-device gate rather than a softer one. A future session must
 // not "relax it because it's only chat". It is not only chat.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { notify } from "./notify.mjs";
 import { reviewWork, snapshot as workspaceSnapshot } from "./semantic.mjs";
 import { runAction } from "./actions.mjs";
-import { state as worktreeState, sync as syncWorktree, warningFor } from "./worktree.mjs";
+import { state as worktreeState, sync as syncWorktree, warningFor, land as landTree } from "./worktree.mjs";
 import { recallFor } from "./memory.mjs";
 import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -104,6 +105,14 @@ const JOB_CWD = process.env.OPERATOR_JOB_CWD
   ? resolve(process.env.OPERATOR_JOB_CWD)
   : ROOT;
 if (JOB_CWD !== ROOT) console.log(`[operator] jobs will run in ${JOB_CWD}`);
+
+/*
+  The checkout with `main` out, where land merges and landed src/ changes are
+  rebuilt. Same derivation as actions.mjs: the server has always run from its
+  own repo root, so ".." from this file is it — no worktree-list lookup needed.
+*/
+const MAIN_CWD = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+if (JOB_CWD === MAIN_CWD) console.log("[operator] no agent worktree configured — auto-land is a no-op");
 
 const DEFAULT_MODEL = selectWorker(DEFAULT_PROVIDER).model;
 
@@ -1564,6 +1573,74 @@ function dropQuestions(jobId, decision) {
   }
 }
 
+// --- auto-land ------------------------------------------------------------
+//
+// The owner's rule (7 Sep): committed work lands as soon as a job finishes and
+// nothing is processing. `worktree_land` could never be the thing that does it
+// — it asks `busy()`, and `busy()` counts its own turn, so a job can never
+// land its own commits. Same shape as the 5am sync bug, fixed the same way:
+// the trigger lives OUTSIDE any single turn, at the moment the runner drains
+// (`pump()` with nothing claimed and nothing waiting).
+//
+// It merges fast-forward into the main checkout, rebuilds when a landed commit
+// touches `src/`, and stops there: it never restarts (a restart wipes every
+// job's event log — a person's act), never pushes, and only moves what the
+// agent already committed by name. A refusal is logged and waited out rather
+// than retried; the next drain tries again.
+
+const execFileP = promisify(execFile);
+
+/** The same two steps as scripts/land.mjs, run in the MAIN checkout. */
+async function buildMain() {
+  const steps = [
+    ["type check", ["node_modules/typescript/bin/tsc", "-b"]],
+    ["build", ["node_modules/vite/bin/vite.js", "build"]],
+  ];
+  for (const [what, args] of steps) {
+    console.log(`[operator] auto-land: ${what}…`);
+    await execFileP(process.execPath, args, {
+      cwd: MAIN_CWD,
+      timeout: 10 * 60_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  }
+}
+
+/** Land committed worktree work the moment nothing is processing. */
+async function maybeAutoLand() {
+  try {
+    if (JOB_CWD === MAIN_CWD) return; // no worktree — committed work is already on main
+    const result = await landTree(JOB_CWD, MAIN_CWD, busy());
+    if (!result.landed) {
+      if (result.reason && !result.reason.startsWith("nothing to land")) {
+        console.log(`[operator] auto-land: not landed — ${result.reason}`);
+      }
+      return;
+    }
+    const count = result.commits?.length ?? 0;
+    console.log(`[operator] auto-land: merged to main (${count} commit(s))`);
+    if (result.needsBuild) {
+      try {
+        await buildMain();
+        console.log("[operator] auto-land: build clean — the landed change is live.");
+      } catch (err) {
+        const tail = String(err?.stdout ?? err?.message ?? err).split("\n").slice(-6).join("\n");
+        console.error(`[operator] auto-land: BUILD FAILED after merging — main has the commit, dist/ is stale.\n${tail}`);
+        void notify("Auto-land: build failed", "Work merged onto main but the build failed — dist/ is stale, rebuild in the main checkout.", { priority: "high" });
+        return;
+      }
+    }
+    if (result.needsRestart) {
+      console.log("[operator] auto-land: server/ changed — landed, but a FULL restart is needed to be live.");
+      void notify("Work landed — restart needed", `${count} commit(s) landed onto main; a full restart makes the server change live.`, { priority: "high" });
+      return;
+    }
+    void notify("Work landed", `${count} commit(s) auto-landed onto main${result.needsBuild ? " — build clean, live now" : ""}.`);
+  } catch (err) {
+    console.error(`[operator] auto-land: ${String(err?.message ?? err).slice(0, 300)}`);
+  }
+}
+
 // --- the runner -----------------------------------------------------------
 
 /**
@@ -1626,6 +1703,15 @@ function pump() {
       queue would drain at the speed of whatever happens to call it next.
     */
   }
+
+  /*
+    The queue has nothing left to claim: no turn running, none waiting, and —
+    checked inside maybeAutoLand — no open questions or parked turns. That is
+    "nothing is processing", the owner's stated condition for landing. Firing
+    from here rather than from inside a turn means the lander never counts
+    itself busy — the shape of bug that kept sync stuck for a week.
+  */
+  if (running.size === 0 && waiting.length === 0) void maybeAutoLand();
 }
 
 /**
