@@ -12,6 +12,7 @@ import {
 import { useUpdates } from "@/hooks/useUpdates";
 import HandoffCard from "@/components/updates/HandoffCard";
 import ConfirmButton from "@/components/ui/ConfirmButton";
+import { Link, useSearchParams } from "react-router-dom";
 import { fromDateKey, relativeDay } from "@/lib/time";
 import type { UpdateEntry } from "@/lib/types";
 
@@ -317,9 +318,22 @@ export default function Updates() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [queuePage, setQueuePage] = useState(0);
   const [logPage, setLogPage] = useState(0);
+  /*
+    Day drill-down, from Statistics: /updates?day=YYYY-MM-DD shows everything
+    shipped on that date. Lives up here, before the paging math, because the
+    page count and the day filter must agree on the same source list.
+  */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dayParam = searchParams.get("day");
+  const dayKey = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : null;
+  const dayDone = dayKey ? done.filter((e) => e.date === dayKey) : null;
+  const changelogEmpty = (dayDone ?? done).length === 0;
+  function clearDay() {
+    setSearchParams({}, { replace: true });
+  }
 
   const queuePages = Math.max(1, Math.ceil(pending.length / PAGE_SIZE));
-  const logPages = Math.max(1, Math.ceil(done.length / PAGE_SIZE));
+  const logPages = Math.max(1, Math.ceil((dayDone ?? done).length / PAGE_SIZE));
 
   // Clearing the last entries on the last page would otherwise strand you on a
   // page that no longer exists, showing nothing.
@@ -337,7 +351,7 @@ export default function Updates() {
 
   // Slice first, then group: the headings describe what is on this page.
   const logDays = useMemo(
-    () => groupByDate(done.slice(logPage * PAGE_SIZE, logPage * PAGE_SIZE + PAGE_SIZE)),
+    () => groupByDate((dayDone ?? done).slice(logPage * PAGE_SIZE, logPage * PAGE_SIZE + PAGE_SIZE)),
     [done, logPage]
   );
   const logCount = logDays.reduce((total, day) => total + day.items.length, 0);
@@ -461,8 +475,23 @@ export default function Updates() {
           )}
         </header>
 
-        {done.length === 0 ? (
-          <p className="text-sm text-ink-700">Nothing logged yet.</p>
+        {dayKey && (
+          <div className="flex flex-wrap items-center gap-2 mb-4 rounded-badge border border-xp/30 bg-xp/5 px-3 py-2">
+            <span className="font-mono text-[11px] text-ink-300">
+              {(dayDone ?? []).length} {(dayDone ?? []).length === 1 ? "change" : "changes"} shipped on{" "}
+              {formatChangelogDate(dayKey)}
+            </span>
+            <button
+              onClick={clearDay}
+              className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-xp hover:text-ink-100 transition-colors"
+            >
+              <X size={12} /> clear
+            </button>
+          </div>
+        )}
+
+        {changelogEmpty ? (
+          <p className="text-sm text-ink-700">{dayKey ? "Nothing shipped on that day." : "Nothing logged yet."}</p>
         ) : (
           logDays.map(({ date, items }, i) => (
             <div key={`${date || "undated"}-${i}`} className="mb-5 last:mb-0">

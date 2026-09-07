@@ -249,6 +249,17 @@ function ShippedChart({ days }: { days: DayCount[] }) {
           <span className="text-ink-100">{label(shown)}</span>
           {" — "}
           {shown.count} {shown.count === 1 ? "entry" : "entries"}
+          {shown.count > 0 && (
+            <>
+              {" · "}
+              <Link
+                to={`/updates?day=${shown.date}`}
+                className="text-xp hover:text-ink-100 underline decoration-xp/40 underline-offset-2 transition-colors"
+              >
+                see them
+              </Link>
+            </>
+          )}
           {busiest && shown.date !== busiest.date && mean > 0 && (
             <span className="text-ink-700">
               {"  ·  avg "}
@@ -307,6 +318,11 @@ export default function Statistics() {
           <Figure
             value={s.shipped.busiestDay?.count ?? 0}
             label="busiest day"
+            to={
+              s.shipped.busiestDay
+                ? `/updates?day=${s.shipped.busiestDay.date}`
+                : undefined
+            }
             hint={
               s.shipped.busiestDay
                 ? new Date(`${s.shipped.busiestDay.date}T12:00:00`).toLocaleDateString("en-GB", {
