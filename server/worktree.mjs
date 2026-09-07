@@ -218,9 +218,19 @@ export async function land(cwd, mainCwd, busy = false) {
     getting this wrong is the failure that looks like the fix not working —
     which is exactly what the landed commit was fixing.
   */
-  const files = (await git(mainCwd, ["show", "--name-only", "--format=", "HEAD"]))
-    .split(String.fromCharCode(10))
-    .filter(Boolean);
+  /*
+    The whole landed range, not just HEAD. A multi-commit land is the norm,
+    and the top commit is not the story: a server/ change hiding under a
+    root-only commit would be announced as "nothing to run" and never get its
+    restart — the exact failure this comment block exists to prevent. HEAD~N
+    with N = the count of commits this merge added is the pre-merge main tip.
+  */
+  const count = Math.max(0, s.unlanded?.length ?? 0);
+  const files = count > 0
+    ? (await git(mainCwd, ["diff", "--name-only", `HEAD~${count}..HEAD`]))
+        .split(String.fromCharCode(10))
+        .filter(Boolean)
+    : [];
   const touchedSrc = files.some((f) => f.startsWith("src/"));
   const touchedServer = files.some((f) => f.startsWith("server/"));
 
