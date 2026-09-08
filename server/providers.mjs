@@ -86,7 +86,21 @@ const GEMINI = {
  */
 const OLLAMA = {
   id: "ollama",
-  label: "Local",
+  /*
+    Labelled for what it is now, not what it was.
+
+    Nothing routes here any more. ADR 0016 moved the classifier to AI Router
+    when Gemini's free tier ran out, and `OPERATOR_SEMANTIC_PROVIDER=airouter`
+    moved verification too — so the 3B has no automatic job left. It stays
+    registered for the one capability nothing else has: it answers with no
+    network and no quota.
+
+    Naming that in the picker rather than dropping it, because "Local" alone
+    invites picking it for ordinary work, where it is measurably too weak — the
+    same "listed and then disappoints" failure the GEMINI note above describes,
+    one step later.
+  */
+  label: "Local (offline only)",
   defaultModel: null, // filled from what is installed
   models: [],
   capabilities: {

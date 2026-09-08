@@ -96,7 +96,18 @@ async function askModel({ prompt, model, system, maxTokens }) {
 export const enabled = process.env.OPERATOR_SEMANTIC_VERIFY === "1";
 
 /** Overridable, because the model that fits will change with the hardware. */
-const MODEL = process.env.OPERATOR_VERIFY_MODEL ?? "";
+/*
+  Which model checks the work.
+
+  Empty meant "the router's default", which is DeepSeek-V4-Flash — chosen for
+  the CLASSIFIER, where a one-word answer wants latency above all. Verification
+  is the opposite shape: it reads a diff and the request it came from and says
+  whether they match, and being wrong there is worse than being slow. The router
+  is flat-rate, so the stronger model costs nothing extra per call.
+
+  Still overridable, and still empty-means-default if the name ever changes.
+*/
+const MODEL = process.env.OPERATOR_VERIFY_MODEL ?? "Qwen3.8";
 
 /*
   Every input is capped, and truncation is reported rather than hidden.

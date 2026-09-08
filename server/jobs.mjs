@@ -1246,20 +1246,61 @@ function emit(job, type, data = {}) {
  * so a crash mid-write loses at most the line in flight, and restore() re-sorts
  * by `seq` to iron out any interleaving between concurrent appends.
  */
+/*
+  Self-healing on ENOENT, once per process, rather than a warning flood forever.
+
+  2026-09-08: the directory-creation fix in this file (see the comment above
+  TRANSCRIPTS_DIR) landed at 04:31 while a server process from 03:05 kept
+  running until 16:35 — thirteen hours, every event of every job, two ENOENT
+  lines each. The fix was correct and on disk the whole time; the RUNNING
+  PROCESS never reached the `await mkdir` at the top of the module, because
+  that only runs once, at boot. A fix that needs a restart to take effect
+  reads as unfixed to anyone watching the log of a process that outlives its
+  own patch — which is exactly what happened, and is worth not repeating.
+
+  This does not replace the boot-time mkdir; a process that boots into a
+  missing directory should still have it before the first append rather than
+  learn about it from a caught error. It exists for the case boot-time
+  creation cannot cover: TRANSCRIPTS_DIR removed WHILE the server is running —
+  by hand, by a backup tool, by anything — which no fix at boot could have
+  addressed regardless of when the process started.
+*/
+let transcriptsRecreated = false;
+
 function appendTranscript(job, event) {
   try {
     if (!job?.id) return;
-    void appendFile(transcriptPath(job, "jsonl"), `${JSON.stringify(event)}\n`, "utf8").catch((err) =>
-      console.warn(`[operator] transcript ${job.id}: ${String(err?.message ?? err).split("\n")[0]}`),
-    );
+    const jsonlPath = transcriptPath(job, "jsonl");
+    const jsonlLine = `${JSON.stringify(event)}\n`;
     const d = new Date(event.at);
     const pad = (n) => String(n).padStart(2, "0");
     const stamp = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     const line = renderEvent(event.type, event);
     const short = line.length > 1200 ? `${line.slice(0, 1200)}…` : line;
-    void appendFile(transcriptPath(job, "md"), `\`${stamp}\` ${short}\n`, "utf8").catch((err) =>
-      console.warn(`[operator] transcript ${job.id}: ${String(err?.message ?? err).split("\n")[0]}`),
-    );
+    const mdPath = transcriptPath(job, "md");
+    const mdLine = `\`${stamp}\` ${short}\n`;
+
+    const onFail = async (path, text, err) => {
+      // One recreation attempt per process, not one per failed append — a
+      // directory that keeps vanishing is a different problem than one that
+      // vanished once, and retrying per-event would just be the same flood
+      // with extra steps.
+      if (err?.code !== "ENOENT" || transcriptsRecreated) {
+        console.warn(`[operator] transcript ${job.id}: ${String(err?.message ?? err).split("\n")[0]}`);
+        return;
+      }
+      transcriptsRecreated = true;
+      try {
+        await mkdir(TRANSCRIPTS_DIR, { recursive: true });
+        await appendFile(path, text, "utf8");
+        console.warn(`[operator] transcript dir was missing — recreated ${TRANSCRIPTS_DIR}`);
+      } catch (err2) {
+        console.warn(`[operator] transcript ${job.id}: could not recreate the directory: ${String(err2?.message ?? err2).split("\n")[0]}`);
+      }
+    };
+
+    void appendFile(jsonlPath, jsonlLine, "utf8").catch((err) => onFail(jsonlPath, jsonlLine, err));
+    void appendFile(mdPath, mdLine, "utf8").catch((err) => onFail(mdPath, mdLine, err));
   } catch {
     // A malformed event is not worth a warning flood.
   }
@@ -3054,7 +3095,16 @@ export async function create(
     );
   }
 
-  const selection = selectWorker(provider, model);
+  /*
+    An explicit model from the caller wins; otherwise take the router's.
+
+    Routing used to choose only a provider, so every Claude job ran on that
+    provider's `defaultModel` — Opus 5 for everything, including a one-word
+    label change. `routeTask` now returns a model alongside the provider and
+    the reasoning; `null` from it still means "use the provider's default",
+    which is what a worker with machine-dependent models (Ollama) needs.
+  */
+  const selection = selectWorker(provider, model || routed?.model || undefined);
   const job = blankJob(`job-${++jobSeq}`);
   job.title = titleFrom(text);
   job.device = identity?.device ?? null;

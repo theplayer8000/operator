@@ -149,6 +149,25 @@ const HISTORY_BUDGET = Math.max(
 );
 /** Recent messages left alone however big they are — the live working set. */
 const KEEP_RECENT = 12;
+/**
+ * Images get a MUCH tighter recency window than text and tool results.
+ *
+ * 2026-09-08: a job attached two screenshots (1.2–1.3 MB each, ~1.6 MB apiece
+ * once base64) roughly nine attempts before the end of a thirteen-hour
+ * session. Every one of those later attempts logged the same line —
+ * "history still 1801KB of 300KB budget — budget exceeded, a 413 is
+ * possible" — because pass 1 below shares `last` (the KEEP_RECENT=12
+ * boundary) with the tool-result and tool-args passes, and the two images
+ * never fell more than 12 messages behind. A conversation whose recent
+ * exchanges are short — a question, a short answer, repeat — can keep a
+ * multi-megabyte image "recent" for arbitrarily long, and the log was
+ * naming a real, live 413 risk the whole time, not a cosmetic one.
+ *
+ * An image is evidence for the turn it arrived in. Two messages later, the
+ * model has already looked at it and answered; keeping it protected as long
+ * as prose is protected buys nothing and risks the request outright.
+ */
+const KEEP_RECENT_IMAGES = Number(process.env.OPERATOR_AIROUTER_KEEP_IMAGES || 2) || 2;
 /** Below this a tool result is not worth stubbing; the stub costs bytes too. */
 const STUB_OVER = 400;
 
@@ -173,7 +192,13 @@ function pruneHistory(messages, onEvent) {
 
   let dropped = 0;
   let freed = 0;
+  // Counted per pass so the summary line names what it actually dropped —
+  // "trimmed 1 old tool result" read as harmless right up until it was the
+  // two untouched images, twelve messages away, that were the real problem.
+  let imagesDropped = 0;
   const last = messages.length - KEEP_RECENT;
+  // Images use their own, much shorter boundary — see KEEP_RECENT_IMAGES.
+  const lastImage = messages.length - KEEP_RECENT_IMAGES;
 
   /*
     Three places carry bulk, and the first version only reached one of them.
@@ -195,8 +220,10 @@ function pruneHistory(messages, onEvent) {
     passed), then write arguments, then tool results.
   */
 
-  // 1. Old images.
-  for (let i = 0; i < last && total > HISTORY_BUDGET; i += 1) {
+  // 1. Old images — pruned past KEEP_RECENT_IMAGES messages back, not
+  // KEEP_RECENT. See the constant's comment for why they need a tighter leash
+  // than everything else this function trims.
+  for (let i = 0; i < lastImage && total > HISTORY_BUDGET; i += 1) {
     const m = messages[i];
     if (!Array.isArray(m?.content)) continue;
     const kept = [];
@@ -214,6 +241,7 @@ function pruneHistory(messages, onEvent) {
     freed += removed;
     total -= removed;
     dropped += 1;
+    imagesDropped += 1;
   }
 
   // 2. Old tool-call arguments — where write_file hides a whole file.
@@ -253,8 +281,15 @@ function pruneHistory(messages, onEvent) {
     small context window is still diagnosable from outside, just not on screen.
   */
   if (total > HISTORY_BUDGET || dropped) {
+    const textDropped = dropped - imagesDropped;
+    const what = [
+      imagesDropped ? `${imagesDropped} image(s)` : "",
+      textDropped ? `${textDropped} tool result/argument(s)` : "",
+    ]
+      .filter(Boolean)
+      .join(", ") || "nothing prunable found";
     console.warn(
-      `[airouter] trimmed ${dropped} old tool result(s) (freed ${Math.round(freed / 1000)}KB); ` +
+      `[airouter] trimmed ${what} (freed ${Math.round(freed / 1000)}KB); ` +
         `history still ${Math.round(total / 1000)}KB of ${Math.round(HISTORY_BUDGET / 1000)}KB budget` +
         (total > HISTORY_BUDGET ? " — budget exceeded, a 413 is possible" : ""),
     );

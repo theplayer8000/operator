@@ -243,14 +243,116 @@ const JUST_DATA = [
   /\b(todays?|today's) (date|day)\b/i,
 ];
 
+/*
+  Which MODEL, not just which worker.
+
+  Routing has only ever chosen a provider, and then taken that provider's
+  `defaultModel` — so every Claude-bound job ran on Opus 5 and every AI Router
+  job on DeepSeek-V4-Flash, regardless of what was asked. That is the same
+  mistake this file exists to fix, one level down: the cost asymmetry between
+  workers ("don't send 'what's on this week' to an agentic loop") is present
+  again between models, and nothing was reading it.
+
+  ## Why the default stays Opus, and Sonnet is opt-in
+
+  The two directions are NOT symmetric, and the history in this repository says
+  which way to lean. Over-routing to Opus wastes money on a turn that would have
+  been fine. Under-routing a multi-file change to a weaker model risks the
+  failure this codebase has actually suffered — twice — where the server half of
+  a migration lands, the frontend half does not, and `main` cannot restart. The
+  build gates do not catch it: `tsc` and `vite` never read a `.mjs`.
+
+  So Sonnet is chosen only on clear, narrow signals, and anything ambiguous
+  keeps the current behaviour. A wrong Sonnet call is a bad change; a wrong Opus
+  call is an invoice.
+
+  `server/` is in HEAVY unconditionally. Not because those files are hard, but
+  because getting one wrong is the expensive kind of wrong — it needs a restart
+  to even become visible, and the gates are blind to it.
+*/
+const HEAVY_CODE = [
+  // Anything under server/ — see above. Restart-visible, gate-invisible.
+  /\bserver\//,
+  /\b(refactor|refactoring|migrat\w+|rewrite|rewriting|redesign|architecture)\b/i,
+  /\b(across|multiple|several|every|all)\s+(the\s+)?(file|page|component|module|route)/i,
+  /\b(merge|rebase|revert|cherry.?pick|conflict)\b/i,
+  /\b(investigat\w+|root cause|why (is|does|isn'?t|won'?t)|stack trace|regression)\b/i,
+  /\b(design|plan|propose|adr|decide)\b/i,
+];
+
+/*
+  The narrow end: changes whose blast radius is one file and whose failure is
+  visible immediately. Deliberately short. Every entry here is something that
+  either compiles or does not, and that a person notices on the next screen.
+*/
+const LIGHT_CODE = [
+  /\b(typo|spelling|wording|copy|label|caption|placeholder|comment)\b/i,
+  /\b(colou?r|padding|spacing|margin|font size|border radius)\b/i,
+  /\b(one|single|a)\s+(file|line|word|string|component)\b/i,
+  /\b(rename|tweak|nudge|adjust)\b/i,
+];
+
+/**
+ * Which Claude model for this request.
+ *
+ * Heavy wins ties: "rename the colour variable across every component" is a
+ * multi-file change wearing two light words.
+ */
+function claudeModel(prompt) {
+  if (HEAVY_CODE.some((re) => re.test(prompt))) {
+    return { model: "claude-opus-5", note: "multi-file, server/, or investigative" };
+  }
+  if (LIGHT_CODE.some((re) => re.test(prompt))) {
+    return { model: "claude-sonnet-5", note: "narrow, single-file change" };
+  }
+  return { model: "claude-opus-5", note: "scope unclear — kept on the stronger model" };
+}
+
+/**
+ * Which AI Router model.
+ *
+ * The classifier already runs on Qwen3.8 (`CLASSIFIER_MODEL`) because it needs
+ * to be right, not fast. The WORKER default was never revisited and is still
+ * DeepSeek-V4-Flash, which is the correct pick for a quick data question and
+ * the wrong one for the job this worker actually took on in ADR 0016's
+ * amendment: the fallback that writes code when Claude is down. Flat-rate
+ * pricing means the bigger model costs nothing extra per call, so the only
+ * reason to choose Flash is latency — which a coding turn does not care about.
+ */
+function airouterModel(kind) {
+  return kind === "code"
+    ? { model: "Qwen3.8", note: "code work — the stronger router model" }
+    : { model: "DeepSeek-V4-Flash", note: "quick answer — the fast router model" };
+}
+
+/**
+ * Attach the model to a decision.
+ *
+ * `null` means "use the provider's own default" — the behaviour every caller
+ * had before this existed, and the right answer for a worker whose models are
+ * whatever the machine happens to have pulled (Ollama).
+ */
+function withModel(provider, prompt, why) {
+  if (provider === "claude-code") {
+    const { model, note } = claudeModel(prompt);
+    return { provider, model, why: `${why} · ${note}` };
+  }
+  if (provider === "airouter") {
+    const kind = NEEDS_CODE.some((re) => re.test(prompt)) ? "code" : "data";
+    const { model, note } = airouterModel(kind);
+    return { provider, model, why: `${why} · ${note}` };
+  }
+  return { provider, model: null, why };
+}
+
 function fastPath(prompt) {
   // Code wins ties: a request naming both a file and the calendar is almost
   // certainly about making the app do something, not about the calendar.
   if (NEEDS_CODE.some((re) => re.test(prompt))) {
-    return { provider: "claude-code", why: "mentions code, the repo, or a git/build command" };
+    return withModel("claude-code", prompt, "mentions code, the repo, or a git/build command");
   }
   if (JUST_DATA.some((re) => re.test(prompt)) && prompt.length < 200) {
-    return { provider: DATA_WORKER, why: "your own data — no code involved" };
+    return withModel(DATA_WORKER, prompt, "your own data — no code involved");
   }
   return null;
 }
@@ -342,6 +444,7 @@ async function classify(prompt, signal) {
 export async function routeTask(prompt, allProviders, signal) {
   // Anything cooling down after saying it was out of capacity drops out here,
   // so every decision below is made over workers that can actually take work.
+  const text0 = String(prompt ?? "").trim();
   const available = usable(allProviders);
   const sidelined = allProviders.filter((id) => !available.includes(id));
   const note = sidelined.length ? ` (${sidelined.join(", ")} unavailable)` : "";
@@ -350,25 +453,23 @@ export async function routeTask(prompt, allProviders, signal) {
 
   // Nothing to decide, and no reason to spend a call finding that out.
   if (available.length <= 1) {
-    return {
-      provider: fallback,
-      why: sidelined.length ? `the only worker available${note}` : "the only worker enabled",
-    };
+    return withModel(
+      fallback,
+      text0,
+      sidelined.length ? `the only worker available${note}` : "the only worker enabled",
+    );
   }
 
-  const text = String(prompt ?? "").trim();
-  if (!text) return { provider: fallback, why: `nothing to classify${note}` };
+  const text = text0;
+  if (!text) return withModel(fallback, "", `nothing to classify${note}`);
 
   const quick = fastPath(text);
   if (quick && available.includes(quick.provider)) return { ...quick, why: quick.why + note };
 
   const decided = await classify(text, signal);
   if (decided && available.includes(decided.provider)) {
-    return { ...decided, why: decided.why + note };
+      return withModel(decided.provider, text, decided.why + note);
   }
 
-  return {
-    provider: fallback,
-    why: `couldn't tell — sent to the more capable worker${note}`,
-  };
+  return withModel(fallback, text, `couldn't tell — sent to the more capable worker${note}`);
 }
