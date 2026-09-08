@@ -12,6 +12,7 @@ import MissionStatusChart from "@/components/dashboard/MissionStatusChart";
 import HomelabStatus from "@/components/dashboard/HomelabStatus";
 import CurrentTime from "@/components/dashboard/CurrentTime";
 import MissionGraph from "@/components/dashboard/MissionGraph";
+import OperatorControl from "@/components/dashboard/OperatorControl";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 export default function Dashboard() {
@@ -68,6 +69,10 @@ export default function Dashboard() {
       <UpcomingEvents />
       <QuickNotes notes={notes} onAdd={addNote} onEdit={editNote} onDelete={deleteNote} />
       <RecentActivity activity={activity} />
+      </div>
+
+      <div className="mt-4">
+        <OperatorControl />
       </div>
 
       {bigScreen && (
