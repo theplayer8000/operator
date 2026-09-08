@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Activity,
   BellRing,
   Cpu,
   Radio,
@@ -10,16 +9,17 @@ import {
   SlidersHorizontal,
   Square,
 } from "lucide-react";
-import Card from "@/components/ui/Card";
 import { useRemoteStorage } from "@/hooks/useRemoteStorage";
 import { retry as reloadStore } from "@/lib/remoteStore";
 import { useJobs } from "@/hooks/useJobs";
 
 /**
- * OperatorControl — the Control dashboard wireframe (vault edf1f3b2), first
- * full slice, mounted on the existing Dashboard page where the mission map and
- * node graph live. This is the UI half of auto mode, and every pane speaks to
- * a real endpoint — nothing here is mocked:
+ * OperatorControl — the Control dashboard wireframe (vault edf1f3b2), mounted
+ * on the existing Dashboard page where the mission map and node graph live.
+ * Presented as compact stacked `card-base` panels, the same smaller view the
+ * Dev page uses (Terminal / Logs / Connected clients) and the app's own
+ * glassy material — no invented styling. Every pane speaks to a real endpoint;
+ * nothing here is mocked:
  *
  *  - AUTO MODE: the global master switch. Read from the persisted
  *    `operator.autoMode` store key, written through the `auto_mode` action
@@ -31,15 +31,13 @@ import { useJobs } from "@/hooks/useJobs";
  *    with the wireframe's buttons: Allow / No / Allow & stop asking.
  *  - LIVE JOBS: per-job controls (Stop on a running turn, Retry on a failed
  *    one) and the per-job model selector (setModel).
- *  - WORKERS & ROUTING: default model, providers, the available model set.
+ *  - WORKERS & ROUTING: default model, providers.
  *  - CAPABILITY LOCKS: the standing profile for real — deniedTools (locked)
  *    and allowedTools (runs without asking) — plus a grant input that writes
  *    an allow rule through the same endpoint the CLI uses.
- *  - LIVE EVENT STREAM: the selected job's log, live permission questions
- *    answerable inline.
- *
- * Not wired yet (staged in the vault note): the sandbox terminal/artifacts
- * pane and the frosted-glass visuals.
+ *  - EVENT STREAM: the selected job's log with live permission questions
+ *    answerable inline, and tool results as collapsible output (the
+ *    wireframe's ARTIFACTS half).
  */
 export default function OperatorControl() {
   const jobs = useJobs();
@@ -125,28 +123,18 @@ export default function OperatorControl() {
   const visibleEvents = (events ?? []).filter((e) => e.type !== "usage");
 
   return (
-    <Card
-      title="Operator Control"
-      icon={<Activity size={15} />}
-      action={
-        <span className={`font-mono text-[11px] ${on ? "text-xp" : "text-ink-700"}`}>
-          auto mode {on ? "on" : "off"}
-        </span>
-      }
-    >
+    <>
       {/* AUTO MODE — the master switch */}
-      <div className="rounded-badge border border-xp/25 bg-xp/5 px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="flex items-center gap-2 text-sm font-semibold text-ink-100">
-              <SlidersHorizontal size={15} className="text-xp shrink-0" />
-              Auto mode
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-ink-500">
-              Global master switch — every job stops asking for permission while
-              on. Hard refusals (git push, deletes) are unchanged. Survives a
-              restart.
-            </p>
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <SlidersHorizontal size={15} className="text-xp shrink-0" />
+            <div className="min-w-0">
+              <h2 className="font-display text-sm font-medium text-ink-300">Auto mode</h2>
+              <p className="text-xs text-ink-700 truncate">
+                Global master switch — every job stops asking while on
+              </p>
+            </div>
           </div>
           <button
             role="switch"
@@ -164,29 +152,41 @@ export default function OperatorControl() {
               }`}
             />
           </button>
-        </div>
+        </header>
+        <p className="text-xs leading-relaxed text-ink-500">
+          Hard refusals (git push, deletes) are unchanged. Survives a restart.
+        </p>
         {error && (
           <p className="mt-2 rounded-badge border border-vital-down/30 bg-vital-down/10 px-3 py-2 text-xs text-ink-300">
             {error}
           </p>
         )}
-      </div>
+      </section>
 
       {/* WAITING ON YOU */}
-      <div className="mt-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-ink-300">
-          <BellRing size={14} className="text-ink-500" />
-          Waiting on you
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <BellRing size={15} className="text-ink-500 shrink-0" />
+            <div className="min-w-0">
+              <h2 className="font-display text-sm font-medium text-ink-300">Waiting on you</h2>
+              <p className="text-xs text-ink-700 truncate">
+                {askingJobs.length === 0
+                  ? "Nothing pending — the machine isn&apos;t blocked on you"
+                  : `${askingJobs.length} ${askingJobs.length === 1 ? "job" : "jobs"} need a decision`}
+              </p>
+            </div>
+          </div>
           {askingJobs.length > 0 && (
-            <span className="rounded-full bg-vital-down/20 px-2 py-0.5 font-mono text-[11px] text-vital-down">
+            <span className="shrink-0 rounded-full bg-vital-down/20 px-2 py-0.5 font-mono text-[11px] text-vital-down">
               {askingJobs.length}
             </span>
           )}
-        </p>
+        </header>
         {askingJobs.length === 0 ? (
-          <p className="mt-2 text-xs text-ink-700">Nothing pending — the machine isn&apos;t blocked on you.</p>
+          <p className="text-xs text-ink-700">Nothing pending.</p>
         ) : (
-          <ul className="mt-2 space-y-1.5">
+          <ul className="space-y-1.5">
             {askingJobs.map((j) => (
               <li key={j.id}>
                 <button
@@ -209,26 +209,27 @@ export default function OperatorControl() {
             ))}
           </ul>
         )}
-      </div>
+      </section>
 
       {/* LIVE JOBS */}
-      <div className="mt-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="flex items-center gap-2 text-sm font-medium text-ink-300">
-            <Radio size={14} className="text-ink-500" />
-            Live jobs
-            <span className="font-mono text-[11px] text-ink-700">{jobList.length}</span>
-          </p>
-          {typeof budgetUsd === "number" && budgetUsd > 0 && (
-            <span className="font-mono text-[11px] text-ink-700">
-              ${spentUsd.toFixed(2)} / ${budgetUsd.toFixed(2)}
-            </span>
-          )}
-        </div>
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Radio size={15} className="text-ink-500 shrink-0" />
+            <div className="min-w-0">
+              <h2 className="font-display text-sm font-medium text-ink-300">Live jobs</h2>
+              <p className="text-xs text-ink-700 truncate">
+                {typeof budgetUsd === "number" && budgetUsd > 0
+                  ? `${jobList.length} jobs · $${spentUsd.toFixed(2)} / $${budgetUsd.toFixed(2)}`
+                  : `${jobList.length} jobs`}
+              </p>
+            </div>
+          </div>
+        </header>
         {jobList.length === 0 ? (
-          <p className="mt-2 text-xs text-ink-700">No jobs — start one from Operator.</p>
+          <p className="text-xs text-ink-700">No jobs — start one from Operator.</p>
         ) : (
-          <ul className="mt-2 space-y-1.5">
+          <ul className="space-y-1.5">
             {jobList.map((j) => {
               const isRunning = runningIds.includes(j.id);
               return (
@@ -294,35 +295,45 @@ export default function OperatorControl() {
             })}
           </ul>
         )}
-      </div>
+      </section>
 
       {/* WORKERS & ROUTING */}
-      <div className="mt-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-ink-300">
-          <Cpu size={14} className="text-ink-500" />
-          Workers &amp; routing
-        </p>
-        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center gap-2 mb-3">
+          <Cpu size={15} className="text-ink-500 shrink-0" />
+          <div className="min-w-0">
+            <h2 className="font-display text-sm font-medium text-ink-300">Workers &amp; routing</h2>
+            <p className="text-xs text-ink-700 truncate">
+              {providers.length > 0 ? providers.map((p) => p.label).join(", ") : "No providers"}
+            </p>
+          </div>
+        </header>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
           <div>
             <dt className="text-ink-700">Default model</dt>
             <dd className="font-mono text-ink-100">{defaultModel || "—"}</dd>
           </div>
           <div>
-            <dt className="text-ink-700">Providers</dt>
+            <dt className="text-ink-700">Budget</dt>
             <dd className="font-mono text-ink-300">
-              {providers.length > 0 ? providers.map((p) => p.label).join(", ") : "—"}
+              {typeof budgetUsd === "number" && budgetUsd > 0
+                ? `$${spentUsd.toFixed(2)} / $${budgetUsd.toFixed(2)}`
+                : "—"}
             </dd>
           </div>
         </dl>
-      </div>
+      </section>
 
       {/* CAPABILITY LOCKS */}
-      <div className="mt-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-ink-300">
-          <ShieldCheck size={14} className="text-ink-500" />
-          Capability locks
-        </p>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center gap-2 mb-3">
+          <ShieldCheck size={15} className="text-ink-500 shrink-0" />
+          <div className="min-w-0">
+            <h2 className="font-display text-sm font-medium text-ink-300">Capability locks</h2>
+            <p className="text-xs text-ink-700 truncate">What runs without asking</p>
+          </div>
+        </header>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="rounded-badge border border-base-600 bg-base-700/40 px-3 py-2">
             <p className="font-mono text-[10px] uppercase tracking-wide text-ink-700">Locked</p>
             {deniedTools.length === 0 ? (
@@ -377,29 +388,37 @@ export default function OperatorControl() {
           </button>
         </div>
         {grantMsg && <p className="mt-1.5 text-[11px] text-ink-600">{grantMsg}</p>}
-      </div>
+      </section>
 
-      {/* LIVE EVENT STREAM */}
-      <div className="mt-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-ink-300">
-          <ScrollText size={14} className="text-ink-500" />
-          Live event stream
-          <span className="font-mono text-[11px] text-ink-700">{selected ? selected.title || selected.id : "—"}</span>
-        </p>
+      {/* EVENT STREAM */}
+      <section className="card-base p-4 sm:p-5 mb-5 animate-fade-up">
+        <header className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <ScrollText size={15} className="text-ink-500 shrink-0" />
+            <div className="min-w-0">
+              <h2 className="font-display text-sm font-medium text-ink-300">Event stream</h2>
+              <p className="text-xs text-ink-700 truncate">
+                {selected ? selected.title || selected.id : "Pick a job from Waiting on you / Live jobs"}
+              </p>
+            </div>
+          </div>
+        </header>
         {visibleEvents.length === 0 ? (
-          <p className="mt-2 text-xs text-ink-700">No events yet — pick a job above.</p>
+          <p className="text-xs text-ink-700">No events yet — pick a job.</p>
         ) : (
-          <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+          <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
             {visibleEvents.map((e, i) => (
               <div key={i} className="flex gap-2 text-xs leading-relaxed">
-                <span className="shrink-0 font-mono text-[10px] text-ink-700">
-                  {timeOf(e.at)}
-                </span>
+                <span className="shrink-0 font-mono text-[10px] text-ink-700">{timeOf(e.at)}</span>
                 {e.type === "permission_request" ? (
                   <div className="min-w-0 flex-1 rounded-badge border border-xp/40 bg-xp/5 px-3 py-2">
                     <p className="font-mono text-[10px] uppercase tracking-wide text-xp">Needs your say-so</p>
-                    <p className="mt-0.5 break-words text-ink-200">{e.title || e.rule || e.tool || "A tool wants to run."}</p>
-                    {e.description && <p className="mt-0.5 break-words text-[11px] text-ink-500">{e.description}</p>}
+                    <p className="mt-0.5 break-words text-ink-200">
+                      {e.title || e.rule || e.tool || "A tool wants to run."}
+                    </p>
+                    {e.description && (
+                      <p className="mt-0.5 break-words text-[11px] text-ink-500">{e.description}</p>
+                    )}
                     {e.id && selectedId ? (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         <button
@@ -448,7 +467,9 @@ export default function OperatorControl() {
                   <div className="min-w-0 flex-1">
                     {e.text?.trim() ? (
                       <details className="font-mono text-[11px]">
-                        <summary className={`cursor-pointer ${e.ok === false ? "text-vital-down" : "text-ink-500"}`}>
+                        <summary
+                          className={`cursor-pointer ${e.ok === false ? "text-vital-down" : "text-ink-500"}`}
+                        >
                           {e.ok === false ? "error" : "result"} · {e.text.split("\n").length} lines
                         </summary>
                         <pre className="mt-1 max-h-40 overflow-x-auto overflow-y-auto whitespace-pre-wrap rounded-badge border border-base-600 bg-base-950/60 p-2 text-ink-500">
@@ -464,14 +485,16 @@ export default function OperatorControl() {
                 ) : e.type === "prompt" ? (
                   <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-ink-100">{e.text}</p>
                 ) : (
-                  <p className="min-w-0 flex-1 break-words text-ink-500">{e.text || e.status || e.detail || e.type}</p>
+                  <p className="min-w-0 flex-1 break-words text-ink-500">
+                    {e.text || e.status || e.detail || e.type}
+                  </p>
                 )}
               </div>
             ))}
           </div>
         )}
-      </div>
-    </Card>
+      </section>
+    </>
   );
 }
 
