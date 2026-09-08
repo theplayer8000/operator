@@ -567,7 +567,7 @@ function Tab({
           ))}
         </span>
       ) : job.restored ? (
-        <span title="From before a restart — Claude still remembers, the log doesn't">
+        <span title="From before a restart — the transcript was restored from disk">
           <History size={12} className="shrink-0 text-ink-700" />
         </span>
       ) : null}
@@ -1354,8 +1354,8 @@ export default function OrchestratorChat() {
               . Those two can&apos;t be undone, so it writes the command out and you run it.
               Anything else outside the pre-approved list{" "}
               <strong className="font-normal text-ink-500">pauses the turn and asks you</strong>,
-              and answering carries the same turn on. Conversations survive a restart; the event
-              log doesn&apos;t, but its own session does, so a restored one picks up where it
+              and answering carries the same turn on. Conversations survive a restart, and the transcript is kept on disk —
+              the log comes back with them, and Claude&apos;s own session resumes where it
               left off.
             </p>
           ) : null)}

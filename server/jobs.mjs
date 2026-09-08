@@ -64,7 +64,7 @@ import { reviewWork, snapshot as workspaceSnapshot } from "./semantic.mjs";
 import { runAction } from "./actions.mjs";
 import { state as worktreeState, sync as syncWorktree, warningFor, land as landTree } from "./worktree.mjs";
 import { recallFor } from "./memory.mjs";
-import { readFile, writeFile, mkdir, rename, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename, rm, appendFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -953,6 +953,28 @@ let jobSeq = 0;
 */
 const JOBS_FILE = process.env.OPERATOR_JOBS_FILE ?? join(ROOT, "data", "jobs.json");
 
+/*
+  The FULL transcript, not just the index.
+
+  Events live in memory and die with the process — that was the deal when the
+  index was the only thing on disk, and it is the failure behind "a restart
+  destroys every job's event log" being a real sentence. The owner asked for
+  the conversations themselves to survive, on his hard drive, HIS files to
+  delete. So two files per job under data/transcripts/ (data/ is gitignored —
+  never lands, never commits):
+
+    <id>.jsonl — every event, one JSON object per line. The source of truth:
+                 restore() replays it, so a restart keeps the conversation
+                 instead of showing an empty thread.
+    <id>.md    — the same events rendered as a readable log, since .jsonl is
+                 honest but nobody reads it in an editor.
+
+  NOTHING in this server deletes them. Clearing a tab must not be able to take
+  the record with it; purging data/transcripts/ is the owner's call — exactly
+  the ownership he asked for.
+*/
+const TRANSCRIPTS_DIR = process.env.OPERATOR_TRANSCRIPTS_DIR ?? join(ROOT, "data", "transcripts");
+
 /** Fields worth surviving a restart — no events, no transcript. */
 function indexOf(job) {
   return {
@@ -1018,6 +1040,59 @@ export function flush() {
   return persist();
 }
 
+/**
+ * Replay a job's saved transcript so a restart keeps the conversation.
+ *
+ * The .jsonl is append-only while running, so lines are re-sorted by `seq`
+ * (concurrent appends can interleave) and anything that no longer parses — a
+ * crash mid-line — is skipped. Capped like the live log (newest MAX_EVENTS;
+ * the tail is what matters). `eventSeq` continues from the highest restored
+ * seq, so events emitted after the restart keep numbering up.
+ */
+async function restoreTranscript(job) {
+  const file = transcriptPath(job, "jsonl");
+  if (!existsSync(file)) return;
+  try {
+    const text = await readFile(file, "utf8");
+    const events = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e && Number.isFinite(e.seq) && e.type) events.push(e);
+      } catch {
+        // A line cut mid-write by a crash — skip it, keep the rest.
+      }
+    }
+    events.sort((a, b) => a.seq - b.seq);
+    const kept = events.length > MAX_EVENTS ? events.slice(events.length - MAX_EVENTS) : events;
+    if (!kept.length) return;
+    job.events = kept;
+    job.eventSeq = Math.max(job.eventSeq, kept[kept.length - 1].seq);
+    // Regenerate the readable log from the combined truth so the .md also
+    // survives restarts instead of holding only the last session's lines.
+    try {
+      const pad = (n) => String(n).padStart(2, "0");
+      await writeFile(
+        transcriptPath(job, "md"),
+        kept
+          .map((e) => {
+            const d = new Date(e.at);
+            const stamp = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            const line = renderEvent(e.type, e);
+            return `\`${stamp}\` ${line.length > 1200 ? `${line.slice(0, 1200)}…` : line}`;
+          })
+          .join("\n") + "\n",
+        "utf8",
+      );
+    } catch (err) {
+      console.warn(`[operator] transcript ${job.id} .md: ${String(err?.message ?? err).split("\n")[0]}`);
+    }
+  } catch (err) {
+    console.warn(`[operator] transcript ${job.id} could not be read: ${String(err?.message ?? err).split("\n")[0]}`);
+  }
+}
+
 async function restore() {
   try {
     if (!existsSync(JOBS_FILE)) return;
@@ -1046,6 +1121,7 @@ async function restore() {
         restored: true,
       });
       jobs.set(job.id, job);
+      await restoreTranscript(job);
       const n = Number(String(entry.id).replace(/\D/g, ""));
       if (Number.isFinite(n)) jobSeq = Math.max(jobSeq, n);
     }
@@ -1143,9 +1219,85 @@ function halt(job) {
  * has to appear in the stream or the thread reads as answers with no questions.
  */
 function emit(job, type, data = {}) {
-  job.events.push({ seq: ++job.eventSeq, at: new Date().toISOString(), type, ...data });
+  const event = { seq: ++job.eventSeq, at: new Date().toISOString(), type, ...data };
+  job.events.push(event);
   if (job.events.length > MAX_EVENTS) {
     job.events.splice(0, job.events.length - MAX_EVENTS);
+  }
+  appendTranscript(job, event);
+}
+
+/**
+ * Append an event to the job's on-disk transcript — the .jsonl source of truth
+ * plus a readable .md line.
+ *
+ * Fire-and-forget, same deal as the durable work log: a transcript that cannot
+ * be written must not fail the turn that already succeeded. Lines are appended,
+ * so a crash mid-write loses at most the line in flight, and restore() re-sorts
+ * by `seq` to iron out any interleaving between concurrent appends.
+ */
+function appendTranscript(job, event) {
+  try {
+    if (!job?.id) return;
+    void appendFile(transcriptPath(job, "jsonl"), `${JSON.stringify(event)}\n`, "utf8").catch((err) =>
+      console.warn(`[operator] transcript ${job.id}: ${String(err?.message ?? err).split("\n")[0]}`),
+    );
+    const d = new Date(event.at);
+    const pad = (n) => String(n).padStart(2, "0");
+    const stamp = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const line = renderEvent(event.type, event);
+    const short = line.length > 1200 ? `${line.slice(0, 1200)}…` : line;
+    void appendFile(transcriptPath(job, "md"), `\`${stamp}\` ${short}\n`, "utf8").catch((err) =>
+      console.warn(`[operator] transcript ${job.id}: ${String(err?.message ?? err).split("\n")[0]}`),
+    );
+  } catch {
+    // A malformed event is not worth a warning flood.
+  }
+}
+
+function transcriptPath(job, ext) {
+  return join(TRANSCRIPTS_DIR, `${job.id}.${ext}`);
+}
+
+/**
+ * One readable line for the .md. The .jsonl holds the events whole; this is
+ * the version a person skims in an editor.
+ */
+function renderEvent(type, event) {
+  const txt = (v) => (typeof v === "string" && v ? v : "");
+  switch (type) {
+    case "prompt":
+      return `**You:** ${txt(event.text) || "(empty prompt)"}`;
+    case "text":
+      return `${event.error ? "**Operator (error):**" : "**Operator:**"} ${txt(event.text)}`;
+    case "tool_use":
+      return `**tool:** ${event.tool ?? "?"}${event.subject ? ` — ${event.subject}` : ""}`;
+    case "tool_result":
+      return `**result:** ${event.ok === false ? "✗ " : ""}${txt(event.text)}`;
+    case "permission_request":
+      return `**ask:** ${event.rule ?? ""}${event.command ? ` — ${event.command}` : ""}${event.detail ? ` — ${event.detail}` : ""}`;
+    case "permission_answer":
+      return `**answer:** ${event.decision ?? ""}${event.by ? ` (${event.by})` : ""}`;
+    case "status":
+      return `**status:** ${event.status ?? ""}${event.detail ? ` — ${event.detail}` : ""}`;
+    case "handoff":
+      return `**handoff:** ${event.handoff?.status ?? event.status ?? ""}`;
+    case "verification":
+      return `**verify:** ${event.status ?? ""}${event.note ? ` — ${event.note}` : ""}`;
+    case "usage":
+      return `**usage:** ${typeof event.jobUsd === "number" ? event.jobUsd.toFixed(4) : "?"}`;
+    case "routed":
+      return `**routed:** ${event.provider ?? ""}${event.attempt ? ` (attempt ${event.attempt})` : ""}`;
+    case "accepted":
+      return `**accepted:** queued${event.queuePosition ? ` at ${event.queuePosition}` : ""}`;
+    case "retry":
+      return `**retry:** ${event.provider ?? ""} (attempt ${event.attempt ?? "?"})`;
+    default: {
+      const rest = { ...event };
+      delete rest.seq; delete rest.at; delete rest.type;
+      const json = JSON.stringify(rest);
+      return `[${type}]${json && json !== "{}" ? ` ${json}` : ""}`;
+    }
   }
 }
 
@@ -2747,6 +2899,9 @@ export function list() {
     providers: listProviders(),
     models: selectWorker(DEFAULT_PROVIDER).worker.models,
     defaultModel: DEFAULT_MODEL,
+    // Where each job's full transcript lives on disk. data/ is the owner's own
+    // store, gitignored — nothing here ever lands or deletes it.
+    transcriptsDir: TRANSCRIPTS_DIR,
     // The standing profile, so the page states what it actually is rather than
     // repeating it in prose that drifts the first time OPERATOR_JOB_DENY is set.
     deniedTools: DENIED_TOOLS,
