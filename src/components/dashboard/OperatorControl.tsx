@@ -122,7 +122,7 @@ export default function OperatorControl() {
     setGrantRule("");
   }
 
-  const visibleEvents = (events ?? []).filter((e) => e.type !== "usage" && e.type !== "tool_result");
+  const visibleEvents = (events ?? []).filter((e) => e.type !== "usage");
 
   return (
     <Card
@@ -442,7 +442,25 @@ export default function OperatorControl() {
                 ) : e.type === "tool_use" ? (
                   <p className="min-w-0 flex-1 text-ink-500">
                     <span className="text-ink-300">{e.tool}</span>
+                    {e.subject ? <span className="text-ink-600"> {e.subject}</span> : null}
                   </p>
+                ) : e.type === "tool_result" ? (
+                  <div className="min-w-0 flex-1">
+                    {e.text?.trim() ? (
+                      <details className="font-mono text-[11px]">
+                        <summary className={`cursor-pointer ${e.ok === false ? "text-vital-down" : "text-ink-500"}`}>
+                          {e.ok === false ? "error" : "result"} · {e.text.split("\n").length} lines
+                        </summary>
+                        <pre className="mt-1 max-h-40 overflow-x-auto overflow-y-auto whitespace-pre-wrap rounded-badge border border-base-600 bg-base-950/60 p-2 text-ink-500">
+                          {e.text}
+                        </pre>
+                      </details>
+                    ) : (
+                      <span className={`font-mono text-[11px] ${e.ok === false ? "text-vital-down" : "text-ink-600"}`}>
+                        {e.ok === false ? "failed" : "done"}
+                      </span>
+                    )}
+                  </div>
                 ) : e.type === "prompt" ? (
                   <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-ink-100">{e.text}</p>
                 ) : (
