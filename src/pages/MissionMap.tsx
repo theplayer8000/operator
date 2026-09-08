@@ -18,6 +18,7 @@ import MicSource from "@/components/map/MicSource";
 import type { KnowledgeNote, MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET, type Rgb } from "@/components/map/operatorCore";
 import OperatorChat from "@/components/map/OperatorChat";
+import OperatorControl from "@/components/dashboard/OperatorControl";
 
 /**
  * The mission map as a room-scale display.
@@ -447,6 +448,11 @@ export default function MissionMap() {
     simulation, and the whole point of easing between the two modes is that it
     is visibly the same graph settling.
   */
+  const [controlOpen, setControlOpenState] = useState(() => readStorage("map.control", true));
+  const setControlOpen = (next: boolean) => {
+    setControlOpenState(next);
+    writeStorage("map.control", next);
+  };
   const solidRef = useRef(solid);
   solidRef.current = solid;
   /** Yaw, carried across frames so the rotation survives a re-render. */
@@ -3055,6 +3061,18 @@ export default function MissionMap() {
             RECENTRE
           </button>
           <button
+            onClick={() => setControlOpen(!controlOpen)}
+            title={controlOpen ? "Hide the control panels — auto mode, waiting on you, live jobs" : "Show the control panels — auto mode, waiting on you, live jobs"}
+            aria-pressed={controlOpen}
+            className={`pointer-events-auto font-mono text-[11px] transition-colors border rounded-badge px-3 py-1.5 min-h-[36px] ${
+              controlOpen
+                ? "border-xp/50 bg-xp/10 text-xp"
+                : "border-base-600 hover:border-base-500 text-ink-500 hover:text-ink-100"
+            }`}
+          >
+            CONTROL
+          </button>
+          <button
             onClick={() => navigate("/dashboard")}
             className="pointer-events-auto font-mono text-[11px] text-ink-600 hover:text-ink-100 transition-colors border border-base-600 hover:border-base-500 rounded-badge px-3 py-1.5 min-h-[36px]"
           >
@@ -3125,6 +3143,15 @@ export default function MissionMap() {
         draggable everywhere the chat is not.
       */}
       <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
+      {controlOpen && (
+        <aside
+          className="absolute right-6 top-24 bottom-28 z-10 w-72 space-y-5 overflow-y-auto pr-1 pointer-events-auto"
+          aria-label="Operator control panels"
+        >
+          <OperatorControl />
+        </aside>
+      )}
+
         <OperatorChat className="w-full max-w-2xl pointer-events-auto" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
       </div>
 
