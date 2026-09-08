@@ -175,9 +175,10 @@ export async function stash(cwd, why = "cleared to unblock a sync") {
  * So: the agent decides what is finished by committing it, by name. This moves
  * what it already stood behind.
  *
- * Fast-forward only, and main must be clean — both for the reason `land.mjs`
- * gives: two sessions write to this repo, and a dirty main is someone else's
- * work in progress.
+ * Fast-forward only, and main must be free of TRACKED changes — both for the
+ * reason `land.mjs` gives: two sessions write to this repo, and a modified
+ * tracked file on main is someone else's work in progress. Untracked paths
+ * (the server's own scratch) never block, for the reason the code below gives.
  *
  * @param {string} cwd       the worktree
  * @param {string} mainCwd   the main checkout
@@ -191,10 +192,21 @@ export async function land(cwd, mainCwd, busy = false) {
     return { ...s, landed: false, reason: "nothing to land — main already has every commit from here" };
   }
 
+  /*
+    Untracked paths on MAIN do not block. Different rule from the worktree
+    side, where an untracked file can stop a fast-forward cold: the main
+    checkout is the running app's home, and the server itself leaves untracked
+    scratch there — .codex/, .agents/, and (since 2026-09-08) the live handoff
+    note, which is written constantly and deliberately not versioned. Blocking
+    on those would make every land fail on nothing. What DOES block is a
+    tracked file modified in place — someone's work in flight. And the merge
+    cannot clobber an untracked path: git itself refuses the fast-forward and
+    names the file, which is the correct failure rather than a swept-up one.
+  */
   const mainDirty = (await git(mainCwd, ["status", "--porcelain"]))
     .split(String.fromCharCode(10))
     .map((l) => l.trim())
-    .filter(Boolean);
+    .filter((l) => l && !l.startsWith("??"));
   if (mainDirty.length) {
     return {
       ...s,
