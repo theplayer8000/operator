@@ -58,3 +58,13 @@ src-tauri/gen/schemas/
 # half-finished work outweighs the drift. This is not half-finished work, and
 # tripping the guard on it teaches you to override the guard.
 .agents/
+
+# The LIVE handoff note — a working note the running server replaces constantly,
+# so versioning it means every land either refuses on a dirty main or merges a
+# conflict (hit 4x on 7 Sep 2026). The milestone files it folds into
+# (docs/handoffs/YYYY-MM-DD-slug.md) ARE tracked.
+docs/handoffs/CURRENT.md
+
+# Codex CLI's local state in the main checkout — same reasoning as .agents/:
+# it is this machine's scratch, not a decision about the project.
+.codex/
