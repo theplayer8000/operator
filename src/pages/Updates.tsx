@@ -10,6 +10,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useUpdates } from "@/hooks/useUpdates";
+import { useRemoteStorage } from "@/hooks/useRemoteStorage";
 import HandoffCard from "@/components/updates/HandoffCard";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { Link, useSearchParams } from "react-router-dom";
@@ -26,6 +27,19 @@ import type { UpdateEntry } from "@/lib/types";
  * of, so the entry is what gets paged. A day spanning two pages simply repeats
  * its heading, which is what a paper changelog does too.
  */
+/**
+ * One finished-turn record from the work ledger (`work_record` output),
+ * read-only here — the day drill-down lists it so a day shows what was
+ * actually done, not only what someone curated into the changelog.
+ */
+interface WorkHandoff {
+  id?: string;
+  at?: string;
+  by?: string;
+  summary?: string;
+  needsOwner?: boolean;
+}
+
 const PAGE_SIZE = 8;
 
 const INPUT =
@@ -313,6 +327,10 @@ export default function Updates() {
   const { pending, done, doneByDate, addEntry, updateEntry, markDone, markPending, deleteEntry } =
     useUpdates();
 
+  // The work ledger — every finished turn, not only the curated changelog —
+  // so the drill-down can show what actually got done on the day clicked.
+  const [handoffs] = useRemoteStorage<WorkHandoff[]>("work.handoffs", []);
+
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -327,6 +345,9 @@ export default function Updates() {
   const dayParam = searchParams.get("day");
   const dayKey = dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : null;
   const dayDone = dayKey ? done.filter((e) => e.date === dayKey) : null;
+  const dayWork = dayKey
+    ? handoffs.filter((h) => String(h.at ?? "").slice(0, 10) === dayKey)
+    : [];
   const changelogEmpty = (dayDone ?? done).length === 0;
   function clearDay() {
     setSearchParams({}, { replace: true });
@@ -490,8 +511,28 @@ export default function Updates() {
           </div>
         )}
 
+        {dayWork.length > 0 && (
+          <section className="mb-4 rounded-badge border border-base-600 bg-base-700/30 px-3 py-2.5">
+            <p className="font-mono text-[11px] text-ink-500 mb-1.5">
+              {dayWork.length} finished {dayWork.length === 1 ? "turn" : "turns"} of work that day
+            </p>
+            <ul className="space-y-1.5">
+              {dayWork.map((h) => (
+                <li key={h.id ?? `${h.at}-${h.by}`} className="flex items-start gap-2 text-xs text-ink-300 leading-snug">
+                  <span
+                    className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${h.needsOwner ? "bg-vital-down" : "bg-ink-700"}`}
+                    title={h.needsOwner ? "needs you" : undefined}
+                  />
+                  <span className="min-w-0 flex-1">{h.summary}</span>
+                  {h.by && <span className="font-mono text-[10px] text-ink-700 shrink-0">{h.by}</span>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {changelogEmpty ? (
-          <p className="text-sm text-ink-700">{dayKey ? "Nothing shipped on that day." : "Nothing logged yet."}</p>
+          <p className="text-sm text-ink-700">{dayKey ? (dayWork.length > 0 ? "No changelog entries on that day." : "Nothing logged on that day.") : "Nothing logged yet."}</p>
         ) : (
           logDays.map(({ date, items }, i) => (
             <div key={`${date || "undated"}-${i}`} className="mb-5 last:mb-0">

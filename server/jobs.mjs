@@ -975,6 +975,16 @@ const JOBS_FILE = process.env.OPERATOR_JOBS_FILE ?? join(ROOT, "data", "jobs.jso
 */
 const TRANSCRIPTS_DIR = process.env.OPERATOR_TRANSCRIPTS_DIR ?? join(ROOT, "data", "transcripts");
 
+/*
+  Create it on boot: appendFile never creates parent directories, so without
+  this the very first append after the feature landed threw ENOENT for every
+  event and the transcripts never actually reached disk — restarts still lost
+  the conversations, and each failed append printed two more error lines.
+*/
+await mkdir(TRANSCRIPTS_DIR, { recursive: true }).catch((err) => {
+  console.warn(`[operator] could not create ${TRANSCRIPTS_DIR}: ${String(err?.message ?? err).split("\n")[0]}`);
+});
+
 /** Fields worth surviving a restart — no events, no transcript. */
 function indexOf(job) {
   return {
