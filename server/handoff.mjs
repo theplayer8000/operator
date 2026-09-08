@@ -39,6 +39,8 @@
 // `runner.mjs`.
 
 import { readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +53,7 @@ import { fileURLToPath } from "node:url";
  * serves, succeed, and look right.
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const run = promisify(execFile);
 const DIR = join(ROOT, "docs", "handoffs");
 const CURRENT = join(DIR, "CURRENT.md");
 
@@ -242,16 +245,48 @@ export async function foldHandoff({ slug, date, body }) {
   await writeFile(target, content.endsWith("\n") ? content : `${content}\n`, "utf8");
   await writeFile(CURRENT, EMPTY, "utf8");
 
+  /*
+    The milestone is the record, so it belongs in git — but nothing here ever
+    stages broadly (`git add -A` is banned in this repo for reasons that cost a
+    revert), so it is added and committed BY NAME, just that one path, in the
+    main checkout. It is this committed rather than left untracked because an
+    uncommitted file in main's checkout used to block the next land cold
+    ("handoff_write dirties main's CURRENT.md" hit 4x in one day), and folds
+    happen exactly when a milestone lands — so this is the moment, not a
+    trailing chore. Best-effort on purpose: a fold that cannot commit must not
+    lose the milestone, so failure is a warning and the file stays where it is.
+  */
+  let committed = null;
+  try {
+    await run("git", ["add", "--", `docs/handoffs/${name}`], { cwd: ROOT });
+    await run(
+      "git",
+      ["commit", "-m", `docs: handoff (${name})`, "--", `docs/handoffs/${name}`],
+      { cwd: ROOT },
+    );
+    committed = `docs/handoffs/${name}`;
+  } catch (err) {
+    console.warn(
+      `[operator] handoff ${name} written but not committed: ${String(err?.message ?? err).split("\n")[0]}`,
+    );
+  }
+
   return {
     folded: `docs/handoffs/${name}`,
     reset: "docs/handoffs/CURRENT.md",
     /*
       Said in the result rather than left to be discovered. The folder is
-      tracked, the server writes it, and NOTHING here commits — `git add -A` is
-      banned in this repo for reasons that cost a revert, so a script sweeping
-      up its own file would be the same mistake with better manners.
+      tracked, the server writes it, and the only commit here is the fold's own,
+      a single, named path, by design (`git add -A` is banned in this repo), so
+      the file that just landed is the only thing swept up in the commit.
     */
-    note: "written to the main checkout and not committed — stage docs/handoffs/ by name when you commit.",
+    ...(committed
+      ? {
+          note: `committed to main by name as "${committed}" — nothing else was staged.`,
+        }
+      : {
+          note: "written to the main checkout but not committed — stage docs/handoffs/ by name when you commit.",
+        }),
   };
 }
 
