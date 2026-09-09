@@ -3142,16 +3142,15 @@ export default function MissionMap() {
         the map. `pointer-events-none` on the wrapper keeps the canvas
         draggable everywhere the chat is not.
       */}
-      <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
-      {controlOpen && (
-        <aside
-          className="absolute right-6 top-24 bottom-28 z-10 w-72 space-y-5 overflow-y-auto pr-1 pointer-events-auto"
-          aria-label="Operator control panels"
-        >
-          <OperatorControl />
-        </aside>
-      )}
+      {/*
+        Own top-level slot, not nested in the chat wrapper below — the panel
+        now manages its own position (drag-to-move, persisted in
+        map.controlPos, default bottom-right corner) rather than being placed
+        by a parent, so it must not inherit that wrapper's centering.
+      */}
+      {controlOpen && <OperatorControl />}
 
+      <div className="absolute bottom-6 left-0 right-0 flex justify-center px-6 pointer-events-none">
         <OperatorChat className="w-full max-w-2xl pointer-events-auto" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
       </div>
 
