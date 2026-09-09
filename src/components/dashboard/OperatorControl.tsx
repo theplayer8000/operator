@@ -14,7 +14,6 @@ import {
   ShieldX,
   SlidersHorizontal,
   Square,
-  SquareTerminal,
   Wrench,
   XCircle,
   Zap,
@@ -24,6 +23,7 @@ import { retry as reloadStore } from "@/lib/remoteStore";
 import { readStorage, writeStorage } from "@/lib/storage";
 import { useJobs } from "@/hooks/useJobs";
 import type { JobEvent } from "@/hooks/useJobs";
+import SandboxTerminal from "@/components/dashboard/SandboxTerminal";
 
 /*
   OperatorControl — the wireframe (vault edf1f3b2, "The Orchestrator Job
@@ -43,10 +43,12 @@ import type { JobEvent } from "@/hooks/useJobs";
       the stream is job-scoped, so it needed a picker regardless of where it
       lived, and the wireframe never drew them as their own zones.
     - WORKERS & ROUTING / CAPABILITY LOCKS are straight moves.
-    - SANDBOX TERMINAL / ARTIFACTS is a labelled placeholder. It is not built
-      anywhere in this app yet (confirmed against the vault note before
-      starting this) — stubbing the quadrant completes the grid without
-      pretending a real terminal exists.
+    - SANDBOX TERMINAL is `components/dashboard/SandboxTerminal.tsx` — the
+      same capability as the Dev page's `TerminalPanel`, through the same
+      `useTerminal()` hook (server/terminal.mjs underneath), not a second
+      terminal reimplemented for this space. Artifacts (the other half of
+      the wireframe's label) is untouched — nothing in the app produces or
+      lists "artifacts" yet, so there is nothing real to wire in for it.
 
   DRAGGABLE AS ONE UNIT, not per-quadrant: the grip bar across the top is the
   only drag surface (dragging from the body would fight the quadrants' own
@@ -208,9 +210,18 @@ export default function OperatorControl() {
   }, [visibleEvents.length]);
 
   // --- position + drag -----------------------------------------------------
-  const [pos, setPos] = useState<{ x: number; y: number }>(
-    () => readStorage<{ x: number; y: number } | null>("map.controlPos", null) ?? defaultPos(),
-  );
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    /*
+      Clamped here too, not only on drag-end. A position saved from a bigger
+      screen (desktop) opened later on a smaller one (laptop, a resized
+      window) would otherwise render mostly or fully off-screen on load —
+      the whole point of clamping is to keep the box reachable, and a stored
+      value is exactly as capable of landing outside the viewport as a live
+      drag is.
+    */
+    const stored = readStorage<{ x: number; y: number } | null>("map.controlPos", null);
+    return stored ? clampPos(stored.x, stored.y) : defaultPos();
+  });
   const boxRef = useRef<HTMLDivElement>(null);
   const drag = useRef({ active: false, startX: 0, startY: 0, origX: 0, origY: 0 });
 
@@ -602,11 +613,9 @@ export default function OperatorControl() {
             )}
           </div>
 
-          {/* SANDBOX TERMINAL / ARTIFACTS — not built yet anywhere; stubbed so the grid is complete */}
-          <div style={{ flex: "30 1 0%" }} className="flex min-h-0 flex-col items-center justify-center gap-1 p-2.5 text-center">
-            <SquareTerminal size={14} className="text-ink-700" />
-            <p className="font-mono text-[9px] uppercase tracking-wide text-ink-700">Sandbox terminal</p>
-            <p className="text-[9px] text-ink-800">Mirrored terminal + artifacts — not wired yet</p>
+          {/* SANDBOX TERMINAL — the same useTerminal() capability as the Dev page's TerminalPanel */}
+          <div style={{ flex: "30 1 0%" }} className="min-h-0 overflow-hidden">
+            <SandboxTerminal />
           </div>
         </div>
       </div>
