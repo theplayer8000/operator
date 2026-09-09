@@ -57,6 +57,8 @@ export interface JobSummary {
     verification?: {
       status: "not-run" | "running" | "passed" | "failed" | "skipped" | "error";
       note?: string;
+      /** Set only when status flips to "running" — lets a stuck one (a restart abandoned it mid-check) be told apart from a fresh one. */
+      startedAt?: string;
       changed?: number;
       checks?: { name: string; passed: boolean; ms: number; output?: string }[];
       /** The Artifacts "Diff" pane. Absent on any job verified before this field existed, or one with nothing to build. */

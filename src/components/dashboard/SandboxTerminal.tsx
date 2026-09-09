@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
+  Clock,
   Download,
+  ExternalLink,
   GitCompare,
   GitMerge,
   Hammer,
@@ -12,11 +15,40 @@ import {
   RotateCw,
   Square,
   SquareTerminal,
+  X,
   XCircle,
 } from "lucide-react";
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useTerminal } from "@/hooks/useTerminal";
 import type { JobSummary } from "@/hooks/useJobs";
+
+/**
+ * `fetch` with a real ceiling, distinguishable from every other failure.
+ *
+ * Nothing in this file had one before — found the hard way: a live report of
+ * "renderer" and "loading worktree" states that were watched, then given up
+ * on, with no error and no resolution. `worktree.mjs`'s own git calls have a
+ * server-side timeout (parallelised and tightened alongside this), but a
+ * client with no ceiling of its own still hangs forever if the network drops
+ * a response, the server never answers, or anything else goes wrong that
+ * server-side timeout doesn't cover. `AbortError` is checked for by name
+ * specifically so a genuine timeout reads as "timed out — try again" rather
+ * than folding into a generic, less actionable error message.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 18_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`timed out after ${Math.round(timeoutMs / 1000)}s — try again`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * The Sandbox Terminal / Artifacts quadrant — two top-level tabs sharing one
@@ -156,11 +188,19 @@ async function runWorktreeAction(
   action: "worktree_sync" | "worktree_land",
 ): Promise<{ ok: true; text: string } | { ok: false; text: string }> {
   try {
-    const res = await fetch("/api/actions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, params: {} }),
-    });
+    const res = await fetchWithTimeout(
+      "/api/actions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, params: {} }),
+      },
+      // Generous, deliberately: worktree.mjs's own git calls carry a 15s
+      // ceiling each and this may wait on one of them, so this needs enough
+      // room for a real (if slow) answer to still count as one, not enough
+      // that the UI looks hung in the meantime.
+      20_000,
+    );
     const data = (await res.json()) as { ok?: boolean; error?: string; result?: Record<string, unknown> };
     if (!res.ok || !data.ok) return { ok: false, text: data.error || `failed (${res.status})` };
     const r = data.result ?? {};
@@ -348,26 +388,103 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+interface LastAttempt {
+  at: string;
+  ok: boolean;
+  target?: string;
+  error?: string;
+}
+
+/**
+ * Full-size preview, in place — the actual fix for "images don't open".
+ *
+ * `<a target="_blank">` was the original approach and it does not do what it
+ * looks like it does here: verified live, clicking one navigated the WHOLE
+ * Operator tab away to the raw image (same tabId, no second tab) rather than
+ * opening anything new — from a small HUD panel that reads as the app
+ * breaking, not a picture opening. `position: fixed` + a high z-index
+ * escapes the panel's own `overflow: hidden` without needing a portal (this
+ * box is positioned with plain `left`/`top`, no `transform` on it or its
+ * ancestors, so nothing here creates a containing block that would trap it) —
+ * confirmed by actually opening one, not assumed from the CSS.
+ */
+function Lightbox({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-base-950/90 p-8"
+      onClick={onClose}
+      role="dialog"
+      aria-label={name}
+    >
+      <img
+        src={url}
+        alt={name}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: "90vw", maxHeight: "85vh" }}
+        className="rounded-card border border-base-600 object-contain shadow-2xl"
+      />
+      <div className="absolute right-4 top-4 flex items-center gap-2">
+        {/*
+          A deliberate escape hatch, not the default path this time: opening
+          the raw file in a real new tab/download is still occasionally
+          wanted (saving it, say). Kept, but as a second, explicit action from
+          INSIDE a lightbox that has already shown the image — not the only
+          way to see it.
+        */}
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Open the raw file in a new tab"
+          className="flex items-center gap-1 rounded-badge border border-base-600 bg-base-800 px-2 py-1.5 text-[10px] text-ink-300 hover:text-ink-100"
+        >
+          <ExternalLink size={12} />
+        </a>
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="rounded-badge border border-base-600 bg-base-800 p-1.5 text-ink-300 hover:text-ink-100"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RendersView() {
   // null = not fetched yet, [] = fetched and genuinely empty — distinct
   // states, so "loading" and "nothing here" never look the same.
   const [renders, setRenders] = useState<RenderFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The known, persistent failure mode: a killed headless Edge can corrupt
+  // its isolated profile, after which every render fails SILENTLY until the
+  // folder is cleared by hand. A gallery with nothing new in it looks
+  // identical whether nobody has rendered anything or every attempt has
+  // been quietly failing — this is the one thing that tells them apart, from
+  // render.mjs's own on-disk record of what actually happened last.
+  const [lastAttempt, setLastAttempt] = useState<LastAttempt | null>(null);
+  const [profileDir, setProfileDir] = useState<string | null>(null);
   // Which thumbnails failed to actually load as an image — a 404 (swept
   // between listing and paint), a 0-byte file, or a corrupted PNG all land
   // here rather than showing the browser's own broken-image icon.
   const [broken, setBroken] = useState<Set<string>>(new Set());
+  const [lightbox, setLightbox] = useState<RenderFile | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    fetch("/api/renders")
+    fetchWithTimeout("/api/renders")
       .then((res) => {
         if (!res.ok) throw new Error(`server returned ${res.status}`);
-        return res.json() as Promise<{ files: RenderFile[] }>;
+        return res.json() as Promise<{ files: RenderFile[]; lastAttempt: LastAttempt | null; profileDir: string }>;
       })
       .then((body) => {
-        if (!cancelled) setRenders(body.files);
+        if (cancelled) return;
+        setRenders(body.files);
+        setLastAttempt(body.lastAttempt);
+        setProfileDir(body.profileDir);
       })
       .catch((err) => {
         if (!cancelled) setError((err as Error).message);
@@ -383,42 +500,77 @@ function RendersView() {
   if (renders === null) {
     return <p className="text-[10px] text-ink-700">Loading…</p>;
   }
+
+  /*
+    Named and actionable, not "render failed": the real error render.mjs
+    recorded (which already names the profile path itself when that IS the
+    cause — see runBrowser's own message), plus the path again as a standing
+    fallback so the fix is never a guess even when the error text is about
+    something else entirely (no browser found, a timeout, a bad target).
+
+    The "clear it by hand" line is gone: render.mjs now auto-recovers this
+    exact failure signature itself (see its own header), so telling someone
+    to go delete a folder that the server already reset would be stale
+    advice. The path stays, for the rarer case where even the automatic
+    reset failed — render.mjs's own recorded error says so explicitly when
+    it happens, and that text is what renders below, unedited.
+  */
+  const failureBanner = lastAttempt && !lastAttempt.ok && (
+    <div className="mb-1 shrink-0 rounded-badge border border-vital-down/30 bg-vital-down/5 p-1.5">
+      <p className="flex items-center gap-1 font-mono text-[9px] text-vital-down">
+        <AlertTriangle size={10} className="shrink-0" />
+        Last render failed — {timeAgo(lastAttempt.at)}
+      </p>
+      <p className="mt-0.5 break-words text-[9px] leading-relaxed text-ink-400">{lastAttempt.error}</p>
+      {profileDir && (
+        <p className="mt-0.5 break-words text-[9px] leading-relaxed text-ink-600">
+          Render profile: <span className="font-mono text-ink-500">{profileDir}</span>
+        </p>
+      )}
+    </div>
+  );
+
   if (renders.length === 0) {
     return (
-      <p className="text-[10px] leading-relaxed text-ink-700">
-        No renders yet — a worker makes one with{" "}
-        <span className="font-mono text-ink-600">node scripts/render.mjs</span>.
-      </p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {failureBanner}
+        <p className="text-[10px] leading-relaxed text-ink-700">
+          No renders yet — a worker makes one with{" "}
+          <span className="font-mono text-ink-600">node scripts/render.mjs</span>.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto">
-      {renders.map((r) => (
-        <a
-          key={r.name}
-          href={r.url}
-          target="_blank"
-          rel="noreferrer"
-          title={`${r.name} · ${(r.bytes / 1024).toFixed(0)} KB · ${timeAgo(r.mtime)}`}
-          className="relative h-12 w-12 shrink-0 overflow-hidden rounded-badge border border-base-600 bg-base-950/60"
-        >
-          {broken.has(r.name) ? (
-            <span className="flex h-full w-full flex-col items-center justify-center gap-0.5">
-              <ImageOff size={11} className="text-ink-700" />
-              <span className="text-[7px] text-ink-700">failed</span>
-            </span>
-          ) : (
-            <img
-              src={r.url}
-              alt={r.name}
-              loading="lazy"
-              onError={() => setBroken((prev) => new Set(prev).add(r.name))}
-              className="h-full w-full object-cover"
-            />
-          )}
-        </a>
-      ))}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {failureBanner}
+      <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
+        {renders.map((r) => (
+          <button
+            key={r.name}
+            onClick={() => setLightbox(r)}
+            title={`${r.name} · ${(r.bytes / 1024).toFixed(0)} KB · ${timeAgo(r.mtime)}`}
+            className="relative h-16 w-16 shrink-0 overflow-hidden rounded-badge border border-base-600 bg-base-950/60"
+          >
+            {broken.has(r.name) ? (
+              <span className="flex h-full w-full flex-col items-center justify-center gap-0.5">
+                <ImageOff size={13} className="text-ink-700" />
+                <span className="text-[8px] text-ink-700">failed</span>
+              </span>
+            ) : (
+              <img
+                src={r.url}
+                alt={r.name}
+                loading="lazy"
+                onError={() => setBroken((prev) => new Set(prev).add(r.name))}
+                className="h-full w-full object-cover"
+              />
+            )}
+          </button>
+        ))}
+      </div>
+      {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
@@ -434,6 +586,34 @@ function NoJob() {
   return <p className="text-[10px] text-ink-700">Pick a job from the event stream above.</p>;
 }
 
+/** How long "running" gets to look identical to "stuck" before it stops pretending. Real checks finish in well under a minute (measured: ~11s tsc, ~17s vite build). */
+const VERIFICATION_STUCK_AFTER_MS = 3 * 60_000;
+
+/**
+ * "Checking the workspace…" on its own reads the same whether it started a
+ * second ago or three restarts back — found live, against a real job
+ * (job-7) whose verification was abandoned mid-check by an old restart and
+ * has shown that exact line, unchanging, ever since. `startedAt` (added
+ * alongside this) is the only thing that can tell the two apart, so once
+ * enough time has passed this says so plainly instead of continuing to
+ * imply an answer is still coming.
+ */
+function RunningState({ startedAt }: { startedAt?: string }) {
+  const elapsedMs = startedAt ? Date.now() - new Date(startedAt).getTime() : 0;
+  const stuck = startedAt && Number.isFinite(elapsedMs) && elapsedMs > VERIFICATION_STUCK_AFTER_MS;
+  if (!stuck) {
+    return <p className="text-[10px] text-ink-700">Checking the workspace…</p>;
+  }
+  const minutes = Math.round(elapsedMs / 60_000);
+  return (
+    <p className="flex items-start gap-1 text-[10px] leading-relaxed text-ink-500">
+      <Clock size={11} className="mt-0.5 shrink-0" />
+      Still &quot;checking&quot; after {minutes}m — likely abandoned by a restart mid-check rather than
+      genuinely still running. Nothing re-triggers it; it clears the next time this job completes a turn.
+    </p>
+  );
+}
+
 function BuildView({ job }: { job: JobSummary | null }) {
   if (!job) return <NoJob />;
   const v = job.task?.verification;
@@ -446,7 +626,7 @@ function BuildView({ job }: { job: JobSummary | null }) {
     );
   }
   if (v.status === "running") {
-    return <p className="text-[10px] text-ink-700">Checking the workspace…</p>;
+    return <RunningState startedAt={v.startedAt} />;
   }
   if (v.status === "skipped" || v.status === "error") {
     return <p className="text-[10px] leading-relaxed text-ink-700">{v.note}</p>;
@@ -476,7 +656,7 @@ function BuildView({ job }: { job: JobSummary | null }) {
             <span className="shrink-0 font-mono text-ink-700">{(c.ms / 1000).toFixed(1)}s</span>
           </summary>
           {!c.passed && c.output && (
-            <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-words rounded-badge border border-base-600 bg-base-950/60 p-1.5 font-mono text-[9px] text-vital-down">
+            <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-badge border border-base-600 bg-base-950/60 p-1.5 font-mono text-[9px] text-vital-down">
               {c.output}
             </pre>
           )}
@@ -504,13 +684,12 @@ function DiffView({ job }: { job: JobSummary | null }) {
   const status = job.task?.verification?.status;
 
   if (!diff) {
+    if (status === "running") return <RunningState startedAt={job.task?.verification?.startedAt} />;
     return (
       <p className="text-[10px] leading-relaxed text-ink-700">
-        {status === "running"
-          ? "Checking the workspace…"
-          : status === "skipped" || status === "not-run" || !status
-            ? "No diff for this job — nothing was changed, or it predates this pane."
-            : "No diff was captured for this job."}
+        {status === "skipped" || status === "not-run" || !status
+          ? "No diff for this job — nothing was changed, or it predates this pane."
+          : "No diff was captured for this job."}
       </p>
     );
   }
@@ -529,7 +708,7 @@ function DiffView({ job }: { job: JobSummary | null }) {
           <summary className="cursor-pointer text-ink-600">
             full diff{diff.truncated ? " (truncated)" : ""}
           </summary>
-          <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-badge border border-base-600 bg-base-950/60 p-1.5 font-mono text-[9px]">
+          <pre className="mt-1 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-badge border border-base-600 bg-base-950/60 p-1.5 font-mono text-[9px]">
             {diff.text.split("\n").map((line, i) => (
               <span
                 key={i}

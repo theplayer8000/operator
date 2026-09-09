@@ -30,8 +30,11 @@ import SandboxTerminal from "@/components/dashboard/SandboxTerminal";
   Dashboard Design") built literally rather than structurally-equivalent: a
   single bordered, TRANSPARENT landscape box in a 2x2 grid — Workers &
   Routing / Capability Locks on the left, Live Job Event Stream / Sandbox
-  Terminal on the right, right column split unevenly (~70/30) so the stream
-  dominates, exactly as drawn. Everything here still speaks to a real
+  Terminal on the right, right column split unevenly (55/45 — originally
+  70/30, rebalanced once Sandbox Terminal held a real terminal plus three
+  Artifacts sub-tabs and 30% read as "tight/cut off on most items") so the
+  stream still leads without starving what sits under it. Everything here
+  still speaks to a real
   endpoint; nothing is mocked, only re-housed from the six stacked
   `card-base` cards this replaced:
 
@@ -394,8 +397,8 @@ export default function OperatorControl() {
 
         {/* RIGHT COLUMN */}
         <div className="flex min-h-0 flex-col divide-y divide-base-700">
-          {/* LIVE JOB EVENT STREAM — the dominant quadrant */}
-          <div style={{ flex: "70 1 0%" }} className="flex min-h-0 flex-col p-2.5">
+          {/* LIVE JOB EVENT STREAM — still the larger half, not 70/30 anymore */}
+          <div style={{ flex: "55 1 0%" }} className="flex min-h-0 flex-col p-2.5">
             <header className="mb-1.5 flex shrink-0 items-center gap-1.5">
               <ScrollText size={11} className="shrink-0 text-ink-600" />
               <h2 className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-ink-500">
@@ -614,8 +617,17 @@ export default function OperatorControl() {
             )}
           </div>
 
-          {/* SANDBOX TERMINAL — the same useTerminal() capability as the Dev page's TerminalPanel */}
-          <div style={{ flex: "30 1 0%" }} className="min-h-0 overflow-hidden">
+          {/*
+            SANDBOX TERMINAL / ARTIFACTS — 30% was the original placeholder's
+            share, sized for an empty box. It now holds a real terminal plus
+            three Artifacts sub-tabs (Renders/Build/Diff), and 30% of the
+            column read as "tight/cut off on most items" once that landed —
+            confirmed live: every overflowing block there DID scroll, none
+            were silently clipped, but several were showing ~100px of content
+            that ran past 6000px. Rebalanced to 45/55 against the Event
+            Stream rather than only shrinking what's inside further.
+          */}
+          <div style={{ flex: "45 1 0%" }} className="min-h-0 overflow-hidden">
             <SandboxTerminal selectedJob={selected} />
           </div>
         </div>

@@ -48,35 +48,48 @@ const git = async (cwd, args) => {
 export async function state(cwd) {
   if (!cwd) return { ok: false, cwd, reason: "no job worktree configured" };
   try {
-    const branch = await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    const behind = Number(await git(cwd, ["rev-list", "--count", "HEAD..main"])) || 0;
     /*
-      AHEAD is the half this file was missing, and it cost a day.
+      Four independent questions, asked at once rather than in a line.
 
-      `behind` answers "is the agent running old code". It says nothing about
-      the opposite and more expensive failure: work FINISHED in here that never
-      reached main. On 2026-09-04 the chat-uploads fix was built twice, marked
-      done, and sat here across four full restarts — each one loading a build
-      that had never contained it, so the fix looked broken rather than absent.
-      Nothing was lost and nothing was stale; it simply had not landed, and no
-      check asked that question.
+      Each still carries its own 15s ceiling (`git()`, above), but stacked
+      sequentially the worst case was 4x that before this even got to
+      `unlanded` — the one call that genuinely can't start until `ahead` is
+      known. Found while chasing a report of this panel hanging with no
+      feedback: parallelising the independent half doesn't guarantee fast, but
+      it means the wait is bounded by the SLOWEST of four, not the SUM of them.
     */
-    const ahead = Number(await git(cwd, ["rev-list", "--count", "main..HEAD"])) || 0;
+    const [branch, behindRaw, aheadRaw, dirtyRaw] = await Promise.all([
+      git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]),
+      git(cwd, ["rev-list", "--count", "HEAD..main"]),
+      /*
+        AHEAD is the half this file was missing, and it cost a day.
+
+        `behind` answers "is the agent running old code". It says nothing about
+        the opposite and more expensive failure: work FINISHED in here that
+        never reached main. On 2026-09-04 the chat-uploads fix was built twice,
+        marked done, and sat here across four full restarts — each one loading
+        a build that had never contained it, so the fix looked broken rather
+        than absent. Nothing was lost and nothing was stale; it simply had not
+        landed, and no check asked that question.
+      */
+      git(cwd, ["rev-list", "--count", "main..HEAD"]),
+      /*
+        Untracked files count as dirty here, and that is not pedantry.
+
+        A fast-forward refuses when an untracked file would be overwritten by a
+        tracked one arriving from main — which is exactly what blocked the
+        first attempt at this, on a worktree that `git status` otherwise called
+        clean.
+      */
+      git(cwd, ["status", "--porcelain"]),
+    ]);
+    const behind = Number(behindRaw) || 0;
+    const ahead = Number(aheadRaw) || 0;
     /** Subjects, so a card or a check can say WHAT is stranded rather than a count. */
     const unlanded = ahead
       ? (await git(cwd, ["log", "--format=%h %s", "main..HEAD"])).split("\n").filter(Boolean)
       : [];
-    /*
-      Untracked files count as dirty here, and that is not pedantry.
-
-      A fast-forward refuses when an untracked file would be overwritten by a
-      tracked one arriving from main — which is exactly what blocked the first
-      attempt at this, on a worktree that `git status` otherwise called clean.
-    */
-    const dirty = (await git(cwd, ["status", "--porcelain"]))
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const dirty = dirtyRaw.split("\n").map((l) => l.trim()).filter(Boolean);
     return { ok: true, cwd, branch, behind, ahead, unlanded, dirty };
   } catch (err) {
     return { ok: false, cwd, reason: String(err?.message ?? err) };

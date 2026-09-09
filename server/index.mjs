@@ -50,7 +50,7 @@ import {
   stopRun,
   subscribe,
 } from "./terminal.mjs";
-import { renderDir } from "./render.mjs";
+import { lastAttempt as lastRenderAttempt, profileDir, renderDir } from "./render.mjs";
 import * as jobs from "./jobs.mjs";
 import { resourceLimit, stageUpload } from "./uploads.mjs";
 import { runBackup } from "../scripts/backup.mjs";
@@ -1307,13 +1307,23 @@ const server = createServer(async (req, res) => {
     */
     if (pathname === "/api/renders" && req.method === "GET") {
       const dir = renderDir();
-      let entries = [];
-      try {
-        entries = await readdir(dir, { withFileTypes: true });
-      } catch {
-        // No directory yet (nothing has ever rendered) is not an error.
-        return json(req, res, 200, { files: [] });
-      }
+      /*
+        The known persistent failure mode (render.mjs's own header, and see
+        the Artifacts pane's own comment): a killed headless Edge can corrupt
+        the isolated profile, after which every render fails SILENTLY until
+        the folder is cleared by hand. A directory listing alone cannot show
+        that — an empty or stale gallery looks identical whether nobody has
+        rendered anything or every attempt has been quietly failing. This is
+        the one place that answers "which is it", from render.mjs's own
+        on-disk record of its last attempt (necessarily on disk, not in
+        memory — a render normally runs in a separate, short-lived process
+        via scripts/render.mjs, so there is no shared memory to read this
+        from otherwise).
+      */
+      const [attempt, entries] = await Promise.all([
+        lastRenderAttempt(),
+        readdir(dir, { withFileTypes: true }).catch(() => []),
+      ]);
       const files = [];
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".png")) continue;
@@ -1330,7 +1340,7 @@ const server = createServer(async (req, res) => {
         }
       }
       files.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-      return json(req, res, 200, { files: files.slice(0, 30) });
+      return json(req, res, 200, { files: files.slice(0, 30), lastAttempt: attempt, profileDir: profileDir() });
     }
 
     if (pathname.startsWith("/api/renders/") && req.method === "GET") {

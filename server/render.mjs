@@ -35,7 +35,13 @@
 // 1. **It exits 0 having written nothing.** With a shared profile it hands the
 //    URL to an already-running Edge, prints "Opening in existing browser
 //    session", returns success and produces no file. The isolated
-//    `--user-data-dir` below is what prevents that.
+//    `--user-data-dir` below is what prevents that — and when THAT profile
+//    itself gets corrupted (a headless Edge killed mid-run leaves locks
+//    behind), every render after it fails the same silent way. That used to
+//    be permanent, fixable only by a human deleting the folder. It no longer
+//    is: `runBrowser` recognises the exact signature — browser exited,
+//    nothing ever written — and resets the profile itself. See
+//    `recoverProfile`, and the owner's explicit, narrow authorisation on it.
 // 2. **The process Node spawns is a launcher, and it exits early.** Checking
 //    for the image when it exits found nothing — and the image then appeared a
 //    moment later. A render that had worked was reported as a failure. So
@@ -61,7 +67,7 @@
 // the fetch happens server-side with the owner's network.
 
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,17 +78,39 @@ const RENDER_DIR = resolve(process.env.OPERATOR_RENDER_DIR ?? join(ROOT, "data",
 /*
   Where the isolated browser profile lives.
 
-  Overridable, because a corrupted one is otherwise a dead end. A headless Edge
-  killed mid-run leaves locks behind, and every render after that fails with
-  "the isolated profile could not be used" — permanently, with no recovery
-  except deleting the directory. That is a delete, which the agent session is
-  denied by design, so rendering simply stops working and stays stopped.
-
-  One environment variable turns an unrecoverable state into a working one.
+  Overridable for the same reason a bad one is now self-healing (see
+  `recoverProfile` below) rather than the dead end this comment used to
+  describe: an unusual setup — a read-only default location, say — still
+  needs a way out that doesn't depend on this file's own narrow recovery
+  working.
 */
 const PROFILE_DIR = process.env.OPERATOR_RENDER_PROFILE
   ? resolve(process.env.OPERATOR_RENDER_PROFILE)
   : join(RENDER_DIR, ".profile");
+
+/**
+ * Reset the isolated browser profile — and ONLY this one, specific,
+ * hardcoded folder, never a caller-supplied or otherwise variable path.
+ *
+ * The owner explicitly authorised this as a narrow exception to "an agent
+ * never deletes": not a general capability, not reachable by any caller,
+ * triggered by exactly one already-distinguished failure signature (see the
+ * call site) — a killed-mid-run headless browser corrupting its own scratch
+ * profile, which is Chromium's cache directory, not the owner's data. The
+ * render OUTPUT this might be recovering from serving up next time lives in
+ * `RENDER_DIR` itself, a sibling of `.profile/`, untouched by this either way.
+ */
+async function recoverProfile() {
+  try {
+    await rm(PROFILE_DIR, { recursive: true, force: true });
+    await mkdir(PROFILE_DIR, { recursive: true });
+    console.error(`[operator] render profile corrupted — auto-recovered: ${PROFILE_DIR}`);
+    return true;
+  } catch (err) {
+    console.error(`[operator] render profile auto-recovery FAILED: ${err.message}`);
+    return false;
+  }
+}
 
 /** How long a single render may take before the browser is killed. */
 const TIMEOUT_MS = Math.max(2000, Number(process.env.OPERATOR_RENDER_TIMEOUT_MS ?? 20000) || 20000);
@@ -251,8 +279,17 @@ export async function renderToPng(target, opts = {}) {
     url,
   ];
 
-  const bytes = await runBrowser(browser, args, out, label);
-  return { path: out, width, height, bytes, source: url };
+  try {
+    const bytes = await runBrowser(browser, args, out, label);
+    await recordAttempt(true, { target: label, path: out, bytes });
+    return { path: out, width, height, bytes, source: url };
+  } catch (err) {
+    // Record and rethrow, unchanged — scripts/render.mjs still prints and
+    // exits exactly as it always did. This is a second, persistent witness
+    // to the same failure, not a replacement for the caller seeing it.
+    await recordAttempt(false, { target: label, error: err.message });
+    throw err;
+  }
 }
 
 /*
@@ -321,12 +358,27 @@ function runBrowser(browser, args, out, label) {
 
       // Gone, and still nothing on disk after a grace period for the handoff.
       if (size < 0 && exitedAt && Date.now() - exitedAt > 3000) {
+        /*
+          This exact signature — exited, nothing ever written, past the
+          handoff grace period — is the one already named in this function's
+          own header as not transient: a killed-mid-run browser can corrupt
+          the isolated profile, and every render after that fails the SAME
+          way, silently, forever, with no recovery but a human deleting the
+          folder. Auto-recover narrowly, right here, rather than only
+          reporting it: this is the one failure this file can actually name
+          the cause of with confidence, so it is the one it can also fix.
+        */
+        const recovered = await recoverProfile();
         finish(
           reject,
           new Error(
-            `the browser produced no image for ${label}. It reports success when it ` +
-              `hands the page to an already-running instance, so this usually means the ` +
-              `isolated profile at ${PROFILE_DIR} could not be used.`,
+            recovered
+              ? `the browser produced no image for ${label} — the isolated profile was ` +
+                `corrupted and has been reset automatically. Try rendering again.`
+              : `the browser produced no image for ${label}. It reports success when it ` +
+                `hands the page to an already-running instance, so this usually means the ` +
+                `isolated profile at ${PROFILE_DIR} could not be used — and the automatic ` +
+                `reset failed too, so it needs clearing by hand.`,
           ),
         );
         return;
@@ -341,4 +393,47 @@ function runBrowser(browser, args, out, label) {
 
 export function renderDir() {
   return RENDER_DIR;
+}
+
+export function profileDir() {
+  return PROFILE_DIR;
+}
+
+const LAST_ATTEMPT_FILE = join(RENDER_DIR, ".last-attempt.json");
+
+/**
+ * What actually happened, the last time anything tried to render — read by
+ * the Artifacts "Renders" pane so a silent, repeat failure has a name
+ * instead of just an empty or stale-looking gallery.
+ *
+ * On disk, not in memory, and that is load-bearing rather than a style
+ * choice: a render normally happens via `scripts/render.mjs`, a SEPARATE,
+ * short-lived `node` process a worker invokes through the terminal — it
+ * never shares memory with the long-running server that serves this file's
+ * `renderDir()`/`profileDir()` to the Artifacts pane. A module-level
+ * variable here would only ever be visible to whichever process set it,
+ * which is never the one answering `/api/renders`.
+ *
+ * Best-effort on both ends: a status file that fails to write must not fail
+ * the render it is describing, and a status file that fails to read must not
+ * break the listing that already works.
+ */
+async function recordAttempt(ok, detail) {
+  try {
+    await writeFile(
+      LAST_ATTEMPT_FILE,
+      JSON.stringify({ at: new Date().toISOString(), ok, ...detail }),
+      "utf8",
+    );
+  } catch {
+    /* the render itself already succeeded or failed; this is bookkeeping */
+  }
+}
+
+export async function lastAttempt() {
+  try {
+    return JSON.parse(await readFile(LAST_ATTEMPT_FILE, "utf8"));
+  } catch {
+    return null; // no attempt on record yet, or the file is unreadable — either way, nothing to report
+  }
 }

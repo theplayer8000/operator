@@ -1379,6 +1379,16 @@ function setStatus(job, status, detail = null) {
         requested: true,
         status: "running",
         note: "checking the workspace…",
+        /*
+          So a stuck one can be told apart from a fresh one. Found via a
+          real, already-stuck job: a restart mid-verification abandons the
+          fire-and-forget runVerification() call below with nothing left to
+          ever resolve it, and "checking the workspace…" reads identically
+          whether it started a second ago or three restarts back. The
+          Artifacts Build/Diff panes use this to say which, honestly, rather
+          than showing the same reassuring line forever.
+        */
+        startedAt: new Date().toISOString(),
       };
       void runVerification(job);
     } else {
