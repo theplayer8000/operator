@@ -267,7 +267,16 @@ export default function OperatorControl() {
   return (
     <div
       ref={boxRef}
-      className="absolute z-10 flex flex-col overflow-hidden rounded-card border border-base-600 pointer-events-auto"
+      /*
+        select-text overrides the page root's own select-none
+        (MissionMap.tsx: the graph disables text selection globally so
+        dragging a node doesn't also highlight text) — inherited by every
+        descendant here that doesn't say otherwise, which is what made every
+        event-stream line, job chip title and reply summary uncopyable. The
+        grip bar below re-asserts select-none for itself only; dragging IT
+        selecting text would be its own small bug.
+      */
+      className="absolute z-10 flex flex-col overflow-hidden rounded-card border border-base-600 pointer-events-auto select-text"
       style={{ left: pos.x, top: pos.y, width: BOX_W, height: BOX_H }}
       aria-label="Operator control"
     >
@@ -441,20 +450,39 @@ export default function OperatorControl() {
             {/* selected-job toolbar — model + stop/retry, folded from the old Live Jobs card */}
             {selected && (
               <div className="mb-1.5 flex shrink-0 items-center gap-1.5">
-                {models.length > 0 && (
-                  <select
-                    value={selected.model ?? ""}
-                    onChange={(e) => void setModel(selected.id, e.target.value)}
-                    className="min-w-0 flex-1 rounded-badge border border-base-600 bg-base-700 px-1.5 py-0.5 font-mono text-[10px] text-ink-300"
-                    aria-label={`model for ${selected.id}`}
-                  >
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                {(() => {
+                  /*
+                    `models` (the top-level list) is server-side ALWAYS the
+                    default provider's models (jobs.mjs: `selectWorker(DEFAULT_PROVIDER).worker.models`)
+                    — never scoped to whichever job is actually selected. For
+                    any job on a different provider (job-7 here: "airouter",
+                    models DeepSeek-V4-Flash/Qwen3.8) this dropdown was
+                    offering Claude Code's models (Opus 5/Sonnet 5/Fable 5),
+                    every one of which `selectWorker` rejects for that
+                    provider — so every selection threw server-side, silently,
+                    and the control snapped back to showing whatever it
+                    already was. `providers` already carries each worker's OWN
+                    `models` array; use the selected job's, not the global
+                    default's.
+                  */
+                  const jobModels = providers.find((p) => p.id === selected.provider)?.models ?? models;
+                  return (
+                    jobModels.length > 0 && (
+                      <select
+                        value={selected.model ?? ""}
+                        onChange={(e) => void setModel(selected.id, e.target.value)}
+                        className="min-w-0 flex-1 rounded-badge border border-base-600 bg-base-700 px-1.5 py-0.5 font-mono text-[10px] text-ink-300"
+                        aria-label={`model for ${selected.id}`}
+                      >
+                        {jobModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    )
+                  );
+                })()}
                 {runningIds.includes(selected.id) ? (
                   <button
                     onClick={() => void cancel(selected.id)}

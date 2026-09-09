@@ -1548,6 +1548,66 @@ async function runVerification(job) {
   }
 }
 
+/**
+ * Kick off a fresh gate check for a job, on demand — the Artifacts Build/Diff
+ * panes' "Recheck" button. Same runVerification() the automatic
+ * completed-turn trigger already uses; this only adds a second ENTRY POINT
+ * to it; the state machine, the emit, the fields it fills in are identical
+ * either way, and the frontend already renders "running" (with elapsed time,
+ * since job.task.verification.startedAt) without needing to know which
+ * trigger caused it.
+ *
+ * Fire-and-forget by design — mirrors how the automatic trigger already
+ * behaves (`void runVerification(job)`, never awaited by its own caller).
+ * Returns as soon as the check has been marked "running"; the result lands
+ * on the job the same way it always has, for whatever is already polling.
+ *
+ * Refuses while `busy()` — a check against a worktree something is actively
+ * writing to would verify a half-finished state, which is a worse answer
+ * than "wait a moment", and it is the SAME shared worktree every job's
+ * automatic verification already reads (JOB_CWD, not a per-job copy) so a
+ * concurrent write is a real risk here, not a theoretical one.
+ */
+/*
+  Same threshold the Artifacts Build/Diff panes use client-side to say a
+  "running" verification is more likely abandoned than genuine (a restart
+  mid-check leaves it stuck here forever otherwise). Duplicated rather than
+  shared across the server/frontend boundary — there's no existing channel
+  for that in this codebase and one constant twice is cheaper than building
+  one for this alone.
+*/
+const VERIFICATION_STUCK_AFTER_MS = 3 * 60_000;
+
+export function requestVerification(id) {
+  const job = jobs.get(id);
+  if (!job) return { started: false, reason: `no job called "${id}"` };
+  if (busy()) return { started: false, reason: "a job is running in the shared worktree — try again once it's done" };
+  if (job.task?.verification?.status === "running") {
+    /*
+      Genuinely still running is refused; a stuck one is not — otherwise a
+      job abandoned mid-check by an old restart (this is not hypothetical:
+      job-7 has sat exactly here since a restart days ago) could never be
+      manually rechecked either, which defeats the entire point of this
+      function existing.
+    */
+    const startedAt = job.task.verification.startedAt;
+    const elapsedMs = startedAt ? Date.now() - new Date(startedAt).getTime() : Infinity;
+    if (elapsedMs < VERIFICATION_STUCK_AFTER_MS) {
+      return { started: false, reason: "already checking" };
+    }
+  }
+  job.task.verification = {
+    requested: true,
+    status: "running",
+    note: "checking the workspace…",
+    startedAt: new Date().toISOString(),
+  };
+  emit(job, "verification", job.task.verification);
+  console.log(`[operator] ${id} verification requested on demand`);
+  void runVerification(job);
+  return { started: true };
+}
+
 function blankTask(kind = "coding") {
   return {
     kind,

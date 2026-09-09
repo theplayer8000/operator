@@ -2380,6 +2380,18 @@ const ACTIONS = {
       return result;
     },
   },
+  job_verify: {
+    description:
+      "Kick off a fresh gate check (tsc/vite/node --check, plus the diff and bundle size capture) for a job's CURRENT workspace state, without waiting for its next turn to complete — the Artifacts Build/Diff panes' on-demand recheck. Fire-and-forget: returns as soon as the check is marked running, same job.task.verification a normal completed turn already fills in, so anything already polling the job sees the result land the same way it always has. Refuses while any job is running in the shared worktree, since checking mid-edit would verify a half-written state.",
+    params: 'id (e.g. "job-1")',
+    handler: async ({ id }) => {
+      required(id, "id");
+      const jobs = await import("./jobs.mjs");
+      const result = jobs.requestVerification(String(id));
+      if (!result.started && result.reason?.startsWith("no job")) throw new ActionError(result.reason);
+      return result;
+    },
+  },
   worktree_sync: {
     description:
       "Fast-forward the agent worktree — the checkout every job runs in — up to main. Do this when a worker reports that an action, script or file is missing: that is what being behind looks like from the inside. Refuses if the tree has uncommitted changes (an agent's half-finished work is worth more than the drift) or if another job is running in it, and says which.",

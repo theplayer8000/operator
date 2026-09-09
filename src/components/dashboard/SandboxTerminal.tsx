@@ -12,6 +12,7 @@ import {
   Images,
   Play,
   Power,
+  RotateCcw,
   RotateCw,
   Square,
   SquareTerminal,
@@ -586,8 +587,22 @@ function NoJob() {
   return <p className="text-[10px] text-ink-700">Pick a job from the event stream above.</p>;
 }
 
-/** How long "running" gets to look identical to "stuck" before it stops pretending. Real checks finish in well under a minute (measured: ~11s tsc, ~17s vite build). */
+/** How long "running" gets to look identical to "stuck" before it stops pretending. Real checks finish in well under a minute (measured: ~11s tsc, ~17s vite build). Matches jobs.mjs's own copy of this same constant, server-side. */
 const VERIFICATION_STUCK_AFTER_MS = 3 * 60_000;
+
+/**
+ * Genuinely running, not just labelled "running" — a stuck record (no real
+ * check in flight, just an abandoned status) must not disable Recheck, or
+ * the one job that most needs a fresh check (job-7, sat here for days) could
+ * never get one. Mirrors requestVerification()'s own server-side check
+ * exactly, so the button's enabled state never disagrees with what a click
+ * would actually be allowed to do.
+ */
+function isActuallyChecking(v: { status?: string; startedAt?: string } | undefined): boolean {
+  if (v?.status !== "running") return false;
+  const elapsedMs = v.startedAt ? Date.now() - new Date(v.startedAt).getTime() : Infinity;
+  return elapsedMs < VERIFICATION_STUCK_AFTER_MS;
+}
 
 /**
  * "Checking the workspace…" on its own reads the same whether it started a
@@ -609,32 +624,108 @@ function RunningState({ startedAt }: { startedAt?: string }) {
     <p className="flex items-start gap-1 text-[10px] leading-relaxed text-ink-500">
       <Clock size={11} className="mt-0.5 shrink-0" />
       Still &quot;checking&quot; after {minutes}m — likely abandoned by a restart mid-check rather than
-      genuinely still running. Nothing re-triggers it; it clears the next time this job completes a turn.
+      genuinely still running. Clears the next time this job completes a turn, or tap Recheck below.
     </p>
+  );
+}
+
+/**
+ * The actual fix for "Build/Diff blocks on Checking the workspace…": a way
+ * to ask for a fresh check WITHOUT waiting on the next completed turn, that
+ * genuinely doesn't block anything while it runs.
+ *
+ * It doesn't, because it was never going to: `job_verify` (server/jobs.mjs's
+ * `requestVerification`) is fire-and-forget, returning the instant the check
+ * is marked "running" — the actual tsc/vite/node --check run happens
+ * server-side, same as the automatic trigger always has. What "blocked"
+ * before was never the network call; the SAME `job.task.verification` field
+ * this button flips is already picked up by useJobs' own polling (already
+ * running, 1.2-8s depending on load) with no new polling loop needed here.
+ * The panel stays fully interactive throughout — switch tabs, click
+ * elsewhere, watch it or don't — because nothing on this side is waiting on
+ * anything.
+ */
+function RecheckButton({ jobId, checking }: { jobId: string; checking: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function trigger() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetchWithTimeout(
+        "/api/actions",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "job_verify", params: { id: jobId } }),
+        },
+        10_000,
+      );
+      const data = (await res.json()) as { ok?: boolean; error?: string; result?: { started?: boolean; reason?: string } };
+      if (!res.ok || !data.ok) throw new Error(data.error || `failed (${res.status})`);
+      // Not started is still a real, useful answer (already checking, or the
+      // shared worktree is busy) — surfaced, not swallowed as if it worked.
+      if (!data.result?.started) setMsg(data.result?.reason ?? "could not start");
+    } catch (err) {
+      setMsg((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-1 flex shrink-0 items-center gap-1.5">
+      <button
+        onClick={() => void trigger()}
+        disabled={busy || checking}
+        title="Recheck now — runs in the background, this panel stays interactive while it does"
+        className="flex items-center gap-1 rounded-badge border border-base-600 px-1.5 py-0.5 font-mono text-[9px] text-ink-500 transition-colors hover:border-xp/40 hover:text-xp disabled:opacity-50"
+      >
+        <RotateCcw size={9} className={busy || checking ? "animate-spin" : ""} />
+        Recheck
+      </button>
+      {msg && <span className="truncate text-[9px] text-ink-600">{msg}</span>}
+    </div>
   );
 }
 
 function BuildView({ job }: { job: JobSummary | null }) {
   if (!job) return <NoJob />;
   const v = job.task?.verification;
+  const header = <RecheckButton jobId={job.id} checking={isActuallyChecking(v)} />;
 
   if (!v || v.status === "not-run") {
     return (
-      <p className="text-[10px] leading-relaxed text-ink-700">
-        {v?.note || "No verification has run for this job."}
-      </p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <p className="text-[10px] leading-relaxed text-ink-700">
+          {v?.note || "No verification has run for this job."}
+        </p>
+      </div>
     );
   }
   if (v.status === "running") {
-    return <RunningState startedAt={v.startedAt} />;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <RunningState startedAt={v.startedAt} />
+      </div>
+    );
   }
   if (v.status === "skipped" || v.status === "error") {
-    return <p className="text-[10px] leading-relaxed text-ink-700">{v.note}</p>;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <p className="text-[10px] leading-relaxed text-ink-700">{v.note}</p>
+      </div>
+    );
   }
 
   const checks = v.checks ?? [];
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+      {header}
       <p
         className={`shrink-0 font-mono text-[10px] font-medium ${
           v.status === "passed" ? "text-xp" : "text-vital-down"
@@ -682,26 +773,50 @@ function DiffView({ job }: { job: JobSummary | null }) {
   if (!job) return <NoJob />;
   const diff = job.task?.verification?.diff;
   const status = job.task?.verification?.status;
+  const header = <RecheckButton jobId={job.id} checking={isActuallyChecking(job.task?.verification)} />;
 
   if (!diff) {
-    if (status === "running") return <RunningState startedAt={job.task?.verification?.startedAt} />;
+    if (status === "running") {
+      return (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {header}
+          <RunningState startedAt={job.task?.verification?.startedAt} />
+        </div>
+      );
+    }
     return (
-      <p className="text-[10px] leading-relaxed text-ink-700">
-        {status === "skipped" || status === "not-run" || !status
-          ? "No diff for this job — nothing was changed, or it predates this pane."
-          : "No diff was captured for this job."}
-      </p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <p className="text-[10px] leading-relaxed text-ink-700">
+          {status === "skipped" || status === "not-run" || !status
+            ? "No diff for this job — nothing was changed, or it predates this pane."
+            : "No diff was captured for this job."}
+        </p>
+      </div>
     );
   }
   if (diff.error) {
-    return <p className="text-[10px] leading-relaxed text-vital-down">Couldn&apos;t read the diff — {diff.error}</p>;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <p className="text-[10px] leading-relaxed text-vital-down">Couldn&apos;t read the diff — {diff.error}</p>
+      </div>
+    );
   }
   if (!diff.stat) {
-    return <p className="text-[10px] leading-relaxed text-ink-700">Nothing tracked changed (new/untracked files don&apos;t show in a diff).</p>;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <p className="text-[10px] leading-relaxed text-ink-700">
+          Nothing tracked changed (new/untracked files don&apos;t show in a diff).
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+      {header}
       <pre className="shrink-0 whitespace-pre-wrap break-words font-mono text-[9px] text-ink-400">{diff.stat}</pre>
       {diff.text && (
         <details className="shrink-0 text-[10px]">
