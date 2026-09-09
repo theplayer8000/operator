@@ -1701,6 +1701,33 @@ function ask(job, req) {
     console.log(
       `[operator] auto: ${job.id} auto-allowed ${req.tool} (${job.autoUses}x${job.auto ? "" : ", master switch"})`
     );
+    /*
+      The vault's own wireframe (edf1f3b2) is explicit that this must not be
+      silent: "auto-resolved prompts still appear in the event stream showing
+      what would have been asked and what it resolved to." Before this, auto
+      mode returned true here with nothing but a server-side console.log — so
+      the moment auto mode went on, the "gold" event stream went quiet exactly
+      when it was busiest, and the owner had no record of what his own standing
+      consent had just let through.
+
+      Same shape as the real ask() emit two blocks below, deliberately, minus
+      `id`. No `id` is already the client's existing signal for "not
+      answerable" (every permission_request renderer checks `e.id &&
+      selectedId` before showing buttons) — this reuses that rather than
+      inventing a second mechanism. `auto: true` is the one new field, so the
+      client can tell "auto-allowed" apart from the CLI-fallback's own
+      id-less denial record, which means something else entirely.
+    */
+    emit(job, "permission_request", {
+      tool: req.tool,
+      subject: req.subject,
+      rule,
+      title: req.title || "",
+      description: req.description || "",
+      pending: false,
+      standing: false,
+      auto: true,
+    });
     return Promise.resolve(true);
   }
 

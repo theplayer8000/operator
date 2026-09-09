@@ -141,6 +141,16 @@ export interface JobEvent {
     fallback for anything that predates the profile.
   */
   standing?: boolean;
+  /*
+    True on a `permission_request` that auto mode granted with nobody asked —
+    the standing-consent case (server/jobs.mjs), never carries `id` since
+    nothing is waiting to be answered. Distinct from an id-less event that
+    predates a restart or came from the CLI fallback: those describe a denial
+    or an expired question, this describes a grant. The three read very
+    differently and share only "no `id`," which is why this exists rather
+    than inferring the case from absence.
+  */
+  auto?: boolean;
   ok?: boolean;
   status?: string;
   detail?: string;

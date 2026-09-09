@@ -438,10 +438,35 @@ export default function OperatorChat({
               </button>
               <button
                 onClick={() => {
-                  void jobs.clearAll();
+                  /*
+                    Was `jobs.clearAll()` — `POST /api/jobs/clear`, which deletes
+                    EVERY job in the app, this one included, not just what this
+                    panel is showing. Closing a chat box on the map should not be
+                    able to reach into the Orchestrator tab strip and an overnight
+                    job elsewhere and delete them too.
+
+                    It also explains "closing doesn't get rid of it": `clearAll`
+                    calls `select(null)`, which does NOT set `composing` — only
+                    `startNew()` does. Without it, `useJobs`'s own auto-select
+                    effect ("never over a blank one the user asked for," guarded
+                    on `composing`) saw nothing composing and nothing selected, so
+                    the moment ANY job anywhere existed again — voice, another
+                    device, auto mode — it silently selected it. If that job then
+                    hit a permission question, `liveQuestion` went true and the
+                    effect two below re-expanded a panel the owner had just
+                    dismissed.
+
+                    `startNew()` is the hook's own existing "blank conversation"
+                    primitive (used by the Orchestrator's own New-chat button) —
+                    deletes nothing, and sets `composing` for real, which is what
+                    actually keeps this closed.
+                  */
+                  jobs.startNew();
+                  speech.stop();
                   setExpanded(false);
                 }}
-                aria-label="Clear"
+                aria-label="Close"
+                title="Close — nothing running is stopped or deleted"
                 className="text-ink-600 hover:text-ink-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
               >
                 <X size={16} />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BellRing,
   Cpu,
@@ -110,6 +110,45 @@ export default function OperatorControl() {
     if (problem) setError(problem);
   }
 
+  /*
+    The wireframe's five permission-card semantics (edf1f3b2, owner-corrected
+    8 Sep): Approve / Deny / Don't ask again / Allow — this tool for this job /
+    Auto mode. Only the last two were ever missing, and both turn out to
+    already exist server-side with nothing surfacing them:
+
+    - `requestAuto` (server/jobs.mjs) — a job may ask for its own standing
+      auto grant, and the flag only flips on THIS answer. Exposed as the
+      `auto_mode_request` capability action; never given a button anywhere.
+    - `flip(true)` two functions up — the same global switch the Auto Mode
+      card already uses, just never offered from inside a question itself.
+
+    Both request-then-approve: `requestAuto`/`flip` only arm the grant, they
+    do not resolve the promise this specific question is suspended on — the
+    server checked auto BEFORE creating the question, so the already-pending
+    one still needs its own `answer(...)` call, same as tapping Approve.
+  */
+  async function autoThisJob(jobId: string, permissionId: string) {
+    setError(null);
+    try {
+      const res = await fetch("/api/actions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "auto_mode_request", params: { jobId } }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || `request failed (${res.status})`);
+    } catch (err) {
+      setError((err as Error).message);
+      return;
+    }
+    await answer(jobId, permissionId, "allow", false);
+  }
+
+  async function autoEverywhere(jobId: string, permissionId: string) {
+    await flip(true);
+    await answer(jobId, permissionId, "allow", false);
+  }
+
   async function grant() {
     const rule = grantRule.trim();
     if (!rule) return;
@@ -121,6 +160,22 @@ export default function OperatorControl() {
   }
 
   const visibleEvents = (events ?? []).filter((e) => e.type !== "usage");
+
+  /*
+    Auto-scroll to the newest event. Never had it — someone actually watching
+    this stream (the owner said it plainly: "the event stream is gold," and it
+    is the piece meant to carry a voice-driven interaction) had to keep pulling
+    the scrollbar down by hand every time something new arrived, which is the
+    opposite of "watch it work." Scrolled on length, not on content, since a
+    changed-in-place event (a tool_result stub, a permission_answer replacing
+    the question above it) is not a reason to jump — only a genuinely new line
+    is.
+  */
+  const streamRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = streamRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [visibleEvents.length]);
 
   return (
     <>
@@ -406,11 +461,25 @@ export default function OperatorControl() {
         {visibleEvents.length === 0 ? (
           <p className="text-xs text-ink-700">No events yet — pick a job.</p>
         ) : (
-          <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+          <div ref={streamRef} className="max-h-[32rem] space-y-1 overflow-y-auto pr-1">
             {visibleEvents.map((e, i) => (
               <div key={i} className="flex gap-2 text-xs leading-relaxed">
                 <span className="shrink-0 font-mono text-[10px] text-ink-700">{timeOf(e.at)}</span>
-                {e.type === "permission_request" ? (
+                {e.type === "permission_request" && e.auto ? (
+                  /*
+                    Auto-resolved — a record, not a question. Nobody was asked,
+                    so this reads as a log line rather than the amber card
+                    below: same information (what, on which job), no buttons,
+                    because there is nothing left to decide. This is the vault
+                    requirement (edf1f3b2) that the stream stay honest once
+                    auto mode goes quiet on the phone — without it, "auto mode
+                    is on" and "nothing is happening" looked identical here.
+                  */
+                  <p className="min-w-0 flex-1 break-words text-ink-500">
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-rank">Auto-allowed</span>{" "}
+                    {e.title || e.rule || e.tool}
+                  </p>
+                ) : e.type === "permission_request" ? (
                   <div className="min-w-0 flex-1 rounded-badge border border-xp/40 bg-xp/5 px-3 py-2">
                     <p className="font-mono text-[10px] uppercase tracking-wide text-xp">Needs your say-so</p>
                     <p className="mt-0.5 break-words text-ink-200">
@@ -420,24 +489,56 @@ export default function OperatorControl() {
                       <p className="mt-0.5 break-words text-[11px] text-ink-500">{e.description}</p>
                     )}
                     {e.id && selectedId ? (
+                      /*
+                        Five actions, matching the wireframe's owner-corrected
+                        semantics (edf1f3b2, 8 Sep) exactly rather than the
+                        three this card shipped with. All five map to real,
+                        already-scoped server behaviour — nothing here is a
+                        relabelled duplicate of something else:
+                          Approve            - answerPermission(allow), once
+                          Deny               - answerPermission(deny)
+                          Don't ask again    - answerPermission(allow, remember:true) —
+                                               genuinely global-until-restart
+                                               (module-level Set, not per-job),
+                                               named accordingly rather than as
+                                               "for this job"
+                          Auto — this job    - auto_mode_request, then approve
+                          Auto — everywhere  - the same global flip the Auto
+                                               Mode card uses, then approve
+                      */
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         <button
                           onClick={() => void answer(selectedId, e.id!, "allow")}
                           className="rounded-badge bg-xp px-2.5 py-1 text-[11px] font-medium text-base-950"
                         >
-                          Allow
+                          Approve
                         </button>
                         <button
                           onClick={() => void answer(selectedId, e.id!, "deny")}
                           className="rounded-badge border border-base-500 px-2.5 py-1 text-[11px] text-ink-300"
                         >
-                          No
+                          Deny
                         </button>
                         <button
                           onClick={() => void answer(selectedId, e.id!, "allow", true)}
                           className="rounded-badge border border-base-600 px-2.5 py-1 text-[11px] text-ink-500"
+                          title="Every job, every question with this exact rule — until the server restarts"
                         >
-                          Allow &amp; stop asking
+                          Don&apos;t ask again
+                        </button>
+                        <button
+                          onClick={() => void autoThisJob(selectedId, e.id!)}
+                          className="rounded-badge border border-rank/40 bg-rank/5 px-2.5 py-1 text-[11px] text-rank"
+                          title="Everything this job asks, from now on — other jobs still ask"
+                        >
+                          Auto — this job
+                        </button>
+                        <button
+                          onClick={() => void autoEverywhere(selectedId, e.id!)}
+                          className="rounded-badge border border-rank/40 bg-rank/5 px-2.5 py-1 text-[11px] text-rank"
+                          title="The global switch — every job, until you turn it off"
+                        >
+                          Auto — everywhere
                         </button>
                       </div>
                     ) : (
