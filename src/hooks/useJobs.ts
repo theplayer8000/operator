@@ -59,6 +59,10 @@ export interface JobSummary {
       note?: string;
       changed?: number;
       checks?: { name: string; passed: boolean; ms: number; output?: string }[];
+      /** The Artifacts "Diff" pane. Absent on any job verified before this field existed, or one with nothing to build. */
+      diff?: { stat: string; text: string; truncated: boolean; error?: string };
+      /** The Artifacts "Build" pane's size readout — only present after a successful `npx vite build`. */
+      bundle?: { files: { name: string; bytes: number }[]; totalBytes: number; error?: string };
     };
   } & Record<string, unknown>;
   handoff?: unknown;

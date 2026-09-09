@@ -43,12 +43,13 @@ import SandboxTerminal from "@/components/dashboard/SandboxTerminal";
       the stream is job-scoped, so it needed a picker regardless of where it
       lived, and the wireframe never drew them as their own zones.
     - WORKERS & ROUTING / CAPABILITY LOCKS are straight moves.
-    - SANDBOX TERMINAL is `components/dashboard/SandboxTerminal.tsx` — the
-      same capability as the Dev page's `TerminalPanel`, through the same
-      `useTerminal()` hook (server/terminal.mjs underneath), not a second
-      terminal reimplemented for this space. Artifacts (the other half of
-      the wireframe's label) is untouched — nothing in the app produces or
-      lists "artifacts" yet, so there is nothing real to wire in for it.
+    - SANDBOX TERMINAL / ARTIFACTS is `components/dashboard/
+      SandboxTerminal.tsx` — two tabs in the one quadrant the wireframe drew
+      as one label. Terminal is the Dev page's `TerminalPanel` capability
+      through the same `useTerminal()` hook, not a second terminal. Artifacts
+      is a viewer over data/renders/ (new /api/renders* routes in
+      server/index.mjs) — it does not call renderToPng() itself, only shows
+      what a worker already produced via scripts/render.mjs.
 
   DRAGGABLE AS ONE UNIT, not per-quadrant: the grip bar across the top is the
   only drag surface (dragging from the body would fight the quadrants' own
@@ -615,7 +616,7 @@ export default function OperatorControl() {
 
           {/* SANDBOX TERMINAL — the same useTerminal() capability as the Dev page's TerminalPanel */}
           <div style={{ flex: "30 1 0%" }} className="min-h-0 overflow-hidden">
-            <SandboxTerminal />
+            <SandboxTerminal selectedJob={selected} />
           </div>
         </div>
       </div>

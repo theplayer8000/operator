@@ -1463,6 +1463,11 @@ async function runVerification(job) {
         ...(c.passed ? {} : { output: c.output }),
       })),
       changed: result.changed.length,
+      // The Artifacts "Diff" and "Build" panes' only source — see verify.mjs
+      // for why these are captured once, here, rather than reconstructed
+      // later: the worktree has moved on by the time anyone looks.
+      ...(result.diff ? { diff: result.diff } : {}),
+      ...(result.bundle ? { bundle: result.bundle } : {}),
     };
     if (job.handoff) job.handoff.verification = job.task.verification;
     emit(job, "verification", job.task.verification);

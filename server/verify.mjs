@@ -40,12 +40,17 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { resolveExecutable } from "./terminal.mjs";
 
 const run = promisify(execFile);
 
 /** Longer than any of these take, short enough that a hang is not a hang forever. */
 const CHECK_TIMEOUT_MS = 240_000;
+/** A diff beyond this is a summary problem, not a review-in-place problem — `--stat` still shows every file. */
+const MAX_DIFF_CHARS = 20_000;
 
 /*
   The real node, because the one on PATH may not be.
@@ -76,6 +81,63 @@ async function changedFiles(cwd) {
     // A rename reads as "old -> new"; the new path is the one to check.
     .map((path) => (path.includes(" -> ") ? path.split(" -> ")[1] : path))
     .map((path) => path.replace(/^"|"$/g, ""));
+}
+
+/**
+ * What a job actually changed, as text — the Artifacts "Diff" pane's only
+ * source. Captured once, right after `changedFiles`, because nothing in this
+ * file modifies the tree afterwards (tsc/vite/node --check are all read-only)
+ * so there's no later moment that would show something different.
+ *
+ * `--stat` is kept in full regardless of size — it's one line per file and is
+ * the thing that stays useful when the full text is cut. The full diff is
+ * capped because this rides on every poll of a job that has one, same
+ * discipline as a failing check's `output`.
+ */
+async function captureDiff(cwd) {
+  try {
+    const [{ stdout: stat }, { stdout: text }] = await Promise.all([
+      run("git", ["diff", "--stat"], { cwd, timeout: 20_000, maxBuffer: 4_000_000 }),
+      run("git", ["diff"], { cwd, timeout: 20_000, maxBuffer: 20_000_000 }),
+    ]);
+    const truncated = text.length > MAX_DIFF_CHARS;
+    return {
+      stat: stat.trim(),
+      text: truncated ? text.slice(0, MAX_DIFF_CHARS) : text,
+      truncated,
+    };
+  } catch (err) {
+    return { stat: "", text: "", truncated: false, error: String(err?.message ?? err).slice(0, 200) };
+  }
+}
+
+/**
+ * Sizes of what `npx vite build` actually produced, read off disk rather than
+ * parsed from console output — robust to Vite changing its own log format,
+ * and it is the same number a person would see running `dir dist\assets`.
+ *
+ * Deliberately the job's OWN `dist/`, in its own worktree — not the live
+ * app's. CLAUDE.md is explicit that a build run outside the main checkout
+ * "does nothing you want" for deployment, and that is correct and unrelated
+ * here: this reports what THIS job's code produces when built, not whether
+ * it has been deployed. Landing and rebuilding main is a separate, later
+ * step this file has no opinion about.
+ */
+async function bundleSizes(cwd) {
+  const dir = join(cwd, "dist", "assets");
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const info = await stat(join(dir, entry.name));
+      files.push({ name: entry.name, bytes: info.size });
+    }
+    files.sort((a, b) => b.bytes - a.bytes);
+    return { files, totalBytes: files.reduce((n, f) => n + f.bytes, 0) };
+  } catch (err) {
+    return { files: [], totalBytes: 0, error: String(err?.message ?? err).slice(0, 200) };
+  }
 }
 
 async function check(name, command, args, cwd) {
@@ -133,6 +195,11 @@ export async function verifyWorkspace(cwd) {
     };
   }
 
+  // From here on there IS a diff worth showing, regardless of whether any
+  // gate below covers what changed — a docs-only job has nothing to build
+  // and everything to review.
+  const diff = await captureDiff(cwd);
+
   const frontend = changed.filter((f) => /\.(ts|tsx)$/.test(f) && !f.startsWith("server/"));
   const scripts = changed.filter((f) => /\.mjs$/.test(f));
 
@@ -152,12 +219,43 @@ export async function verifyWorkspace(cwd) {
     checks.push(await check(`node --check ${file}`, realNode(), ["--check", file], cwd));
   }
 
+  let bundle = null;
   if (frontend.length > 0) {
-    checks.push(await check("npx tsc -b", "npx", ["tsc", "-b"], cwd));
-    // Only build if the types are sound: vite would fail for the same reason
-    // and take four minutes to say so.
-    if (checks.at(-1)?.passed) {
-      checks.push(await check("npx vite build", "npx", ["vite", "build"], cwd));
+    /*
+      `npx`, bare, cannot be spawned this way on Windows — found while
+      building the Artifacts "Build" pane and testing this file end to end
+      for the first time, not while it was written. `terminal.mjs`'s own
+      header documents exactly this failure mode for `.cmd` shims
+      (`spawn("claude", …) → ENOENT`) and built `resolveExecutable` to work
+      around it; this file never adopted that fix. The result was not a
+      missing feature, it was a WRONG one: every "npx tsc -b" / "npx vite
+      build" check here returned in ~5ms with `passed: false`, which reads as
+      a real compile failure — a genuine tsc run takes seconds — so every
+      job's verification has likely been reporting "failed" regardless of
+      whether its code actually compiled. Confirmed the fix directly: the
+      resolved target ran a real `tsc -b` to completion (~20s) before this
+      landed.
+    */
+    const npx = await resolveExecutable("npx");
+    if (!npx) {
+      checks.push({
+        name: "npx tsc -b",
+        passed: false,
+        ms: 0,
+        output: "could not resolve npx on this machine — set OPERATOR_TERMINAL_BIN_NPX",
+      });
+    } else {
+      checks.push(await check("npx tsc -b", npx.exe, [...npx.prefixArgs, "tsc", "-b"], cwd));
+      // Only build if the types are sound: vite would fail for the same reason
+      // and take four minutes to say so.
+      if (checks.at(-1)?.passed) {
+        checks.push(await check("npx vite build", npx.exe, [...npx.prefixArgs, "vite", "build"], cwd));
+        // Read what THAT build actually produced, but only when it succeeded —
+        // a failed build's dist/ is either stale from a prior success or
+        // missing outright, and reporting a size for either would be reporting
+        // a number that has nothing to do with the job just checked.
+        if (checks.at(-1)?.passed) bundle = await bundleSizes(cwd);
+      }
     }
   }
 
@@ -166,6 +264,7 @@ export async function verifyWorkspace(cwd) {
       status: "skipped",
       checks: [],
       changed,
+      diff,
       note: `${changed.length} file(s) changed, none of them code the gates cover`,
     };
   }
@@ -175,6 +274,8 @@ export async function verifyWorkspace(cwd) {
     status: failed.length === 0 ? "passed" : "failed",
     checks,
     changed,
+    diff,
+    ...(bundle ? { bundle } : {}),
     note:
       failed.length === 0
         ? `${checks.length} check(s) passed over ${changed.length} changed file(s)`

@@ -21,9 +21,9 @@
 // In production it also serves the built app from dist/.
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, extname, resolve } from "node:path";
+import { dirname, join, extname, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzip as gzipCb } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -50,6 +50,7 @@ import {
   stopRun,
   subscribe,
 } from "./terminal.mjs";
+import { renderDir } from "./render.mjs";
 import * as jobs from "./jobs.mjs";
 import { resourceLimit, stageUpload } from "./uploads.mjs";
 import { runBackup } from "../scripts/backup.mjs";
@@ -1285,6 +1286,77 @@ const server = createServer(async (req, res) => {
       if (!rel) return json(req, res, 400, { error: "missing path" });
       const file = await readTextFile(ROOT, rel);
       return json(req, res, file.error ? 400 : 200, file);
+    }
+
+    /*
+      The Artifacts pane — a viewer over data/renders/, not a render trigger.
+      Nothing here calls renderToPng(); a worker does that through
+      scripts/render.mjs (pre-allowed, ALLOWED_TOOLS in jobs.mjs), same as it
+      always has. This just lets a browser SEE what's already on disk, which
+      nothing could before — render.mjs had no HTTP surface at all.
+
+      render.mjs's own header names three measured failure modes (2026-08-26):
+      a corrupted isolated profile makes every future render fail silently
+      until the directory is deleted by hand; the viewport-only screenshot
+      misses anything below the fold; a narrow width is a narrow DESKTOP
+      browser, not a phone. None of that is fixable from here — this pane can
+      only show what generation already produced, not diagnose why generation
+      did or didn't happen. That asymmetry is why the list is sorted
+      newest-first with a real timestamp rather than just a filename: staleness
+      is the only signal this endpoint can honestly offer.
+    */
+    if (pathname === "/api/renders" && req.method === "GET") {
+      const dir = renderDir();
+      let entries = [];
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        // No directory yet (nothing has ever rendered) is not an error.
+        return json(req, res, 200, { files: [] });
+      }
+      const files = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".png")) continue;
+        try {
+          const info = await stat(join(dir, entry.name));
+          files.push({
+            name: entry.name,
+            url: `/api/renders/${encodeURIComponent(entry.name)}`,
+            bytes: info.size,
+            mtime: info.mtime.toISOString(),
+          });
+        } catch {
+          /* vanished between readdir and stat — sweep()'s own race, not ours to solve */
+        }
+      }
+      files.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+      return json(req, res, 200, { files: files.slice(0, 30) });
+    }
+
+    if (pathname.startsWith("/api/renders/") && req.method === "GET") {
+      /*
+        basename-only, same discipline as terminal.mjs's resolveExecutable and
+        handoff.mjs's fixed paths: a caller supplies a NAME, this resolves it,
+        a path is never taken as given. `..` cannot escape RENDER_DIR because
+        basename() strips every path separator before the name is even looked
+        at, and the regex below still refuses anything that isn't a plain
+        render filename regardless.
+      */
+      const name = basename(decodeURIComponent(pathname.slice("/api/renders/".length)));
+      if (!/^[a-z0-9._-]+\.png$/i.test(name)) {
+        return json(req, res, 400, { error: "not a render filename" });
+      }
+      const full = join(renderDir(), name);
+      if (!existsSync(full)) return json(req, res, 404, { error: "no such render — it may have been swept" });
+      const body = await readFile(full);
+      res.writeHead(200, {
+        "content-type": "image/png",
+        // Renders are swept after 24h and filenames are UUID-suffixed, never
+        // reused — but "no-store" costs nothing here and removes any chance
+        // of a stale image surviving a sweep-and-regenerate.
+        "cache-control": "no-store",
+      });
+      return res.end(body);
     }
 
     // Drop a single slice back to its seed. Settings > Reset will use this.
