@@ -15,6 +15,23 @@ import { registerMic } from "@/lib/micBridge";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
 import { drawCore } from "@/components/map/operatorCore";
+import MobileControlDock from "@/components/dashboard/MobileControlDock";
+
+/*
+  The text chat feed — archived, not deleted, per the owner: mobile is
+  voice-focused going forward (full voice work is separate, waiting on him
+  being home with his actual mic), so the feed that used to expand into a
+  thread here no longer earns its space. `OperatorChat` itself is UNTOUCHED —
+  it is shared with the wall display (MissionMap.tsx) and stays exactly as
+  it was there. This flag only gates whether THIS page still mounts it.
+
+  A boolean over a comment block, deliberately: the import, the JSX and the
+  props it needs all stay compiled and type-checked with the flag OFF, so a
+  future refactor elsewhere in this file can't silently break a code path
+  nobody is exercising and nobody would notice until someone flips it back
+  on. Flip it to `true` to bring the feed back.
+*/
+const MOBILE_TEXT_CHAT_ENABLED = false;
 
 /**
  * Operator on a phone: the core, and a chat that isn't there until you use it.
@@ -404,7 +421,68 @@ export default function OperatorMobile() {
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      {/*
+        Frosted glass BEHIND the core — stacked first so the canvas (below,
+        DOM order = paint order, no z-index games needed) paints over it.
+        Was the other way around originally, which read as "glass sitting on
+        top of/partially obscuring the core" — the owner's actual complaint
+        once the hard edge was fixed and the flaw underneath it was visible:
+        wrong stacking, not just a bad edge. A canvas is transparent outside
+        what it draws, so putting it on top costs nothing — the glass still
+        shows through everywhere the core doesn't draw, and the rings/nucleus
+        pixels themselves are now crisp, painted after (i.e. above) the blur
+        rather than a blurred backdrop sampling them into the mix.
+
+        Position/size math (unchanged from before, still worth keeping here
+        since it's this div's, not the canvas's):
+
+          - Centre: the caller (below) draws at `ctx.translate(width / 2,
+            height * 0.42)` — 42% down, NOT 50%. That 8-point gap, at a
+            ~66px base radius on a 390px phone, is a FULL RADIUS of vertical
+            miss. `top: 42%` here matches it exactly, and the same
+            `translateY(-28px)` the canvas carries keeps the two aligned.
+          - Size: drawCore's shell (the rings) sits at `radius * 1.62`, the
+            soft aura fades out by `radius * 2.2`. `radius` itself is
+            `min(width, height) * 0.17` — so in CSS terms, the shell's
+            diameter is `min(100vw, 100vh) * 0.17 * 1.62 * 2` ≈ `55vmin`,
+            grown to 85vmin below so the mask (next point) still leaves a
+            fully-opaque centre roughly that size.
+          - Weight: deliberately NOT the shared `.glass` utility (16px blur,
+            0.6 alpha) — that class is tuned for the dock sheet reading text
+            clearly against a busy background, and at the core's fine
+            line-art the same blur reads as mud regardless of correct
+            sizing. Lighter, inline, specific to this one use.
+          - Edge: no border, and no hard-edged circle — a flat disc read as a
+            separate lens laid on top ("what's that circle"), and even
+            without a border `backdrop-filter` still has a hard boundary of
+            its own at its shape edge. A `mask` radial-gradient fades the
+            element's own alpha from solid at the centre to nothing well
+            before its edge, so the blur fades out WITH it.
+      */}
+      <div
+        className="pointer-events-none absolute left-1/2 rounded-full"
+        style={{
+          top: "42%",
+          width: "85vmin",
+          height: "85vmin",
+          transform: "translate(-50%, -50%) translateY(-28px)",
+          backdropFilter: "blur(7px)",
+          background: "rgba(22, 27, 36, 0.32)",
+          WebkitMaskImage: "radial-gradient(circle, black 0%, black 32%, transparent 68%)",
+          maskImage: "radial-gradient(circle, black 0%, black 32%, transparent 68%)",
+        }}
+        aria-hidden
+      />
+
+      {/*
+        The core itself, on top of the glass now (see comment above). Shifted
+        up a little, not redrawn: a pure CSS transform, nothing in
+        operatorCore.ts's own drawing math touched. Room underneath is for
+        the Control dock's handle (MobileControlDock, fixed to the bottom
+        edge) — without this the core's own lower glow sat right up against
+        it.
+      */}
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full -translate-y-7" />
 
       {/*
         The grabber. Every iOS sheet has one, which is exactly why it is here:
@@ -506,11 +584,18 @@ export default function OperatorMobile() {
 
       {/*
         The chat is shared with the wall display — same component, same
-        behaviour, so the two cannot drift apart.
+        behaviour, so the two cannot drift apart. Archived here specifically
+        (MOBILE_TEXT_CHAT_ENABLED, top of file) — mobile is voice-focused
+        now; OperatorChat itself is untouched and MissionMap.tsx still mounts
+        it exactly as before.
       */}
-      <div data-chat>
-        <OperatorChat className="relative mx-3 mb-4" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
-      </div>
+      {MOBILE_TEXT_CHAT_ENABLED && (
+        <div data-chat>
+          <OperatorChat className="relative mx-3 mb-4" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
+        </div>
+      )}
+
+      <MobileControlDock />
     </div>
   );
 }

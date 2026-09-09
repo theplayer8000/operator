@@ -81,9 +81,19 @@
 }
 
 @layer utilities {
+  /*
+    Defined since before this project needed it — unused anywhere until the
+    mobile Control dock and the phone core (2026-09-09), the two places the
+    owner actually asked for glassmorphism: translucent enough to see what's
+    behind, blurred and tinted enough to read as a real surface, not full
+    transparency the way the desktop dock deliberately stays. The border is
+    new here — a frosted pane with no edge just looks like a blur filter
+    turned on by accident.
+  */
   .glass {
     backdrop-filter: blur(16px);
     background: rgba(22, 27, 36, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
   .card-base {
     @apply bg-base-800 border border-base-600 rounded-card shadow-card bg-glass-sheen;
