@@ -584,10 +584,47 @@ export default function OperatorControl() {
                     )}
                   </div>
                 ) : e.type === "prompt" ? (
-                  <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-ink-100">{e.text}</p>
+                  /*
+                    A CONTENT bug, reported directly against the wireframe: this
+                    stream is meant to be short, structured SYSTEM lines —
+                    "14:02:11 -> Scanning workspace" — scannable at a glance. It
+                    was instead dumping full chat prose with a timestamp
+                    stapled on, both directions: the owner's own message here,
+                    in full with no limit, and every assistant reply through
+                    the catch-all below with the same problem.
+
+                    One line, hard-truncated, newlines flattened to spaces so a
+                    multi-line instruction cannot blow the row out. What he
+                    typed is his own words — he does not need it expandable,
+                    only identifiable at a glance among the tool_use/routed
+                    lines around it. The full text still lives where it always
+                    did: the conversation itself, not duplicated here.
+                  */
+                  <p className="min-w-0 flex-1 truncate text-ink-100">
+                    <span className="font-mono text-[10px] text-ink-700">sent </span>
+                    {truncateLine(e.text, 72)}
+                  </p>
+                ) : e.type === "text" ? (
+                  /*
+                    Same shape as tool_result just below: closed by default,
+                    one scannable line, full content one tap away rather than
+                    always on screen. This is the other half of the bug above
+                    — an assistant reply is exactly as long as a reply gets,
+                    and "Fair — my bad, I was holding onto the 09-06 note..."
+                    sitting inline next to "running" / "complete" is precisely
+                    what made this read as a transcript instead of a log.
+                  */
+                  <details className="min-w-0 flex-1 text-[11px]">
+                    <summary className="cursor-pointer text-ink-500">
+                      replied · {wordCount(e.text)} word{wordCount(e.text) === 1 ? "" : "s"}
+                    </summary>
+                    <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-badge border border-base-600 bg-base-950/60 p-2 text-ink-300">
+                      {e.text}
+                    </p>
+                  </details>
                 ) : (
                   <p className="min-w-0 flex-1 break-words text-ink-500">
-                    {e.text || e.status || e.detail || e.type}
+                    {e.status || e.detail || e.type}
                   </p>
                 )}
               </div>
@@ -603,4 +640,22 @@ export default function OperatorControl() {
 function timeOf(at: string): string {
   const d = new Date(at);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour12: false });
+}
+
+/**
+ * One scannable line for a `prompt` event — flatten newlines so a multi-line
+ * instruction cannot expand the row, then hard-cut. `truncate` in the class
+ * list already clips visually at the container's width; this clips the
+ * STRING itself, which matters when the container is wider than 72 characters
+ * (a maximised control panel, a wall display) and would otherwise just show
+ * the whole thing.
+ */
+function truncateLine(text: string | undefined, max: number): string {
+  const flat = (text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** For the collapsed `text` summary — "replied · 34 words" rather than a length in characters, which means nothing at a glance. */
+function wordCount(text: string | undefined): number {
+  return (text ?? "").trim().split(/\s+/).filter(Boolean).length;
 }
