@@ -1,17 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BellRing,
+  CheckCircle2,
+  Circle,
   Cpu,
+  MessageSquare,
   Radio,
+  Route,
   RotateCcw,
   ScrollText,
+  Send,
+  ShieldAlert,
   ShieldCheck,
+  ShieldX,
   SlidersHorizontal,
   Square,
+  Wrench,
+  XCircle,
+  Zap,
 } from "lucide-react";
 import { useRemoteStorage } from "@/hooks/useRemoteStorage";
 import { retry as reloadStore } from "@/lib/remoteStore";
 import { useJobs } from "@/hooks/useJobs";
+import type { JobEvent } from "@/hooks/useJobs";
 
 /**
  * OperatorControl — the Control dashboard wireframe (vault edf1f3b2), mounted
@@ -465,6 +476,7 @@ export default function OperatorControl() {
             {visibleEvents.map((e, i) => (
               <div key={i} className="flex gap-2 text-xs leading-relaxed">
                 <span className="shrink-0 font-mono text-[10px] text-ink-700">{timeOf(e.at)}</span>
+                <EventIcon e={e} />
                 {e.type === "permission_request" && e.auto ? (
                   /*
                     Auto-resolved — a record, not a question. Nobody was asked,
@@ -634,6 +646,41 @@ export default function OperatorControl() {
       </section>
     </>
   );
+}
+
+/*
+  One icon per event type, matching the wireframe's intent literally rather
+  than just structurally: edf1f3b2 draws each stream line with a marker
+  ("🔍 Scanning workspace", "🔧 Running git worktree", "🔴 [PERMISSION
+  REQUIRED]") and the terse rows were correct but bare. lucide-react, not the
+  wireframe's literal emoji — it's the icon set every other panel here
+  already uses (BellRing, Cpu, Radio, ScrollText, ShieldCheck...), and mixing
+  in emoji glyphs would be a second icon language in the same list. Sized to
+  sit on the same line as the mono timestamp; color mirrors whatever that
+  row's own text already uses, so the icon reads as the same signal, not a
+  second thing to parse.
+*/
+function EventIcon({ e }: { e: JobEvent }) {
+  const cls = "mt-0.5 shrink-0";
+  if (e.type === "permission_request" && e.auto) return <Zap size={12} className={`${cls} text-rank`} />;
+  if (e.type === "permission_request") return <ShieldAlert size={12} className={`${cls} text-xp`} />;
+  if (e.type === "permission_answer")
+    return e.decision === "allowed" ? (
+      <ShieldCheck size={12} className={`${cls} text-xp`} />
+    ) : (
+      <ShieldX size={12} className={`${cls} text-ink-500`} />
+    );
+  if (e.type === "routed") return <Route size={12} className={`${cls} text-ink-600`} />;
+  if (e.type === "tool_use") return <Wrench size={12} className={`${cls} text-ink-600`} />;
+  if (e.type === "tool_result")
+    return e.ok === false ? (
+      <XCircle size={12} className={`${cls} text-vital-down`} />
+    ) : (
+      <CheckCircle2 size={12} className={`${cls} text-ink-600`} />
+    );
+  if (e.type === "prompt") return <Send size={12} className={`${cls} text-ink-700`} />;
+  if (e.type === "text") return <MessageSquare size={12} className={`${cls} text-ink-600`} />;
+  return <Circle size={9} className={`${cls} text-ink-700`} />;
 }
 
 /** Local-time HH:MM:SS for an ISO timestamp, or "" when unparseable. */
