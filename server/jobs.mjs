@@ -3268,7 +3268,7 @@ export async function create(
 }
 
 /** Another turn on an existing job, or a cancellation. */
-export async function input(id, body, identity) {
+export async function input(id, body, identity, { executionAllowed = true } = {}) {
   const job = jobs.get(id);
   if (!job) throw new Error("no such job");
 
@@ -3305,6 +3305,26 @@ export async function input(id, body, identity) {
   const text = String(body?.text ?? "").trim();
   if (!text) throw new Error("nothing to send");
   assertMine(identity);
+
+  /*
+    A follow-up turn runs on the job's EXISTING worker (the worker is chosen
+    once, at creation, and carried for the job's life). If that worker has full
+    tool access, adding a turn to it is more arbitrary execution — same as
+    starting one — so an unarmed caller may not. A capability-only worker
+    (Gemini, the router, the local model) can do nothing a direct action call
+    could not, which is exactly why `create()` lets an unarmed caller start
+    one; the second turn is no different.
+  */
+  if (!executionAllowed) {
+    const fullTools = listProviders().some(
+      (p) => p.id === job.provider && p.capabilities?.tools === true,
+    );
+    if (fullTools) {
+      throw new Error(
+        "this conversation runs on Claude Code — arm the terminal on the Dev page to add to it",
+      );
+    }
+  }
 
   // Whoever sends the turn holds it, not whoever opened the tab. `holder()`
   // reads this to say "busy on X from <device>", and naming the wrong device

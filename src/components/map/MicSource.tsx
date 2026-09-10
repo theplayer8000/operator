@@ -155,7 +155,7 @@ export default function MicSource({
             <span className="block text-[11px] text-ink-700 mt-0.5 leading-relaxed">
               {autoSend
                 ? "Each sentence goes straight to Operator."
-                : "Sentences fill the box; you press send."}
+                : "Nothing is sent until you send it — fills the box on a screen that has one."}
             </span>
           </button>
 

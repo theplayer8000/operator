@@ -47,23 +47,38 @@ export default function OperatorChat({
   className = "",
   heard,
   autoSend = false,
+  headless = false,
+  onReply,
 }: {
   className?: string;
   /**
    * The last thing the microphone made out, if anything.
    *
-   * Put into the input rather than sent. The owner's complaint was that voice
-   * "heard it but didnt give me a feedback ... nor does it like sync or
-   * connect" — so the words have to arrive somewhere he can see and act on.
-   *
-   * NOT auto-sent, deliberately. Every sentence becoming a job is how twenty
-   * phantom ones happened on 2026-08-31, and a misheard word would spend money
-   * with no chance to catch it. Filling the box makes the loop visible and
-   * leaves the decision one tap away.
+   * With `autoSend` off it fills the input rather than sending — the owner's
+   * complaint was that voice "heard it but didnt give me a feedback ... nor
+   * does it like sync or connect", so the words have to arrive somewhere he
+   * can see and act on. With `autoSend` on it goes straight to a worker; a
+   * sentence said mid-turn is queued by the server, not dropped.
    */
   heard?: string | null;
-  /** Send what was heard immediately instead of filling the box. */
+  /** Send what was heard straight to a worker instead of filling the box. */
   autoSend?: boolean;
+  /**
+   * Run every effect — forward heard speech, speak the reply, scope it to this
+   * device — but render nothing.
+   *
+   * The mobile redesign stopped mounting the visible thread
+   * (`MOBILE_TEXT_CHAT_ENABLED` in OperatorMobile) and took the voice→worker
+   * path down with it: a phone could transcribe a question and had nowhere to
+   * send it. Mounting this headless puts the path back without the UI.
+   */
+  headless?: boolean;
+  /**
+   * A worker's reply to a turn asked FROM THIS DEVICE that was not read aloud
+   * (speech muted or unsupported). Lets a headless host show the answer, since
+   * there is no thread on screen to read it from.
+   */
+  onReply?: (text: string) => void;
 }) {
   const jobs = useJobs();
   const [draft, setDraft] = useState("");
@@ -204,43 +219,62 @@ export default function OperatorChat({
   */
   const askedHere = useRef<Set<string>>(new Set());
 
-  /** One place that actually sends, so voice and the button cannot diverge. */
+  /*
+    Sentences are serialised, never dropped.
+
+    This used to `return` on `jobs.busy` — which threw away everything said
+    mid-turn. It was worst on a phone, where there is no box for it to fall
+    into, so a spoken question during a reply simply vanished. But the SERVER
+    already queues a second turn into a job's `pending` and runs it next, so
+    the guard was refusing work the server was ready to take.
+
+    A promise chain keeps two fast sentences from each starting their OWN job
+    before `jobs.selected` has caught up to the first — the second waits for
+    the first to land, sees the now-live job, and joins it.
+  */
+  const sendChain = useRef<Promise<void>>(Promise.resolve());
   const sendText = useCallback(
-    async (text: string, resources: JobResource[] = []) => {
-      if (!text.trim() || jobs.busy) return;
+    (text: string, resources: JobResource[] = []): Promise<void> => {
+      const trimmed = text.trim();
+      if (!trimmed) return Promise.resolve();
+      // Recorded synchronously, before the chain — a fast reply must not beat
+      // the record of having asked, or it won't be read aloud on this device.
+      askedHere.current.add(trimmed);
       setExpanded(true);
-      // Before sending, so a fast reply cannot arrive before the record of
-      // having asked for it.
-      askedHere.current.add(text.trim());
-
-      /*
-        `selected`, not `selectedId`.
-
-        `selectedId` is raw state and is never checked against the job list;
-        `selected` is `jobs.find(...) ?? null`, so it is only set when the job
-        genuinely still exists. Sending to the unvalidated one meant a stale id
-        survived every server restart and every "clear all", and the next thing
-        the owner said came back "no such job" — which he hit asking the time.
-      */
-      const live = jobs.selected?.id ?? null;
-
-      try {
-        if (live) await jobs.send(live, text, resources);
-        else await jobs.create(text, undefined, resources, worker ?? undefined);
-      } catch (err) {
+      const next = sendChain.current.then(async () => {
         /*
-          A job can also disappear between the check and the send — another
-          device clearing, or a restart landing in that gap. Losing what he
-          just said to a race is worse than quietly starting a new thread.
+          `selected`, not `selectedId`.
+
+          `selectedId` is raw state and is never checked against the job list;
+          `selected` is `jobs.find(...) ?? null`, so it is only set when the job
+          genuinely still exists. Sending to the unvalidated one meant a stale
+          id survived every server restart and every "clear all", and the next
+          thing the owner said came back "no such job" — which he hit asking the
+          time.
         */
-        if (String((err as Error)?.message ?? "").includes("no such job")) {
-          try {
-            await jobs.create(text, undefined, resources, worker ?? undefined);
-          } catch {
-            /* useJobs owns the error surface; it renders below. */
+        const live = jobs.selected?.id ?? null;
+
+        try {
+          if (live) await jobs.send(live, text, resources);
+          else await jobs.create(text, undefined, resources, worker ?? undefined);
+        } catch (err) {
+          /*
+            A job can also disappear between the check and the send — another
+            device clearing, or a restart landing in that gap. Losing what he
+            just said to a race is worse than quietly starting a new thread.
+          */
+          if (String((err as Error)?.message ?? "").includes("no such job")) {
+            try {
+              await jobs.create(text, undefined, resources, worker ?? undefined);
+            } catch {
+              /* useJobs owns the error surface; it renders below. */
+            }
           }
         }
-      }
+      });
+      // The chain must not stay rejected or every later send is skipped.
+      sendChain.current = next.catch(() => {});
+      return next;
     },
     [jobs, worker],
   );
@@ -321,12 +355,17 @@ export default function OperatorChat({
       return;
     }
 
-    if (!speech.enabled) {
-      // Keep the marker level with the thread while muted, or unmuting would
-      // read out everything that arrived in the meantime.
-      spokenTo.current = messages.length - 1;
-      return;
-    }
+    /*
+      Muted is not nothing.
+
+      Speech defaults to OFF and is per-device, and on a phone there is no
+      thread on screen to read the answer from — so bailing here meant a
+      spoken question got answered into a void. When muted, the walk still
+      happens; it just hands the reply to `onReply` instead of `speech.speak`,
+      and skips the "Claude is on it" acknowledgement (which is chatter, not an
+      answer).
+    */
+    const muted = !speech.enabled;
     /*
       Whether the turn currently being answered was asked FROM THIS DEVICE.
 
@@ -348,6 +387,7 @@ export default function OperatorChat({
       }
       if (!mine) continue;
       if (e.type === "accepted") {
+        if (muted) continue;
         const worker = e.provider === "claude-code" ? "Claude" : e.provider === "gemini" ? "Gemini" : "the local model";
         speech.speak(
           e.started
@@ -358,10 +398,13 @@ export default function OperatorChat({
         );
         continue;
       }
-      if (e.type === "text" && !e.error && e.text?.trim()) speech.speak(e.text);
+      if (e.type === "text" && !e.error && e.text?.trim()) {
+        if (muted) onReply?.(e.text.trim());
+        else speech.speak(e.text);
+      }
     }
     spokenTo.current = messages.length - 1;
-  }, [messages, speech, jobs.selected?.id]);
+  }, [messages, speech, jobs.selected?.id, onReply]);
 
   /*
     Fill the box when something new is heard, and open the thread so it is
@@ -376,8 +419,9 @@ export default function OperatorChat({
     lastHeard.current = heard;
     setExpanded(true);
     if (autoSend) {
-      // Straight through. Guarded by `busy` inside sendText so a sentence
-      // arriving mid-turn joins the thread rather than colliding with it.
+      // Straight to a worker. `sendText` serialises and the server queues, so a
+      // sentence said mid-turn joins the thread as the next turn rather than
+      // being dropped.
       void sendText(heard);
       return;
     }
@@ -408,6 +452,13 @@ export default function OperatorChat({
     reach — so it is said once, quietly, beneath the input rather than in place
     of it.
   */
+
+  /*
+    Headless: every hook above still ran — forwarding heard speech, speaking or
+    surfacing the reply, scoping it to this device — but there is nothing to
+    draw. The mobile page renders its own voice feedback under the core.
+  */
+  if (headless) return null;
 
   return (
     <div className={className}>

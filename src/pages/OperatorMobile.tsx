@@ -162,7 +162,15 @@ export default function OperatorMobile() {
     it was off, which reads as the toggle being broken rather than cautious.
     His call, and he has lived with it: "set it so that it remembers".
   */
-  const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", false));
+  /*
+    Defaults ON now. Mobile has no text box any more — a heard sentence with
+    auto-send OFF lands nowhere the owner can see or send it, which is the bug
+    this whole pass is fixing. A misheard sentence still costs a turn, but a
+    sentence said mid-turn is queued rather than colliding (see OperatorChat's
+    sendText), so the old "twenty phantom jobs" failure is closed a different
+    way. He can still turn it off from the mic menu.
+  */
+  const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", true));
   const setAutoSend = (next: boolean) => {
     setAutoSendState(next);
     writeStorage("voice.autoSend", next);
@@ -269,7 +277,16 @@ export default function OperatorMobile() {
       speech.stop();
       return;
     }
-    if (!heard.handled || !heard.say) return;
+    /*
+      An unhandled sentence is on its way to a worker (the headless OperatorChat
+      below owns the send). Clear last turn's shown answer so it does not read
+      as the reply to this one; the new answer arrives via `onReply`.
+    */
+    if (!heard.handled) {
+      setMutedReply(null);
+      return;
+    }
+    if (!heard.say) return;
 
     /*
       Muted is not the same as broken, and the difference has to be visible.
@@ -582,11 +599,13 @@ export default function OperatorMobile() {
               <p className="text-sm leading-snug text-xp/90">{mutedReply}</p>
             )}
             <p className="font-mono text-[10px] text-ink-700/70">
-              {mutedReply
-                ? "muted — tap the speaker in the chat to hear replies"
-                : transcript.working
-                  ? "transcribing…"
-                  : transcript.status}
+              {transcript.working
+                ? "transcribing…"
+                : jobs.busy
+                  ? "Operator is working on it…"
+                  : mutedReply
+                    ? "replies are muted"
+                    : transcript.status}
             </p>
           </div>
         </div>
@@ -602,15 +621,31 @@ export default function OperatorMobile() {
 
       {/*
         The chat is shared with the wall display — same component, same
-        behaviour, so the two cannot drift apart. Archived here specifically
-        (MOBILE_TEXT_CHAT_ENABLED, top of file) — mobile is voice-focused
-        now; OperatorChat itself is untouched and MissionMap.tsx still mounts
-        it exactly as before.
+        behaviour, so the two cannot drift apart.
+
+        `MOBILE_TEXT_CHAT_ENABLED` (top of file) still gates the visible
+        THREAD — mobile is voice-focused and nine turns of scrollback under
+        the core is not what a phone is for. But it is now mounted either way:
+        headless when the thread is off, so the voice→worker path and the
+        spoken/shown reply still run. Without the mount a phone could
+        transcribe a question and had nowhere to send it — the bug this fixes.
       */}
-      {MOBILE_TEXT_CHAT_ENABLED && (
+      {MOBILE_TEXT_CHAT_ENABLED ? (
         <div data-chat>
-          <OperatorChat className="relative mx-3 mb-4" heard={transcript.last?.handled ? null : lastHeard} autoSend={autoSend} />
+          <OperatorChat
+            className="relative mx-3 mb-4"
+            heard={transcript.last?.handled ? null : lastHeard}
+            autoSend={autoSend}
+            onReply={setMutedReply}
+          />
         </div>
+      ) : (
+        <OperatorChat
+          headless
+          heard={transcript.last?.handled ? null : lastHeard}
+          autoSend={autoSend}
+          onReply={setMutedReply}
+        />
       )}
 
       <MobileControlDock />

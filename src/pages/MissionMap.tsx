@@ -468,6 +468,15 @@ export default function MissionMap() {
   const tilt = useRef(0.34);
   const steered = useRef(false);
 
+  /*
+    Defaults OFF here, unlike OperatorMobile.
+
+    Not drift — a deliberate per-surface choice. The wall display has a visible
+    input box, so a heard sentence filling it is useful rather than lost, and
+    this screen is more likely to catch ambient room talk than a phone held up
+    to speak at. `voice.autoSend` is per-device localStorage, so the phone
+    keeping its own ON default and this its OFF one do not fight.
+  */
   const [autoSend, setAutoSendState] = useState(() => readStorage("voice.autoSend", false));
   const setAutoSend = (next: boolean) => {
     setAutoSendState(next);

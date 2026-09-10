@@ -440,21 +440,31 @@ const server = createServer(async (req, res) => {
 
     // /api/jobs/:id, and /api/jobs/:id/<action>
     if (pathname.startsWith("/api/jobs/")) {
+      const [id, action] = pathname.slice("/api/jobs/".length).split("/");
+      if (!id) return json(req, res, 404, { error: "no such job" });
+
       /*
         Reading a job is tier 2; changing one is tier 3.
 
         GET here is the event log — what Operator said and did. Seeing that is
-        not execution, and it is the whole answer to "what is it doing". Sending
-        a turn, cancelling, retrying and answering a permission all still need
-        the armed terminal, because each of those makes something happen.
+        not execution, and it is the whole answer to "what is it doing".
+        Retrying, deleting and answering a permission all still need the armed
+        terminal, because each of those makes something happen.
+
+        `input` is the exception, and for the same reason `POST /api/jobs` is:
+        continuing a conversation is talk, not execution, EXCEPT on a worker
+        that can run commands. So the route lets an identified caller through
+        and `jobs.input` refuses a non-cancel turn into a full-tools job when
+        the terminal is not armed — the create route's line, one turn later.
+        Before this, the first spoken sentence started a job unarmed and every
+        follow-up got a silent 403.
       */
-      const allowed =
-        req.method === "GET" ? deviceMayUseCapabilities(identity) : deviceAuthorised(identity);
+      const executionAllowed = deviceAuthorised(identity).ok;
+      const isTalk = req.method === "GET" || (action === "input" && req.method === "POST");
+      const allowed = isTalk ? deviceMayUseCapabilities(identity) : deviceAuthorised(identity);
       if (!allowed.ok) {
         return json(req, res, 403, { error: "not authorised", reason: allowed.reason });
       }
-      const [id, action] = pathname.slice("/api/jobs/".length).split("/");
-      if (!id) return json(req, res, 404, { error: "no such job" });
 
       try {
         if (!action && req.method === "GET") {
@@ -467,7 +477,7 @@ const server = createServer(async (req, res) => {
         }
         if (action === "input" && req.method === "POST") {
           const body = await readBody(req);
-          return json(req, res, 202, await jobs.input(id, body, identity));
+          return json(req, res, 202, await jobs.input(id, body, identity, { executionAllowed }));
         }
         if (action === "model" && req.method === "POST") {
           const body = await readBody(req);
