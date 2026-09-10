@@ -1891,6 +1891,174 @@ async function knowledgeArchive({ id, archived = true }) {
   return { id, archived: Boolean(archived) };
 }
 
+// --- Decision Log ---------------------------------------------------------
+// Mirrors src/hooks/useDecisionLog.ts. The reads matter as much as the writes,
+// same as the vault: "what did he decide about the course" should be
+// answerable without grepping anything. Search is a plain word scan here — the
+// ranked Search Service is the vault's, and ADR 0009 says not to grow it a
+// second entity type.
+
+const DECISION_VERDICTS = ["pending", "good", "mixed", "bad"];
+
+const cleanDecisionTopics = (raw) => [
+  ...new Set(
+    (Array.isArray(raw) ? raw : []).map((t) => String(t).trim().toLowerCase()).filter(Boolean),
+  ),
+];
+
+/** Trim a decision for a worker reading a LIST — the two prose fields are the
+    expensive part and are served whole by decision_get. */
+const decisionSummary = (d) => ({
+  id: d.id,
+  title: d.title,
+  decidedOn: d.decidedOn,
+  verdict: d.verdict,
+  topics: d.topics ?? [],
+  reasoningExcerpt: String(d.reasoning ?? "").slice(0, 200),
+  hasOutcome: Boolean(String(d.outcome ?? "").trim()),
+  missions: (d.missions ?? []).length,
+  updatedAt: d.updatedAt,
+});
+
+async function decisionLog({ query = "", topic, verdict, limit = 10, includeArchived = false }) {
+  oneOf(verdict, DECISION_VERDICTS, "verdict");
+  const all = (await readState("decisions.records")) ?? [];
+  let records = includeArchived ? all : all.filter((d) => !d.archived);
+  if (topic) {
+    const wanted = String(topic).trim().toLowerCase();
+    records = records.filter((d) => (d.topics ?? []).includes(wanted));
+  }
+  if (verdict) records = records.filter((d) => d.verdict === verdict);
+
+  const terms = normaliseText(query)
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\p{L}\p{N}_-]/gu, ""))
+    .filter(Boolean);
+  if (terms.length) {
+    records = records.filter((d) => {
+      const hay = normaliseText(
+        `${d.title}\n${d.reasoning}\n${d.outcome}\n${(d.topics ?? []).join(" ")}`,
+      );
+      return terms.every((t) => hay.includes(t));
+    });
+  }
+
+  records = records
+    .slice()
+    .sort((a, b) => String(b.decidedOn).localeCompare(String(a.decidedOn)));
+  const capped = Math.max(1, Math.min(50, Number(limit) || 10));
+  return {
+    count: Math.min(records.length, capped),
+    of: records.length,
+    matching: "words, not meaning - try other vocabulary before concluding it is not logged",
+    decisions: records.slice(0, capped).map(decisionSummary),
+  };
+}
+
+async function decisionGet({ id }) {
+  required(id, "id");
+  const all = (await readState("decisions.records")) ?? [];
+  const record = all.find((d) => d.id === id);
+  if (!record) throw new ActionError(`no decision with id "${id}"`);
+  return record;
+}
+
+async function decisionAdd({
+  title,
+  decidedOn,
+  reasoning = "",
+  outcome = "",
+  verdict,
+  topics,
+  missions,
+}) {
+  required(title, "title");
+  oneOf(verdict, DECISION_VERDICTS, "verdict");
+  // dateArg handles undefined -> today, and rejects anything that is not
+  // "YYYY-MM-DD" or "today".
+  const day = dateArg(decidedOn, "decidedOn");
+  const now = new Date().toISOString();
+  const record = {
+    id: generateId(),
+    title: String(title).trim(),
+    decidedOn: day,
+    reasoning: String(reasoning ?? ""),
+    outcome: String(outcome ?? ""),
+    // Pending by default, and honest: a decision just logged has no outcome
+    // yet, and asserting one is what the field exists to prevent.
+    verdict: verdict ?? "pending",
+    topics: cleanDecisionTopics(topics),
+    missions: Array.isArray(missions) ? missions : [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  await withState("decisions.records", (current) => [record, ...(current ?? [])]);
+  return {
+    id: record.id,
+    title: record.title,
+    decidedOn: record.decidedOn,
+    verdict: record.verdict,
+  };
+}
+
+async function decisionUpdate({
+  id,
+  title,
+  decidedOn,
+  reasoning,
+  outcome,
+  verdict,
+  topics,
+  missions,
+}) {
+  required(id, "id");
+  oneOf(verdict, DECISION_VERDICTS, "verdict");
+  const day = decidedOn === undefined ? undefined : dateArg(decidedOn, "decidedOn");
+
+  let found = false;
+  let label = "";
+  await withState("decisions.records", (current) =>
+    (current ?? []).map((d) => {
+      if (d.id !== id) return d;
+      found = true;
+      const next = {
+        ...d,
+        ...(title !== undefined ? { title: String(title).trim() } : {}),
+        ...(day !== undefined ? { decidedOn: day } : {}),
+        ...(reasoning !== undefined ? { reasoning: String(reasoning) } : {}),
+        ...(outcome !== undefined ? { outcome: String(outcome) } : {}),
+        ...(verdict !== undefined ? { verdict } : {}),
+        ...(topics !== undefined ? { topics: cleanDecisionTopics(topics) } : {}),
+        ...(Array.isArray(missions) ? { missions } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      label = next.title;
+      return next;
+    }),
+  );
+  if (!found) throw new ActionError(`no decision with id "${id}"`);
+  return { id, updated: true, title: label };
+}
+
+/*
+  Archive, never delete — the hook's bargain, mirrored, and the same absence as
+  knowledge_delete. A decision and how it turned out is a piece of the owner's
+  own history; nothing else in the store can reconstruct it.
+*/
+async function decisionArchive({ id, archived = true }) {
+  required(id, "id");
+  let found = false;
+  await withState("decisions.records", (current) =>
+    (current ?? []).map((d) => {
+      if (d.id !== id) return d;
+      found = true;
+      return { ...d, archived: Boolean(archived), updatedAt: new Date().toISOString() };
+    }),
+  );
+  if (!found) throw new ActionError(`no decision with id "${id}"`);
+  return { id, archived: Boolean(archived) };
+}
+
 async function missionsList({ status, includeArchived = false }) {
   oneOf(status, MISSION_STATUSES, "status");
   const missions = (await readState("missions.records")) ?? [];
@@ -2214,6 +2382,38 @@ const ACTIONS = {
       "Archive a note, or restore one. There is deliberately no delete - a note is the least recoverable thing in the store.",
     params: "id, archived? (default true)",
     handler: knowledgeArchive,
+  },
+  decision_log: {
+    description:
+      "The Decision Log - the owner's own calls (took the job, sold the car), the reasoning at the time and how each turned out. Use this to answer any question about a past decision. NOT the engineering ADRs in docs/decisions/. A word scan, so try other vocabulary before concluding nothing is logged.",
+    params:
+      "query? (words), topic? (exact tag), verdict? (pending|good|mixed|bad), limit? (default 10, max 50), includeArchived? (default false)",
+    handler: decisionLog,
+  },
+  decision_get: {
+    description:
+      "One decision in full - the reasoning and outcome text, and which missions it bears on. Use after decision_log when the excerpt is not enough.",
+    params: "id",
+    handler: decisionGet,
+  },
+  decision_add: {
+    description:
+      "Log a new decision. Verdict defaults to pending and outcome to empty - a decision just made has no outcome yet, and claiming one is exactly what those fields guard against. decidedOn defaults to today.",
+    params:
+      'title, decidedOn? (YYYY-MM-DD or "today"), reasoning?, outcome?, verdict? (pending|good|mixed|bad), topics? (array of strings), missions? (array of mission ids)',
+    handler: decisionAdd,
+  },
+  decision_update: {
+    description:
+      "Edit a decision. Every field is optional; only what is passed changes. This is how an outcome gets filled in later - set `outcome` and the matching `verdict`.",
+    params: "id, title?, decidedOn?, reasoning?, outcome?, verdict?, topics?, missions?",
+    handler: decisionUpdate,
+  },
+  decision_archive: {
+    description:
+      "Archive a decision, or restore one. There is deliberately no delete - a decision and how it turned out is a piece of history nothing else can recreate.",
+    params: "id, archived? (default true)",
+    handler: decisionArchive,
   },
   missions_list: {
     description: "The Mission Board: names, ids, status, progress, milestone counts.",
@@ -2955,6 +3155,9 @@ const SILENT_ACTIONS = new Set([
   "roblox_studio",
   "handoff_read",
   "handoff_list",
+  // Looking up a past decision is not a change to it — same as a vault read.
+  "decision_log",
+  "decision_get",
 ]);
 
 /**
@@ -3043,6 +3246,16 @@ function summarise(name, params, result, before) {
       title: params?.needsOwner ? "Finished — needs you" : "Work finished",
       message: `${String(params?.summary ?? "something finished").slice(0, 140)}${who}`,
     };
+  }
+
+  if (name.startsWith("decision_")) {
+    const label = result?.title ?? params?.title ?? "a decision";
+    if (name === "decision_add") return { title: "Decision logged", message: label };
+    if (name === "decision_archive") return { title: "Decision archived", message: label };
+    if (name === "decision_update" && params?.outcome !== undefined) {
+      return { title: "Decision outcome recorded", message: label };
+    }
+    return { title: "Decision updated", message: label };
   }
 
   return { title: "Operator", message: verb };

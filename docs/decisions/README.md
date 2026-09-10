@@ -12,9 +12,10 @@ Not every choice needs one. Write an ADR when a decision:
 Routine feature work does not need an ADR. Following the recipe in
 [`adding-a-feature.md`](../adding-a-feature.md) is not a decision.
 
-> **Not to be confused with the Decision Log feature** on the product roadmap.
-> That is a *life* decision log (decision / date / reasoning / outcome) that
-> will link from missions. These are *engineering* decisions about the codebase.
+> **Not to be confused with the Decision Log feature** (`/decisions`, built
+> 2026-09-10). That is a *life* decision log (decision / date / reasoning /
+> outcome) that links from missions. These are *engineering* decisions about
+> the codebase.
 
 ## Index
 

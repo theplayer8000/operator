@@ -495,3 +495,57 @@ export interface KnowledgeNote {
   /** Archived rather than deleted, like a mission. There is no undo (OPS-020). */
   archived?: boolean;
 }
+
+
+// --- Decision Log ---
+//
+// The life decision log the Mission Board has reserved a "Related Decisions"
+// tab for since it was built (`MissionDetail`, a `ReservedSection` until now).
+//
+// ## Not the ADRs
+//
+// `docs/decisions/` holds ENGINEERING decisions — why the store is a JSON file,
+// why there is no Redux. This is a different thing: the calls the owner makes
+// about his own life (took the job, sold the car, chose the course), with the
+// reasoning at the time and, later, how it actually went.
+//
+// ## Outcome is the field that earns its place
+//
+// A decision with no recorded outcome is just a note. The point of a log — as
+// opposed to a list of paragraphs — is being able to look back and see which
+// of your past calls worked out. So `outcome` is prose written later, when it
+// is known, and `verdict` is a one-glance scannable read on it. Both start
+// empty/"pending": the gap between a decision and its outcome is real and the
+// UI should show it rather than hide it. Same shape and same reasoning as the
+// Knowledge Vault's `confidence`.
+
+/** A one-glance read on how a decision turned out. "pending" until reviewed. */
+export type DecisionVerdict = "pending" | "good" | "mixed" | "bad";
+
+export interface DecisionRecord {
+  id: string;
+  /** The decision itself, stated in a line. */
+  title: string;
+  /**
+   * When it was made. A local date key (YYYY-MM-DD), never
+   * `toISOString().slice(0,10)` which is UTC — see OPS-009 / `toDateKey`.
+   */
+  decidedOn: string;
+  /** The thinking at the time. Markdown; empty is allowed while it is a stub. */
+  reasoning: string;
+  /**
+   * How it actually turned out. Markdown. Empty until it is known — that gap
+   * between the call and its consequence is the thing this log exists to show.
+   */
+  outcome: string;
+  /** The scannable read on `outcome`. "pending" until there is one. */
+  verdict: DecisionVerdict;
+  /** Free tags — "career", "finance", "health". Lowercased on write. */
+  topics: string[];
+  /** Missions this decision bears on. Mission ids. */
+  missions: string[];
+  createdAt: string;
+  updatedAt: string;
+  /** Archived rather than deleted, like a mission or a note (OPS-020). */
+  archived?: boolean;
+}

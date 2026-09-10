@@ -69,6 +69,9 @@ store.
 | `gym.completions` | `GymCompletions` (`{ [date]: exerciseId[] }`) | `useGym` | Yes — ticked per date, key dropped when a day empties |
 | `gym.skipped` | `string[]` (`YYYY-MM-DD`) | `useGym` | Yes — days scheduled and deliberately not trained |
 | `updates.entries` | `UpdateEntry[]` | `useUpdates` | Yes |
+| `knowledge.notes` | `KnowledgeNote[]` | `useKnowledge` | Yes, incl. archive (no delete) |
+| `decisions.records` | `DecisionRecord[]` | `useDecisionLog` | Yes, incl. archive (no delete) |
+| `work.handoffs` | `WorkHandoff[]` | written via `actions.mjs` `work_record` | Server-side only |
 | `theme.accent` | `AccentColor` | `ThemeContext` | No UI exists yet (**OPS-007**) |
 
 Keys are created lazily — a slice only appears in the store once something

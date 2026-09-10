@@ -163,16 +163,18 @@ const SECTIONS: Section[] = [
       "The failures that do not announce themselves — a stale build, a server running older code than the disk, a drifted worktree, a setting that never reached the process.",
   },
   {
+    to: "/knowledge",
     label: "Knowledge Vault",
     icon: BookOpen,
-    status: "concept",
-    blurb: "A personal wiki — notes, commands and resources per topic.",
+    status: "built",
+    blurb: "A personal wiki — notes, commands and resources, with a confidence level on each.",
   },
   {
+    to: "/decisions",
     label: "Decision Log",
     icon: Scale,
-    status: "concept",
-    blurb: "Decisions, their reasoning, and how they actually turned out.",
+    status: "built",
+    blurb: "Decisions, the reasoning at the time, and how they actually turned out.",
   },
 ];
 

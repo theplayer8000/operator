@@ -65,6 +65,7 @@ export const BLANK_VALUES: Record<string, unknown> = {
   "gym.completions": {},
   "gym.skipped": [],
   "knowledge.notes": [],
+  "decisions.records": [],
   "work.handoffs": [],
   "theme.accent": "gold",
 };
@@ -121,6 +122,12 @@ export const FEATURE_SLICES: FeatureSlice[] = [
     description:
       "Every note, command and resource, with its topics and links. Clearing loses what you worked out and wrote down, which is the least recoverable thing here.",
     keys: ["knowledge.notes"],
+  },
+  {
+    label: "Decision Log",
+    description:
+      "Every decision, its reasoning and how it turned out. Clearing loses a record of your own history that nothing else holds.",
+    keys: ["decisions.records"],
   },
   {
     label: "Updates",

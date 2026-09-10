@@ -18,7 +18,9 @@ import {
 import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useKnowledge } from "@/hooks/useKnowledge";
+import { useDecisionLog } from "@/hooks/useDecisionLog";
 import { CONFIDENCE_META } from "@/components/knowledge/knowledgeMeta";
+import { VERDICT_META } from "@/components/decisions/decisionMeta";
 import type { MissionDifficulty, MissionStatus } from "@/lib/types";
 import { STATUS_OPTIONS, DIFFICULTY_OPTIONS, STATUS_META, DIFFICULTY_META } from "@/components/missions/MissionBadges";
 import EditableField from "@/components/missions/EditableField";
@@ -61,6 +63,7 @@ export default function MissionDetail() {
     deleteMission,
   } = useMissionBoard();
   const vault = useKnowledge();
+  const decisionLog = useDecisionLog();
 
   const [tab, setTab] = useState<TabId>("overview");
 
@@ -73,6 +76,9 @@ export default function MissionDetail() {
     nothing — attaching happens from the note.
   */
   const vaultNotes = mission ? vault.forMission(mission.id) : [];
+  /* Same cross-feature read as the vault notes above — read only, attaching is
+     done from the decision. */
+  const missionDecisions = mission ? decisionLog.forMission(mission.id) : [];
 
   const predecessors = useMemo(
     () => missions.filter((m) => mission?.dependsOn.includes(m.id)),
@@ -412,7 +418,43 @@ export default function MissionDetail() {
         )}
 
         {tab === "decisions" && (
-          <ReservedSection message="Decision Log isn't built yet — this will show linked decisions once it exists." />
+          <div className="space-y-3">
+            {/*
+              Read-only, like Related Knowledge above and for the same reason:
+              a decision is attached from the Decision Log, where you are when
+              you decide it bears on this mission — one direction of editing,
+              one place the link can be wrong.
+            */}
+            <section>
+              <h3 className="text-xs font-mono uppercase tracking-wider text-ink-700 mb-2 flex items-center gap-1.5">
+                <Scale size={13} /> Decision Log
+              </h3>
+              {missionDecisions.length === 0 ? (
+                <ReservedSection
+                  icon={<Scale size={15} />}
+                  message="No decisions linked yet. Open one in the Decision Log and attach it to this mission."
+                />
+              ) : (
+                <div className="space-y-1">
+                  {missionDecisions.map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => navigate(`/decisions/${d.id}`)}
+                      className="w-full min-h-11 px-3 py-2 rounded-badge bg-base-700/40 hover:bg-base-700 text-left flex items-center gap-2.5 transition-colors"
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full shrink-0 ${VERDICT_META[d.verdict].dot}`}
+                        title={VERDICT_META[d.verdict].help}
+                      />
+                      <span className="text-sm text-ink-300 truncate flex-1">{d.title}</span>
+                      <span className="text-[10px] font-mono text-ink-700 shrink-0">{d.decidedOn}</span>
+                      <ArrowUpRight size={14} className="shrink-0 text-ink-700" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         )}
 
         {tab === "journey" && (

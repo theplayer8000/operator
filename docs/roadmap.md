@@ -381,10 +381,8 @@ command-palette destination already wired.
 
 ## Not started, no route
 
-| Feature | Notes |
-|---|---|
-| **Knowledge Vault** | Personal wiki — notes, commands, resources, confidence per topic. Linked from missions' Related Knowledge tab (free-text field + `ReservedSection` today) |
-| **Decision Log** | Decision / date / reasoning / outcome. Linked from missions' Related Decisions tab (`ReservedSection` today). Note: the ADRs in [`decisions/`](decisions/) are *engineering* decisions and are a different thing from this *life* decision log — don't conflate them |
+*(Knowledge Vault shipped 2026-09-03, Decision Log 2026-09-10 — both moved into
+the status table in `CLAUDE.md`. Nothing left in this section.)*
 
 ## Reserved integration points
 
@@ -394,8 +392,6 @@ a `ReservedSection` or a free-text field, deliberately not a real reference
 
 | Location | Waiting on |
 |---|---|
-| `MissionDetail` → Related Knowledge tab | Knowledge Vault |
-| `MissionDetail` → Related Decisions tab | Decision Log |
 | `MissionDetail` → Related Journey tab | Journey |
 | `MissionDetail` → Overview → Files & Attachments | A real design conversation. The store is JSON, so binary still doesn't belong in it — likely paths or links, not contents |
 | `MissionDetail` → AI Summary tab | An AI summary feature that would need a network call, i.e. a constraint conversation first |

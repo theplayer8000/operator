@@ -8,6 +8,7 @@ const DESTINATIONS = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/routine", label: "Daily Routine" },
   { to: "/missions", label: "Mission Board" },
+  { to: "/decisions", label: "Decision Log" },
   { to: "/calendar", label: "Calendar" },
   { to: "/homelab", label: "Homelab" },
   { to: "/learning", label: "Learning" },

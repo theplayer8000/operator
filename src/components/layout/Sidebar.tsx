@@ -23,6 +23,7 @@ import {
   X,
   BookOpen,
   Activity,
+  Scale,
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -53,6 +54,7 @@ const NAV_ITEMS = [
   { to: "/gym", label: "Gym", icon: Dumbbell },
   { to: "/missions", label: "Mission Board", icon: Swords },
   { to: "/knowledge", label: "Knowledge Vault", icon: BookOpen },
+  { to: "/decisions", label: "Decision Log", icon: Scale },
   { to: "/homelab", label: "Homelab", icon: Server },
   { to: "/log", label: "Activity Log", icon: ScrollText },
 

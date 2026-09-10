@@ -11,6 +11,7 @@ import type {
   UpdateEntry,
   WeeklyGoal,
   KnowledgeNote,
+  DecisionRecord,
 } from "./types";
 import { toDateKey } from "./time";
 
@@ -637,3 +638,13 @@ function hoursAgo(n: number): string {
   instead.
 */
 export const seedKnowledgeNotes: KnowledgeNote[] = [];
+
+/*
+  Empty for the same reason the vault is.
+
+  A decision log seeded with invented decisions is a lie sitting next to the
+  truth with the same styling — and this one worse than the vault, because a
+  fabricated "outcome" is a fabricated piece of the owner's own history. The
+  empty state explains what belongs here.
+*/
+export const seedDecisionRecords: DecisionRecord[] = [];

@@ -18,6 +18,7 @@ import ComingSoon from "@/pages/ComingSoon";
 import NotFound from "@/pages/NotFound";
 import Gym from "@/pages/Gym";
 import Knowledge from "@/pages/Knowledge";
+import DecisionLog from "@/pages/DecisionLog";
 import MissionMap from "@/pages/MissionMap";
 import Statistics from "@/pages/Statistics";
 import OperatorMobile from "@/pages/OperatorMobile";
@@ -78,6 +79,11 @@ export default function App() {
         */}
         <Route path="/knowledge" element={<Knowledge />} />
         <Route path="/knowledge/:id" element={<Knowledge />} />
+        {/* Same one-page-two-routes shape as Knowledge — the id only decides
+            which decision is open. Linked at from a mission's Related Decisions
+            tab. */}
+        <Route path="/decisions" element={<DecisionLog />} />
+        <Route path="/decisions/:id" element={<DecisionLog />} />
         <Route path="/missions" element={<MissionBoard />} />
         <Route path="/missions/:id" element={<MissionDetail />} />
         <Route path="/calendar" element={<Events />} />
