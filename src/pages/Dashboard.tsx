@@ -24,7 +24,16 @@ export default function Dashboard() {
     editTask,
     deleteTask,
     weeklyGoals,
+    addWeeklyGoal,
+    editWeeklyGoal,
+    bumpWeeklyGoal,
+    deleteWeeklyGoal,
     streaks,
+    addStreak,
+    editStreak,
+    bumpStreak,
+    setStreakAlive,
+    deleteStreak,
     notes,
     addNote,
     editNote,
@@ -59,10 +68,23 @@ export default function Dashboard() {
       />
 
       <CurrentMissions />
-      <WeeklyGoals goals={weeklyGoals} />
+      <WeeklyGoals
+        goals={weeklyGoals}
+        onAdd={addWeeklyGoal}
+        onEdit={editWeeklyGoal}
+        onBump={bumpWeeklyGoal}
+        onDelete={deleteWeeklyGoal}
+      />
 
       <ProjectProgress />
-      <CurrentStreaks streaks={streaks} />
+      <CurrentStreaks
+        streaks={streaks}
+        onAdd={addStreak}
+        onEdit={editStreak}
+        onBump={bumpStreak}
+        onSetAlive={setStreakAlive}
+        onDelete={deleteStreak}
+      />
       <MissionStatusChart />
 
       <UpcomingEvents />

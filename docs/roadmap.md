@@ -18,8 +18,10 @@ Ten widgets in a 3-column grid. The daily glance.
 time remaining), the Homelab tile strip, and three mission widgets — Current
 Missions, Mission Progress and Mission Status — all reading the real
 `missions.records` and linking through to `/missions/:id`.
-**Still display-only seed:** weekly goals, streaks, upcoming events. Plumbing
-exists; editors don't.
+**Editable:** weekly goals and streaks got their editor on 2026-09-10 —
+add/edit/delete plus a −/+ stepper for the daily "did one more" (and
+break/revive on a streak, which keeps the day count). Upcoming Events stays a
+read-only view of the real `events.records`.
 
 **OPS-005 closed in v9.** The mission widgets used to render `dashboard.missions`
 seed data that never moved, and the Productivity Score card charted seven
@@ -27,8 +29,10 @@ hardcoded numbers as a "7-day trend". Both now derive from real data — see
 [ADR 0008](decisions/0008-dashboard-reads-the-real-board.md), which supersedes
 ADR 0003.
 
-Known gaps: weekly goals and streaks are still seeded with no editor — the same
-class of defect OPS-005 fixed, one level down.
+Known gaps: none outstanding on the Dashboard's own data — every slice
+(focus, tasks, notes, goals, streaks) is now editable. The Dashboard has no
+capability actions for any of it, which is a separate consideration if a
+worker ever needs to touch these.
 
 ### Daily Routine — `/routine`
 

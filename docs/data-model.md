@@ -52,8 +52,8 @@ store.
 | `dashboard.focus` | `string` | `useDashboardData` | Yes |
 | `dashboard.tasks` | `Task[]` | `useDashboardData` | Add, toggle, edit, delete |
 | ~~`dashboard.missions`~~ | — | — | **Retired v9** — no reader. Dashboard reads `missions.records` ([ADR 0008](decisions/0008-dashboard-reads-the-real-board.md)). Kept in `BLANK_VALUES` so existing stores can be cleared of it |
-| `dashboard.weeklyGoals` | `WeeklyGoal[]` | `useDashboardData` | **No** — read-only display |
-| `dashboard.streaks` | `Streak[]` | `useDashboardData` | **No** — read-only display |
+| `dashboard.weeklyGoals` | `WeeklyGoal[]` | `useDashboardData` | Add, edit, delete, and a −/+ stepper on `current` (2026-09-10) |
+| `dashboard.streaks` | `Streak[]` | `useDashboardData` | Add, edit, delete, −/+ on `days`, break/revive `alive` (2026-09-10). Breaking keeps the day count |
 | `dashboard.events` | `UpcomingEvent[]` | `useDashboardData` | **No** — read-only display |
 | `dashboard.notes` | `QuickNote[]` | `useDashboardData` | Add, edit, delete |
 | `dashboard.activity` | `ActivityItem[]` | `useDashboardData` | Appended by mutators, capped at 20 |
