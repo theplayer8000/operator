@@ -1,4 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readStorage, writeStorage, removeStorage } from "@/lib/storage";
+
+/**
+ * The microphone the owner last chose from the picker, remembered per browser.
+ *
+ * `enable()` with no argument used to hand the choice to the platform default —
+ * which on the owner's Windows box was the webcam's microphone, garbled enough
+ * that Discord calls were unintelligible, sitting in front of the XLR boom mic
+ * he actually wanted. So every time the mic was switched on he had to reopen
+ * the picker and choose the right one again.
+ *
+ * This is stored per browser rather than in the synced store on purpose: a
+ * `deviceId` is scoped to one origin in one browser and is stable there once
+ * permission has been granted, but means nothing on the phone. The label rides
+ * along only so the picker and the logs can say which one is pinned. If the
+ * remembered device is gone at open time the constraint throws and `enable()`
+ * forgets it and falls back to the default — see below. There is deliberately
+ * no hardcoded "YU8" anywhere: the owner picks once and the choice is what
+ * persists.
+ */
+const PREFERRED_MIC_KEY = "mic.preferredInput";
+type PreferredMic = { deviceId: string; label: string | null };
+
+const readPreferredMic = (): PreferredMic | null => {
+  const saved = readStorage<PreferredMic | null>(PREFERRED_MIC_KEY, null);
+  return saved && typeof saved.deviceId === "string" && saved.deviceId ? saved : null;
+};
+const rememberPreferredMic = (deviceId: string, label: string | null): void => {
+  if (deviceId && deviceId !== "default" && deviceId !== "communications") {
+    writeStorage<PreferredMic>(PREFERRED_MIC_KEY, { deviceId, label });
+  }
+};
+const forgetPreferredMic = (): void => removeStorage(PREFERRED_MIC_KEY);
 
 /**
  * The microphone in whatever device is holding the page, read locally.
@@ -182,22 +215,43 @@ export function useMicLevel(): MicLevel {
     ctxRef.current = ctx;
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
+    /*
+      No explicit choice from the picker — reach for the one the owner last
+      chose here rather than the platform default (which was the garbled webcam
+      mic). Falls through to the default when nothing is remembered or the
+      remembered device has since been unplugged (OverconstrainedError below).
+    */
+    const preferred = deviceId ? null : readPreferredMic();
+    const wantedId = deviceId ?? preferred?.deviceId;
+
+    const audioConstraints = (id: string | undefined): MediaTrackConstraints => ({
+      ...(id ? { deviceId: { exact: id } } : {}),
+      /*
+        Let the platform clean the signal up. The owner's own microphones
+        are poor — his speech peaked at 0.0009 against a 0.0007 room floor
+        on the desktop rig — and a phone's built-in processing is far
+        better than anything worth reimplementing here.
+      */
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    });
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // A named device when one was chosen; otherwise the platform default.
-          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-          /*
-            Let the platform clean the signal up. The owner's own microphones
-            are poor — his speech peaked at 0.0009 against a 0.0007 room floor
-            on the desktop rig — and a phone's built-in processing is far
-            better than anything worth reimplementing here.
-          */
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(wantedId) });
+      } catch (err) {
+        // A remembered microphone that has since been unplugged throws
+        // OverconstrainedError. Forget it and open the default instead — a
+        // dead "mic on" button is worse than the wrong microphone.
+        if ((err as Error)?.name === "OverconstrainedError" && wantedId && wantedId !== deviceId) {
+          forgetPreferredMic();
+          stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(undefined) });
+        } else {
+          throw err;
+        }
+      }
       streamRef.current = stream;
 
       /*
@@ -227,7 +281,18 @@ export function useMicLevel(): MicLevel {
       });
       // What the platform actually handed over, which is the only honest
       // answer to "which microphone is this".
-      setDeviceLabel(stream.getAudioTracks()[0]?.label || null);
+      const openedLabel = stream.getAudioTracks()[0]?.label || null;
+      setDeviceLabel(openedLabel);
+
+      /*
+        An explicit pick from the picker becomes the remembered default for
+        next time. `getSettings().deviceId` is the real id even when the caller
+        passed `default`/`communications`, so re-selecting the OS default still
+        pins the concrete device behind it.
+      */
+      if (deviceId) {
+        rememberPreferredMic(track?.getSettings().deviceId || deviceId, openedLabel);
+      }
 
       /*
         Enumerate only AFTER permission, because that is when labels exist.
