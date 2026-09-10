@@ -142,6 +142,9 @@ export function useMicLevel(): MicLevel {
       if (!deviceId || current?.getSettings().deviceId === deviceId) return;
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      cancelAnimationFrame(rafRef.current);
+      void ctxRef.current?.close().catch(() => {});
+      ctxRef.current = null;
     }
     setError(null);
     setConnecting(true);
@@ -155,6 +158,29 @@ export function useMicLevel(): MicLevel {
       setConnecting(false);
       return;
     }
+
+    /*
+      Create and resume the AudioContext NOW, while still inside the user
+      gesture — before the `getUserMedia` await below.
+
+      iOS only resumes an AudioContext from a genuine gesture, and an `await`
+      ends the gesture. Creating it after `getUserMedia` resolved (which is
+      what this did until 2026-09-10) left it `suspended` on iOS: the
+      microphone opened, the track was live, and the analyser read nothing but
+      silence forever — which presented as "the mic is on but it never hears
+      me". The `read()` loop below also retries `resume()` as a backstop.
+    */
+    const AudioCtor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) {
+      setError("This browser has no AudioContext, so the level meter cannot run.");
+      setConnecting(false);
+      return;
+    }
+    const ctx = new AudioCtor();
+    ctxRef.current = ctx;
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -234,17 +260,6 @@ export function useMicLevel(): MicLevel {
         /* Not fatal: the microphone still works, it just cannot be re-chosen. */
       }
 
-      const AudioCtor =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtor) throw new Error("no AudioContext");
-      const ctx = new AudioCtor();
-      ctxRef.current = ctx;
-
-      // iOS starts an AudioContext suspended until a gesture resumes it. Since
-      // enable() is already called from one, this is the moment to do it.
-      if (ctx.state === "suspended") await ctx.resume();
-
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       // Small window: this measures loudness, not pitch. 512 samples is about
@@ -254,6 +269,10 @@ export function useMicLevel(): MicLevel {
 
       const buf = new Uint8Array(analyser.fftSize);
       const read = () => {
+        // Backstop for the resume above: a context that lost the gesture, or
+        // one auto-suspended by the OS after a while, otherwise reads pure
+        // silence and the meter dies without a word.
+        if (ctx.state === "suspended") void ctx.resume().catch(() => {});
         analyser.getByteTimeDomainData(buf);
         let peak = 0;
         for (let i = 0; i < buf.length; i++) {

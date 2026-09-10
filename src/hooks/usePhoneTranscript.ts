@@ -213,6 +213,14 @@ export function usePhoneTranscript(
       let heardSpeech = false;
       let quietFor = 0;
       /*
+        The loudest the mic got this segment, even below SPEECH_PEAK. Only used
+        to make "waiting for you to speak" say WHY it is still waiting — a dead
+        or silent input (0%) reads completely differently from a live one that
+        is just too quiet (1%), and the two were indistinguishable from the
+        phone before.
+      */
+      let maxSeen = 0;
+      /*
         Set if Operator spoke at any point during this recording. The whole
         segment is discarded rather than trimmed — a sentence half his and half
         Operator's is worse than no sentence, because the half that survives is
@@ -248,7 +256,11 @@ export function usePhoneTranscript(
           that has to get through, gets through.
         */
         if (!heardSpeech) {
-          setStatus("waiting for you to speak");
+          setStatus(
+            maxSeen < 0.005
+              ? "waiting — the mic is on but reading silence (wrong input, muted, or its level is at zero)"
+              : `waiting — heard ${(maxSeen * 100).toFixed(0)}%, needs ${SPEECH_PEAK * 100}% (speak up, or raise the input level)`,
+          );
           return;
         }
         if (blob.size < 800) {
@@ -317,6 +329,7 @@ export function usePhoneTranscript(
         if (roomIsOperators()) overlappedSpeech = true;
         const v = mic.levelRef.current;
         ticks += 1;
+        if (v > maxSeen) maxSeen = v;
 
         if (v >= SPEECH_PEAK) {
           voicedTicks += 1;
@@ -324,6 +337,21 @@ export function usePhoneTranscript(
           quietFor = 0;
         } else if (heardSpeech) {
           quietFor += TICK_MS;
+        }
+
+        /*
+          Say WHY it is still waiting, live, without ending the segment — a
+          segment with no speech only ends at the 20s cap, so onstop's
+          diagnostic would be 20s late. Throttled, and only once it has been
+          quiet long enough that "still waiting" is a real state rather than
+          the half-second before someone starts talking.
+        */
+        if (!heardSpeech && Date.now() - startedAt > 3000 && ticks % 20 === 0) {
+          setStatus(
+            maxSeen < 0.005
+              ? "waiting — mic on but reading silence (wrong input, muted, or level at zero)"
+              : `waiting — heard ${(maxSeen * 100).toFixed(0)}%, needs ${SPEECH_PEAK * 100}% (speak up / raise the input)`,
+          );
         }
 
         /*
