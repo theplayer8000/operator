@@ -38,7 +38,7 @@ const statusListeners = new Set<Listener>();
 const pending = new Map<string, unknown>();
 
 let status: StoreStatus = "loading";
-let loadPromise: Promise<void> | null = null;
+let loadPromise: Promise<boolean> | null = null;
 
 // --- notification ---------------------------------------------------------
 
@@ -123,7 +123,17 @@ async function migrateLocalStorage(): Promise<Record<string, unknown> | null> {
   return local;
 }
 
-export function load(): Promise<void> {
+/**
+ * Full reload from the server.
+ *
+ * @returns true when the server answered and the cache now reflects it; false
+ *          when it did not (unreachable, refused) and the page is running on
+ *          the mirror/seed. Callers that need to know a change actually landed
+ *          — the change poller below — gate on this rather than on the promise
+ *          merely settling, because a silent failure that still "completed"
+ *          used to be indistinguishable from a success.
+ */
+export function load(): Promise<boolean> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
@@ -175,6 +185,7 @@ export function load(): Promise<void> {
       } catch {
         /* Older server, or offline. Next refresh reloads in full. */
       }
+      return true;
     } catch (err) {
       if (err instanceof ApiAuthError) {
         console.warn("[operator] storage server refused this device:", err.reason);
@@ -183,6 +194,7 @@ export function load(): Promise<void> {
         console.warn("[operator] storage server unreachable, using local mirror:", err);
         setStatus("offline");
       }
+      return false;
     }
   })();
 
@@ -190,7 +202,7 @@ export function load(): Promise<void> {
 }
 
 /** Retry after the server was unreachable. Safe to call repeatedly. */
-export function retry(): Promise<void> {
+export function retry(): Promise<boolean> {
   loadPromise = null;
   setStatus("loading");
   return load();
@@ -306,14 +318,19 @@ async function syncChangedSlices(): Promise<boolean> {
   return true;
 }
 
-let refreshing: Promise<void> | null = null;
+let refreshing: Promise<boolean> | null = null;
 
 /**
  * Re-read the server, without `retry()`'s trip through "loading" — so a
  * successful refresh is invisible and a failed one leaves the existing data on
  * screen rather than blanking it.
+ *
+ * @returns true when the cache is now reconciled with the server, false when
+ *          the attempt did not land — offline, refused, or a half-answered
+ *          poll. The change poller gates `catchUpPending` on this: a refresh
+ *          that failed must be retried, not counted as done.
  */
-export function refresh(): Promise<void> {
+export function refresh(): Promise<boolean> {
   if (refreshing) return refreshing;
   /*
     Try the incremental path first, and fall back to the full reload this always
@@ -324,16 +341,16 @@ export function refresh(): Promise<void> {
   */
   refreshing = (async () => {
     try {
-      if (await syncChangedSlices()) return;
+      if (await syncChangedSlices()) return true;
     } catch (err) {
       if (err instanceof ApiAuthError) {
         console.warn("[operator] storage server refused this device:", err.reason);
         setStatus("unauthorised");
-        return;
+        return false;
       }
     }
     loadPromise = null;
-    await load();
+    return load();
   })().finally(() => {
     refreshing = null;
   });
@@ -422,6 +439,17 @@ const ACTIVE_FOR_MS = 15_000;
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   let lastSeen: string | null = null;
+  /*
+    A change has been SEEN on `/api/health` that a refresh has not yet pulled
+    down. Kept separate from `lastSeen` so a refresh that failed — the first
+    second or two after an iOS PWA resumes, a half-answered poll — is retried
+    on the next tick instead of being lost. The old code advanced `lastSeen`
+    the moment it saw the new stamp and fired the refresh fire-and-forget, so
+    a failure left the page stale until the next unrelated write moved the
+    stamp again. The Statistics page, fed only by terminal `log-update.mjs`
+    writes, could sit a day behind.
+  */
+  let catchUpPending = false;
   let checking = false;
   let quickUntil = 0;
   let timer = 0;
@@ -459,9 +487,20 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       }
       if (stamp !== lastSeen) {
         lastSeen = stamp;
-        // Something is happening — follow it closely for a while.
+        catchUpPending = true;
+        // Something is happening — follow it closely for a while. Bumped only
+        // on a fresh stamp, not on every retry, so a server whose health
+        // answers while its state does not can't pin the loop at 800ms.
         quickUntil = Date.now() + ACTIVE_FOR_MS;
-        void refresh();
+      }
+      if (catchUpPending && status !== "unauthorised") {
+        // Clear the flag only when the refresh actually reconciled the cache.
+        // A failed one leaves it set and the next tick tries again. A refused
+        // device is excluded — retrying will not un-refuse it, and the status
+        // banner already hands the owner a manual retry.
+        void refresh().then((ok) => {
+          if (ok) catchUpPending = false;
+        });
       }
     } catch {
       // Offline is already handled by load()'s status; a failed poll is silent.
