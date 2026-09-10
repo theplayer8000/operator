@@ -114,6 +114,28 @@ A local model handling frames on-box sidesteps it entirely — another argument
 for the Ollama box, and it connects this thread back to
 [`control-plane-design.md`](control-plane-design.md).
 
+#### ✅ DECIDED 2026-09-10 — frames may leave the PC
+
+The owner's words: *"i confirm it frames can leave this pc"*. On-box inference
+is **no longer a hard precondition** — the camera work does not have to wait on
+the Ollama box.
+
+**What is still not decided is which host they go to.** "A frame may leave" is
+not "a frame may go anywhere". Per `CLAUDE.md`'s approvals rule, an image
+destination is named, in advance, one host at a time — and images are their own
+row (Runway's is, for exactly this reason), not something inherited from the
+Gemini or AI Router prompt approvals. Gemini is multimodal and already approved
+*for prompts + job context*; whether that extends to camera frames of his house
+is a separate sentence he still has to say. Do not point the camera at a model
+until that row exists.
+
+**Coordinate with the voice / presence work, don't build it as a separate
+track.** The owner's framing 2026-09-10: camera and voice are both the
+presence layer, and should land together rather than as parallel efforts. See
+[`presence-layer-design.md`](presence-layer-design.md) — "presence: whether he
+is at the desk" is already listed there as a camera use, and voice work proper
+has not started yet, so neither has this.
+
 ---
 
 ## 4. Phones: iOS is not Android, and it is structural
@@ -162,7 +184,9 @@ of engineering.
   starting point.
 - **Which camera path first** — box or handheld? Both are wanted; they share
   almost no code.
-- **Does a frame ever leave the machine**, or is on-box inference a hard
-  precondition? This decides whether the camera work waits on the Ollama box.
+- ~~**Does a frame ever leave the machine**~~ **ANSWERED 2026-09-10 — yes** (see
+  "A frame is not a prompt" above). Remaining: *which host*, which is its own
+  named-approval conversation and has not happened.
 - **Is Playwright worth a dev dependency** for mobile-engine checks, given it
-  would not have caught the iOS bugs actually hit so far?
+  would not have caught the iOS bugs actually hit so far? — still open, still
+  the blocker on that one; not building it until this is answered.

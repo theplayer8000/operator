@@ -156,6 +156,53 @@ room is useless if it can only write to a page.
 
 Voice **in** follows, gated on the decision above.
 
+### 1b. Barge-in — the conversational model, not turn-taking
+
+**Owner's requirement, stated repeatedly and captured here 2026-09-10 so it
+stops being lost:** he must be able to **talk over Operator while it is
+mid-sentence and have it actually respond to the interruption** — cut its own
+speech, take what was said, act on it. Not a walkie-talkie where you wait for
+it to finish. *"This is the actual bar for it feeling like a real JARVIS."*
+
+This is a design requirement, not a refinement, and it is **in direct tension
+with how §4b and §4d currently propose to handle feedback.** Both say *"pause
+detection while `speech.speaking` is true"* — which is the cheap, correct fix
+for Operator hearing its own voice, and is also **exactly a strict turn-taking
+model**: if the mic is deaf whenever Operator is talking, you cannot interrupt
+it. The two goals pull opposite ways and the doc should not pretend otherwise.
+
+What barge-in actually needs, in rough order of how much is new:
+
+1. **The mic stays hot during TTS.** No pausing detection while speaking. This
+   is the part that reintroduces the feedback problem §4b pausing was there to
+   avoid.
+2. **Tell the owner's voice apart from Operator's own.** Two known routes, and
+   jarvis (§4d) uses the second:
+   - **Acoustic echo cancellation (AEC).** The browser's `getUserMedia` can do
+     this — `echoCancellation: true` is a standard constraint, and it is built
+     for exactly this case (a page playing audio while capturing). Cheapest if
+     it works well enough with a boom mic close to the speaker; needs measuring,
+     not assuming.
+   - **Echo detection through the small local model** — jarvis's approach.
+     Harder, but it is the fallback if AEC is not clean enough, and the local
+     worker is already loaded.
+3. **A speech onset that isn't Operator → cut TTS immediately.** `SpeechSynthesis`
+   cancels on demand; the trigger is "the mic heard sustained non-echo speech
+   while we were talking". This is the actual barge-in action.
+4. **Then it's a normal capture.** Whatever was said during and after the
+   interruption is transcribed and routed like any other voice input.
+
+**"stop" as a spoken cancel word** (§4d, "Take these") is a *subset* of this —
+one hardcoded phrase that stops playback — not the whole thing. Barge-in is
+"respond to anything I say over you", which needs the echo-vs-voice
+discrimination that a single keyword match sidesteps.
+
+**Not building now** — voice work proper has not started. This section exists so
+that when it does, the feedback-prevention approach in §4b/§4d is understood as
+the *turn-taking* answer it is, and the barge-in requirement is designed in from
+the start rather than bolted on after the walkie-talkie version ships and
+disappoints.
+
 ### 2. Operator starts its own jobs
 
 The trigger loop. Extend the existing hourly timer so a schedule can start a
@@ -390,8 +437,11 @@ that; it will present as a permissions failure with no explanation.
   This one stopped being hypothetical almost immediately, and it is what forced
   the correction in the next section.
 - **Feedback.** Operator speaking through the same speakers the mic can hear is
-  how a clap detector triggers on itself. Detection must pause while
-  `speech.speaking` is true.
+  how a clap detector triggers on itself. Pausing detection while
+  `speech.speaking` is true is the fix **for the clap gesture specifically** —
+  a clap during Operator's own sentence is not a wake signal worth acting on.
+  It is **not** the fix for voice input: see §1b, where the owner requires
+  talking over Operator mid-sentence, which the pause makes impossible.
 
 #### What the clap should actually do — refined 2026-08-31, corrected 2026-09-04
 
@@ -523,9 +573,13 @@ owns the whole surface, so the browser path becomes the fallback.
 
 **It solves the feedback problem with a model, not a mute.** Operator hearing
 its own speech is flagged above as a clap-detector failure mode; they run echo
-detection through the small model. Pausing detection while speaking is still the
-cheaper first answer, but it is worth knowing the harder case has a known
-solution.
+detection through the small model. **This is the barge-in enabler** (§1b): the
+owner wants to talk over Operator, so the mic cannot go deaf while it speaks,
+so "is this the owner or is this Operator's own voice coming back" has to be
+answered some other way. jarvis answers it with the small model; browser AEC
+(`echoCancellation: true`) is the cheaper thing to try first. Pausing detection
+while speaking stays the right answer for the *clap gesture* and the wrong one
+for *voice input*.
 
 #### The finding that is actually about Operator
 
@@ -567,7 +621,8 @@ the reference is confirmation rather than a new plan:
 | Memory digest before injection, for small models | unbuilt; it is harness gap #4 |
 | Secrets auto-redacted in stored memory | not considered here, and should be |
 | Whisper hallucination filters (confidence, no-speech) | folds into the VAD decision |
-| "stop" as spoken interruption | cheap, obvious, worth copying |
+| "stop" as spoken interruption | cheap, obvious, worth copying — but a *subset* of §1b barge-in, not the whole of it |
+| Echo detection via the small model | the barge-in enabler (§1b); try browser AEC first |
 
 **The one to be deliberate about: "100% local" is a product identity, and it is
 not Operator's.**
