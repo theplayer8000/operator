@@ -109,6 +109,19 @@ const COOLDOWN_MS = 1500;
 /** Ignore everything for this long after Operator itself makes a noise. */
 const SELF_MUTE_MS = 1200;
 
+/*
+  How often to re-check for the microphone once it is known to be missing.
+
+  A named device that is not in the dshow list is not coming back in the next
+  second, so there is no point spawning a capture against it on a fast loop —
+  that was the log flood. Instead a lightweight `-list_devices` probe runs on
+  this interval and does nothing, quietly, until the name reappears (a
+  Bluetooth headset switched back on, the right mic plugged in), at which
+  point the capture starts. 60s keeps reconnect quick; overridable because
+  the next microphone will behave differently again.
+*/
+const DEVICE_RECHECK_MS = Number(process.env.OPERATOR_LISTEN_RECHECK_MS ?? 60_000) || 60_000;
+
 let child = null;
 let stopping = false;
 let mutedUntil = 0;
@@ -124,9 +137,20 @@ let restarts = 0;
 */
 let ambient = 0.001;
 
-/** The last listener error, so an identical one is counted rather than printed. */
-let lastListenError = "";
-let repeatedListenErrors = 0;
+/*
+  Failure bookkeeping, so a disconnected microphone is said ONCE.
+
+  `reportedFailure` latches after the first stderr line of a failing streak
+  and clears the moment real audio flows again; `deviceGone` is set when the
+  device is confirmed absent from the dshow list and drives the slow recheck
+  loop instead of a spawn-per-retry. Between them they replace the old
+  "compare against the single last error line" dedup, which leaked badly:
+  ffmpeg prints several DIFFERENT lines per failed open and they just rotated
+  through the comparison, so every one printed on every retry.
+*/
+let reportedFailure = false;
+let deviceGone = false;
+let recheckTimer = null;
 
 
 /** Latest peak, so the UI can show a meter without the browser holding a mic. */
@@ -138,6 +162,88 @@ function findFfmpeg() {
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+/** Same dshow friendly-name, give or take case and surrounding space. */
+function sameDevice(a, b) {
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
+/*
+  The audio devices dshow can currently see, by friendly name.
+
+  `ffmpeg -list_devices true -f dshow -i dummy` prints them to stderr and then
+  errors on the fake "dummy" input — the list comes first, so the error is
+  expected and the exit code is ignored. Handles both output shapes: the
+  modern one (ffmpeg 7.x here) tags every line `(audio)` / `(video)` /
+  `(none)`; the older one groups them under "DirectShow audio devices" /
+  "... video devices" headers.
+
+  Returns:
+    - string[] of audio device names when the probe ran and was understood
+      (an empty array means "ran, and there are genuinely no microphones");
+    - null when the probe could not run or produced nothing recognisable, so
+      a parser that falls behind an ffmpeg release degrades to "don't know"
+      and the caller tries the device anyway rather than declaring it gone.
+*/
+async function listAudioDevices(ffmpeg) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    let proc;
+    try {
+      proc = spawn(
+        ffmpeg,
+        ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+        { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+      );
+    } catch {
+      return finish(null);
+    }
+    let err = "";
+    const timer = setTimeout(() => {
+      try {
+        proc.kill();
+      } catch {
+        /* already gone */
+      }
+      finish(null);
+    }, 5000);
+    proc.stderr.on("data", (d) => (err += d));
+    proc.on("error", () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+    proc.on("exit", () => {
+      clearTimeout(timer);
+      const audio = [];
+      let sawAnyDevice = false;
+      let section = null; // set only by the older header-grouped format
+      for (const raw of err.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (/DirectShow audio devices/i.test(line)) {
+          section = "audio";
+          continue;
+        }
+        if (/DirectShow video devices/i.test(line)) {
+          section = "video";
+          continue;
+        }
+        if (/Alternative name/i.test(line)) continue;
+        const match = line.match(/"([^"]+)"/);
+        if (!match) continue;
+        sawAnyDevice = true;
+        const tag = line.match(/\((audio|video|none)\)\s*$/i)?.[1]?.toLowerCase();
+        const isAudio = tag ? tag === "audio" : section === "audio";
+        if (isAudio) audio.push(match[1]);
+      }
+      finish(sawAnyDevice ? audio : null);
+    });
+  });
 }
 
 /**
@@ -166,6 +272,13 @@ export function startListening(onDoubleClap) {
     returned, the state stayed false, and there was no error anywhere.
   */
   stopping = false;
+  deviceGone = false;
+  reportedFailure = false;
+  restarts = 0;
+  if (recheckTimer) {
+    clearTimeout(recheckTimer);
+    recheckTimer = null;
+  }
 
   if (!DEVICE) {
     state.reason = "OPERATOR_LISTEN is not set — no microphone named";
@@ -179,38 +292,107 @@ export function startListening(onDoubleClap) {
 
   const spawnOnce = () => {
     if (stopping) return;
-    child = spawn(
-      ffmpeg,
-      [
-        "-hide_banner",
-        "-loglevel", "error",
-        "-f", "dshow",
-        "-audio_buffer_size", "50",
-        "-i", `audio=${DEVICE}`,
-        "-ac", "1",
-        "-ar", String(RATE),
+
+    /*
+      One place every way this can fail routes to.
+
+      ffmpeg capture fails three ways and two of them were uncaught: `spawn`
+      throwing synchronously (measured 2026-09-10 — `spawn UNKNOWN` after
+      hours of retrying a microphone that no longer exists took the WHOLE
+      server down, because nothing here caught it), the child emitting
+      `error` (binary not launchable — also fatal with no handler), and the
+      non-zero `exit` this hits most. `failed` guards against a single
+      attempt being counted twice if two of those fire.
+    */
+    let failed = false;
+    const handleFailure = (label) => {
+      if (failed) return;
+      failed = true;
+      child = null;
+      state.listening = false;
+      if (stopping) return;
+      restarts += 1;
+
+      void (async () => {
+        const devices = await listAudioDevices(ffmpeg);
+        if (stopping || child) return;
+        const present = !devices || devices.some((d) => sameDevice(d, DEVICE));
+
+        if (!present) {
+          if (!deviceGone) {
+            deviceGone = true;
+            state.reason = `microphone "${DEVICE}" disconnected — listener idle, rechecking every ${Math.round(
+              DEVICE_RECHECK_MS / 1000,
+            )}s`;
+            console.warn(`[operator] listen: ${state.reason}`);
+          }
+          scheduleRecheck();
+          return;
+        }
+
+        if (restarts > 6) {
+          if (!reportedFailure) {
+            console.warn(
+              `[operator] listen: "${DEVICE}" is listed but capture keeps failing (${label}) — backing off to a ${Math.round(
+                DEVICE_RECHECK_MS / 1000,
+              )}s recheck`,
+            );
+            reportedFailure = true;
+          }
+          state.reason = `microphone "${DEVICE}" is connected but not opening (${label})`;
+          scheduleRecheck();
+          return;
+        }
+
         /*
-          Software gain, because the microphone's own level is not something
-          this can set.
-
-          Measured 2026-08-31 on the owner's headset: speech peaks at 0.0009
-          against a room floor of 0.0007 — barely distinguishable — while a
-          clap on the SAME microphone reaches 0.352. A clap is loud enough to
-          clear a badly-set input level and a voice is not, which is exactly
-          why claps worked for hours while speech never did.
-
-          Applied to the whole stream, so ambient and transients scale
-          together and the clap detector's ratio-to-ambient threshold is
-          unaffected. It amplifies noise as well as speech — Whisper's VAD is
-          what stops that becoming invented words, and it is the reason that
-          filter is not optional.
+          Say so WHILE retrying, not only after giving up — otherwise state is
+          `listening: false, reason: null` between failures, which reads
+          identical to a listener that was never started.
         */
-        ...(GAIN_DB ? ["-af", `volume=${GAIN_DB}dB`] : []),
-        "-f", "s16le",
-        "-",
-      ],
-      { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+        state.reason = `microphone unavailable — retrying (${restarts}/6, ${label})`;
+        setTimeout(spawnOnce, Math.min(5_000, 500 * restarts));
+      })();
+    };
+
+    const args = [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-f", "dshow",
+      "-audio_buffer_size", "50",
+      "-i", `audio=${DEVICE}`,
+      "-ac", "1",
+      "-ar", String(RATE),
+      /*
+        Software gain, because the microphone's own level is not something
+        this can set.
+
+        Measured 2026-08-31 on the owner's headset: speech peaks at 0.0009
+        against a room floor of 0.0007 — barely distinguishable — while a
+        clap on the SAME microphone reaches 0.352. A clap is loud enough to
+        clear a badly-set input level and a voice is not, which is exactly
+        why claps worked for hours while speech never did.
+
+        Applied to the whole stream, so ambient and transients scale
+        together and the clap detector's ratio-to-ambient threshold is
+        unaffected. It amplifies noise as well as speech — Whisper's VAD is
+        what stops that becoming invented words, and it is the reason that
+        filter is not optional.
+      */
+      ...(GAIN_DB ? ["-af", `volume=${GAIN_DB}dB`] : []),
+      "-f", "s16le",
+      "-",
+    ];
+
+    try {
+      child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (err) {
+      if (!reportedFailure && !deviceGone) {
+        console.warn(`[operator] listen: cannot spawn ffmpeg (${err?.code ?? err?.message ?? err})`);
+        reportedFailure = true;
+      }
+      handleFailure(`spawn ${err?.code ?? "threw"}`);
+      return;
+    }
 
     state.listening = true;
     state.reason = null;
@@ -224,15 +406,18 @@ export function startListening(onDoubleClap) {
     child.stdout.on("data", (buf) => {
       /*
         Audio is flowing, so this attempt genuinely worked — clear the failure
-        count. Without this `restarts` only ever climbs, and after one bad
-        patch the listener would sit on 60-second retries for the rest of the
-        process's life even while the microphone was working perfectly.
+        state. Without this the listener could sit on slow retries for the rest
+        of the process's life even while the microphone was working perfectly.
 
         Reset here rather than on spawn: ffmpeg starts happily against a
         disconnected Bluetooth device and only fails a moment later, so a
         successful spawn proves nothing. A byte of PCM does.
       */
-      if (restarts) restarts = 0;
+      if (restarts || reportedFailure || deviceGone) {
+        restarts = 0;
+        reportedFailure = false;
+        deviceGone = false;
+      }
       rememberAudio(buf);
       // Samples are 2 bytes; a chunk boundary can split one, so keep the odd
       // byte for next time rather than reading a sample that is half of two.
@@ -292,81 +477,105 @@ export function startListening(onDoubleClap) {
 
     child.stderr.on("data", (d) => {
       const text = String(d).trim();
-      /*
-        Say a repeated failure ONCE, then count it.
-
-        A disconnected microphone makes ffmpeg print the same four lines every
-        retry, and the retry is every 60 seconds forever. That produced roughly
-        two thousand identical lines in one day and buried everything worth
-        reading — the owner's point about the log overflowing is mostly this.
-
-        The message still appears, and its recurrence is still visible; it just
-        stops being the only thing in the file.
-      */
       if (!text) return;
-      const key = text.slice(0, 80);
-      if (key === lastListenError) {
-        repeatedListenErrors += 1;
-        // A power of ten, so a persistent fault leaves a trail without leaving
-        // a wall: 10x, 100x, 1000x.
-        if (repeatedListenErrors % 100 === 0) {
-          console.warn(`[operator] listen: still failing (${repeatedListenErrors}x): ${key}`);
-        }
-        return;
-      }
-      lastListenError = key;
-      repeatedListenErrors = 1;
+      /*
+        One line per failing streak, not one per retry.
+
+        A disconnected microphone makes ffmpeg print the same handful of lines
+        every spawn, and the old dedup compared each against only the single
+        most recent line — so ffmpeg's several DIFFERENT lines rotated through
+        it and every one printed every time. Roughly two thousand identical
+        entries in a day. Now the first line of a streak is logged and the
+        rest dropped; `state.reason` and the exit handler carry the fact that
+        it is still failing. Cleared when audio flows again.
+      */
+      if (reportedFailure || deviceGone) return;
       console.warn(`[operator] listen: ${text.slice(0, 200)}`);
+      reportedFailure = true;
     });
 
-    child.on("exit", (code) => {
-      child = null;
-      state.listening = false;
-      if (stopping) return;
-      /*
-        ffmpeg exits when the device disappears — a headset unplugged, a
-        Bluetooth link dropping. Retried with a ceiling rather than forever: a
-        device that is genuinely gone should stop being asked for, or this
-        respawns a failing process every second until someone notices the log.
-      */
-      restarts += 1;
-      /*
-        Back off to a slow retry — do NOT stop.
-
-        This used to give up permanently after eight failures, which is wrong
-        for the microphone this actually runs on: a Bluetooth headset drops
-        every time it idles or the owner walks away, so the listener would be
-        dead within thirty seconds of him taking it off and stay dead until
-        someone restarted the server. The clap gesture would then silently not
-        work, which is indistinguishable from it being broken.
-
-        The original concern was respawning a failing process every second
-        forever, and a minute between attempts answers that: a device that is
-        genuinely gone costs one spawn a minute, and one that comes back is
-        picked up without anyone doing anything.
-      */
-      const giveUp = restarts > 8;
-      if (giveUp) {
-        state.reason = `microphone unavailable — retrying every minute (last exit ${code})`;
-        if (restarts === 9) console.warn(`[operator] listen: backing off to 60s retries`);
-        setTimeout(spawnOnce, 60_000);
-        return;
+    /*
+      `spawn` failing asynchronously (ENOENT and friends) emits `error`, and
+      with no listener Node rethrows it as a fatal exception. Route it through
+      the same failure path as everything else.
+    */
+    child.on("error", (err) => {
+      if (!reportedFailure && !deviceGone) {
+        console.warn(`[operator] listen: ffmpeg error (${err?.code ?? err?.message ?? err})`);
+        reportedFailure = true;
       }
-      /*
-        Say so WHILE retrying, not only after giving up.
+      handleFailure(`error ${err?.code ?? ""}`.trim());
+    });
 
-        Between the first failure and the ninth this used to report
-        `listening: false, reason: null` — indistinguishable from a listener
-        that was never asked to start, for up to about a minute. Anything
-        reading this state then has to choose between calling a broken
-        microphone idle or calling an idle one broken, and both are wrong.
-      */
-      state.reason = `microphone unavailable — retrying (${restarts}/8, last exit ${code})`;
-      setTimeout(spawnOnce, Math.min(10_000, 500 * restarts));
+    /*
+      The usual failure: ffmpeg launched, could not open the device, exited
+      non-zero. handleFailure decides — from a fresh `-list_devices` probe —
+      whether this is a device that vanished (hand to the slow recheck loop,
+      which also picks it back up when it returns: the Bluetooth-walked-away
+      case) or a transient on one still connected (a few fast retries, then
+      the recheck loop anyway). Either way: no spawn and no log line every
+      minute while the microphone is gone.
+    */
+    child.on("exit", (code) => {
+      handleFailure(`last exit ${code}`);
     });
   };
 
-  spawnOnce();
+  /*
+    The quiet wait for a missing device: a `-list_devices` probe on a timer,
+    nothing spawned and nothing logged until the name is back — then start.
+  */
+  function scheduleRecheck() {
+    if (recheckTimer || stopping) return;
+    recheckTimer = setTimeout(async () => {
+      recheckTimer = null;
+      if (stopping || child) return;
+      const devices = await listAudioDevices(ffmpeg);
+      if (stopping || child) return;
+      if (!devices || devices.some((d) => sameDevice(d, DEVICE))) {
+        console.log(`[operator] listen: "${DEVICE}" available — starting`);
+        deviceGone = false;
+        reportedFailure = false;
+        restarts = 0;
+        spawnOnce();
+      } else {
+        scheduleRecheck();
+      }
+    }, DEVICE_RECHECK_MS);
+    recheckTimer.unref?.();
+  }
+
+  /*
+    Before the first spawn, check the named device is actually there.
+
+    A name in OPERATOR_LISTEN that no longer matches any connected microphone
+    — a headset the owner has stopped using — must not drive a retry loop:
+    nothing is coming back until he plugs something in or changes the setting.
+    Say so once, then fall to the slow recheck. If the probe itself cannot
+    run, don't block the feature on it — spawn and let the capture try.
+  */
+  const guardedStart = async () => {
+    const devices = await listAudioDevices(ffmpeg);
+    if (stopping) return;
+    if (devices && !devices.some((d) => sameDevice(d, DEVICE))) {
+      deviceGone = true;
+      state.listening = false;
+      state.reason = devices.length
+        ? `microphone "${DEVICE}" is not connected — listener idle. Connected: ${devices
+            .map((d) => `"${d}"`)
+            .join(", ")}`
+        : "no microphone connected — listener idle";
+      console.warn(
+        `[operator] listen: ${state.reason} (rechecking every ${Math.round(DEVICE_RECHECK_MS / 1000)}s)`,
+      );
+      scheduleRecheck();
+      return;
+    }
+    deviceGone = false;
+    spawnOnce();
+  };
+
+  void guardedStart();
   return true;
 }
 
@@ -839,6 +1048,10 @@ export async function transcribeUpload(buffer) {
 export function stopListening() {
   stopping = true;
   state.listening = false;
+  if (recheckTimer) {
+    clearTimeout(recheckTimer);
+    recheckTimer = null;
+  }
   try {
     child?.kill();
   } catch {
