@@ -15,6 +15,7 @@ import { registerMic } from "@/lib/micBridge";
 import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
 import { drawCore } from "@/components/map/operatorCore";
+import { shouldAnimate, watchAnimatable } from "@/lib/renderGate";
 import MobileControlDock from "@/components/dashboard/MobileControlDock";
 
 /*
@@ -325,6 +326,13 @@ export default function OperatorMobile() {
     window.addEventListener("resize", resize);
 
     const frame = () => {
+      // Stop dead when the window is hidden or backgrounded — see renderGate.
+      // WebView2 keeps rAF running at full rate for an occluded shell window
+      // otherwise, and the core loop pins the GPU while nobody is watching.
+      if (!shouldAnimate()) {
+        raf = 0;
+        return;
+      }
       const v = voiceRef.current;
       const m = micRef.current;
       /*
@@ -369,9 +377,19 @@ export default function OperatorMobile() {
       raf = requestAnimationFrame(frame);
     };
 
-    raf = requestAnimationFrame(frame);
+    // Start/stop the loop with visibility + focus. `frame` also self-stops on
+    // its next call, which covers a WebView2 that drops rAF on blur without
+    // firing an event first.
+    const sync = () => {
+      cancelAnimationFrame(raf);
+      raf = shouldAnimate() ? requestAnimationFrame(frame) : 0;
+    };
+    const stopWatching = watchAnimatable(sync);
+    sync();
+
     return () => {
       cancelAnimationFrame(raf);
+      stopWatching();
       window.removeEventListener("resize", resize);
     };
   }, []);

@@ -17,6 +17,7 @@ import { usePhoneTranscript } from "@/hooks/usePhoneTranscript";
 import MicSource from "@/components/map/MicSource";
 import type { KnowledgeNote, MissionRecord, MissionStatus } from "@/lib/types";
 import { drawCore, rgba, GOLD, VIOLET, type Rgb } from "@/components/map/operatorCore";
+import { shouldAnimate, watchAnimatable } from "@/lib/renderGate";
 import OperatorChat from "@/components/map/OperatorChat";
 import OperatorControl from "@/components/dashboard/OperatorControl";
 
@@ -1431,6 +1432,13 @@ export default function MissionMap() {
     }));
 
     const step = () => {
+      // Stop dead when hidden or backgrounded — see renderGate. Otherwise
+      // WebView2 runs this (physics and all) at full rate for an occluded
+      // shell window and pins the GPU while nobody is looking.
+      if (!shouldAnimate()) {
+        raf = 0;
+        return;
+      }
       const bodies = bodiesRef.current;
       const eds = edgesRef.current;
       const byId = new Map(bodies.map((b) => [b.id, b]));
@@ -2468,9 +2476,18 @@ export default function MissionMap() {
       raf = requestAnimationFrame(step);
     };
 
-    raf = requestAnimationFrame(step);
+    // Start/stop with visibility + focus. `step` also self-stops on its next
+    // call, covering a WebView2 that drops rAF on blur with no event.
+    const sync = () => {
+      cancelAnimationFrame(raf);
+      raf = shouldAnimate() ? requestAnimationFrame(step) : 0;
+    };
+    const stopWatching = watchAnimatable(sync);
+    sync();
+
     return () => {
       cancelAnimationFrame(raf);
+      stopWatching();
       window.removeEventListener("resize", onResize);
     };
   }, []);

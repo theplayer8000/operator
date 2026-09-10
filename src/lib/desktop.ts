@@ -79,6 +79,38 @@ export async function onToggleDetector(handler: () => void): Promise<() => void>
 }
 
 /**
+ * Run `handler` when the shell window gains or loses OS focus (and once, now,
+ * with the current state).
+ *
+ * `document.hasFocus()` is unreliable inside the WebView2 window — it stays
+ * `true` for a window sitting behind another one, which is exactly the state
+ * that had the core's canvas loop pinning the GPU with nobody watching. The
+ * Tauri window's own focus event is the signal that actually tracks it.
+ *
+ * A no-op in a browser, where the ordinary `document`/`window` focus and
+ * visibility events are enough — see `lib/renderGate.ts`.
+ */
+export async function onShellFocusChange(
+  handler: (focused: boolean) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    try {
+      // `is_focused` is not in the shell's ACL, so this throws — harmless, the
+      // event below drives everything. Left in for when the ACL grows it.
+      handler(await win.isFocused());
+    } catch {
+      /* first read unavailable; the event is the real signal */
+    }
+    return await win.onFocusChanged(({ payload }) => handler(payload));
+  } catch {
+    return () => {};
+  }
+}
+
+/**
  * Bring the window to the front. Used by the clap.
  *
  * Only worth calling when Operator is NOT already focused: clapping while
