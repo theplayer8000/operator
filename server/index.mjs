@@ -1191,7 +1191,19 @@ const server = createServer(async (req, res) => {
       const key = decodeURIComponent(pathname.slice("/api/state/".length));
       if (!key) return json(req, res, 400, { error: "missing key" });
       const body = await readBody(req);
-      await setState(key, body?.value ?? null);
+      /*
+        The client always sends `{ "value": <data> }`. A raw body (`[]`), an
+        empty object, or any non-object means a caller got the envelope wrong —
+        and `body?.value ?? null` would then silently store `null`. A `null`
+        under an array-backed key white-screens the whole frontend until the
+        key is deleted, so reject the bad shape loudly instead of writing it.
+        An explicit `{ "value": null }` still goes through — that is a caller
+        stating intent, and the client coalesces it on read.
+      */
+      if (body === null || typeof body !== "object" || Array.isArray(body) || !("value" in body)) {
+        return json(req, res, 400, { error: 'expected a JSON body of { "value": <data> }' });
+      }
+      await setState(key, body.value);
       return json(req, res, 200, { ok: true, key });
     }
 

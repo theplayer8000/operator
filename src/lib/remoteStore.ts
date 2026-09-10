@@ -139,6 +139,11 @@ export function load(): Promise<void> {
       cache.clear();
       serverKeys.clear();
       Object.entries(state).forEach(([k, v]) => {
+        // An explicit null/undefined from the server is not usable data — a
+        // feature hook would crash on it. Treat the key as absent so
+        // `getSnapshot` falls through to the mirror/seed, and keep it out of
+        // `serverKeys` so an owner hook (Homelab) knows to re-seed it.
+        if (v === null || v === undefined) return;
         cache.set(k, v);
         serverKeys.add(k);
       });
@@ -279,8 +284,16 @@ async function syncChangedSlices(): Promise<boolean> {
     sync would then believe.
   */
   for (const [key, value] of fetched) {
-    cache.set(key, value);
-    serverKeys.add(key);
+    // Same rule as `load()` — a nullish slice is not data. Drop it so the
+    // cache matches what the server actually holds; the fingerprint is still
+    // recorded so the next poll doesn't keep refetching it.
+    if (value === null || value === undefined) {
+      cache.delete(key);
+      serverKeys.delete(key);
+    } else {
+      cache.set(key, value);
+      serverKeys.add(key);
+    }
     fingerprints.set(key, meta.keys[key]);
   }
   for (const key of removed) {
@@ -519,13 +532,24 @@ async function push(key: string, value: unknown) {
 // --- public api -----------------------------------------------------------
 
 export function getSnapshot<T>(key: string, fallback: T): T {
-  if (cache.has(key)) return cache.get(key) as T;
+  // A nullish value from any source — the server returned an explicit `null`
+  // for the key (a raw-body PUT that skipped the `{ value }` envelope, a
+  // botched import), or the offline mirror holds one — must never reach a
+  // feature hook. Every array-backed hook does `.filter()`/`.map()`/`.sort()`
+  // on what it gets straight away, so a `null` throws at the top of the render
+  // tree and white-screens the whole app. Degrade this one key to its seed
+  // instead: one bad value costs one feature its data, not the page.
+  if (cache.has(key)) {
+    const cached = cache.get(key);
+    return cached === null || cached === undefined ? fallback : (cached as T);
+  }
 
   // Not loaded yet (or the server has never seen this key) — fall back to the
   // local mirror, then to the feature's seed.
   const mirrored = readStorage<T>(key, fallback);
-  cache.set(key, mirrored);
-  return mirrored;
+  const safe = mirrored === null || mirrored === undefined ? fallback : mirrored;
+  cache.set(key, safe);
+  return safe;
 }
 
 /**
