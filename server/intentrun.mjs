@@ -41,7 +41,7 @@
 // seconds rather than discovered later.
 
 import { matchIntent } from "./intent.mjs";
-import { runAction } from "./actions.mjs";
+import { runAction, ActionError } from "./actions.mjs";
 
 /*
   Local dates, never `toISOString().slice(0,10)`.
@@ -500,7 +500,18 @@ export async function runIntent(transcript) {
       */
       console.warn(`[operator] intent: ${chosen.action} failed — ${err?.message ?? err}`);
       if (!done.length) {
-        return { ran: false, reason: `${chosen.action} failed: ${err?.message ?? err}` };
+        const msg = String(err?.message ?? err);
+        return {
+          ran: false,
+          reason: `${chosen.action} failed: ${msg}`,
+          /*
+            An ActionError is caller-facing by design (see actions.mjs) — "no
+            session scheduled, that is a rest day". Speak it rather than
+            falling silently through to a worker, which is what the resolver
+            path already does for its own misses.
+          */
+          ...(err instanceof ActionError ? { say: `I couldn't — ${msg}` } : {}),
+        };
       }
       return {
         ran: true,
@@ -581,6 +592,18 @@ function spokenResult(intent, result, { labels, sweep, groupLabel, action }) {
   }
   if (a === "gym_toggle_exercise" || a === "routine_toggle_task") {
     return `${result?.done ? "Ticked off" : "Unticked"} ${many}.`;
+  }
+  if (a === "gym_log_session") {
+    const s = result ?? {};
+    const m = s.mission ?? {};
+    const missionBit =
+      m.progress !== undefined
+        ? ` Gym mission ${m.was !== undefined && m.was !== m.progress ? `moved to ${m.progress}%` : `is at ${m.progress}%`}.`
+        : "";
+    const lead = s.alreadyComplete
+      ? `${s.session ?? "That session"} was already logged.`
+      : `Logged ${s.session ?? "your session"}.`;
+    return `${lead}${missionBit}`;
   }
   if (a === "gym_skip_day") return "Marked today as a rest day.";
   if (a === "gym_unskip_day") return "Put today's session back on.";

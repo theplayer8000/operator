@@ -111,6 +111,39 @@ export function useGym() {
     return { done, total, percent: total === 0 ? 0 : Math.round((done / total) * 100) };
   }
 
+  /**
+   * Month-to-date training adherence — sessions trained / sessions scheduled,
+   * from the 1st of the current month through today.
+   *
+   * The rule the gym mission's progress derives from (both here and, identically,
+   * in `server/actions.mjs`'s `gym_log_session`): a scheduled day is one a
+   * session exists for; a trained day is a scheduled one with at least one tick
+   * belonging to that day's session; a skipped day is scheduled-not-trained and
+   * pulls it down. Nothing is stored — this is computed on read.
+   */
+  function monthAdherence(ref: Date = new Date()): {
+    trained: number;
+    scheduled: number;
+    percent: number;
+  } {
+    const year = ref.getFullYear();
+    const month = ref.getMonth();
+    let scheduled = 0;
+    let trained = 0;
+    for (let d = 1; d <= ref.getDate(); d++) {
+      const key = toDateKey(new Date(year, month, d));
+      const session = sessionOn(key);
+      if (!session) continue;
+      scheduled += 1;
+      if (doneOn(key).some((id) => session.exercises.some((e) => e.id === id))) trained += 1;
+    }
+    return {
+      trained,
+      scheduled,
+      percent: scheduled === 0 ? 0 : Math.round((trained / scheduled) * 100),
+    };
+  }
+
   const todayKey = toDateKey(new Date());
 
   return {
@@ -134,6 +167,7 @@ export function useGym() {
     toggleExercise,
     clearDay,
     progressOn,
+    monthAdherence,
     isSkipped,
     skipDay,
     unskipDay,

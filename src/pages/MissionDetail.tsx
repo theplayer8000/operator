@@ -19,8 +19,10 @@ import ConfirmButton from "@/components/ui/ConfirmButton";
 import { useMissionBoard } from "@/hooks/useMissionBoard";
 import { useKnowledge } from "@/hooks/useKnowledge";
 import { useDecisionLog } from "@/hooks/useDecisionLog";
+import { useGym } from "@/hooks/useGym";
 import { CONFIDENCE_META } from "@/components/knowledge/knowledgeMeta";
 import { VERDICT_META } from "@/components/decisions/decisionMeta";
+import GymAdherence from "@/components/missions/GymAdherence";
 import type { MissionDifficulty, MissionStatus } from "@/lib/types";
 import { STATUS_OPTIONS, DIFFICULTY_OPTIONS, STATUS_META, DIFFICULTY_META } from "@/components/missions/MissionBadges";
 import EditableField from "@/components/missions/EditableField";
@@ -64,6 +66,7 @@ export default function MissionDetail() {
   } = useMissionBoard();
   const vault = useKnowledge();
   const decisionLog = useDecisionLog();
+  const gym = useGym();
 
   const [tab, setTab] = useState<TabId>("overview");
 
@@ -196,6 +199,26 @@ export default function MissionDetail() {
             className="w-full h-6 accent-xp cursor-pointer"
           />
         </div>
+
+        {/*
+          The gym mission tracks training adherence. Shown here, always visible,
+          because it is about the progress number right above it — see
+          `GymAdherence` for why this is a suggestion-with-Apply rather than
+          automatic.
+        */}
+        {mission.category === "gym" &&
+          (() => {
+            const a = gym.monthAdherence();
+            return (
+              <GymAdherence
+                trained={a.trained}
+                scheduled={a.scheduled}
+                percent={a.percent}
+                current={mission.progress}
+                onApply={() => setProgress(mission.id, a.percent)}
+              />
+            );
+          })()}
       </div>
 
       {/* Tabs */}

@@ -509,6 +509,144 @@ async function gymUnskipDay({ date }) {
   return { date: key, skipped: false };
 }
 
+// --- Gym → Mission sync -----------------------------------------------------
+//
+// "Went gym, did push" should tick the day AND move the gym mission's slider,
+// in one step. Both halves already existed as separate actions; this is the
+// one that does both, plus the rule for what "progress" MEANS.
+//
+// Nothing is stored twice. Both numbers are DERIVED: the target from
+// `gym.sessions` (which weekdays carry a session) crossed with the calendar,
+// the achieved count from `gym.completions`. A hardcoded "5 days a week" would
+// be wrong three ways at once — the mission is named "5-6", the programme doc
+// says 5, and `gym.sessions` currently holds 4.
+
+/**
+ * Month-to-date training adherence: sessions trained / sessions scheduled,
+ * from the 1st of the current month through today.
+ *
+ * A scheduled day is one `gym.sessions` has a session for — rest days do not
+ * count. A trained day is a scheduled day with at least one ticked exercise
+ * that belongs to that day's session. A skipped day (`gym_skip_day` clears its
+ * ticks) is scheduled-not-trained and pulls the number down, which is the whole
+ * reason `gym.skipped` is a different thing from a calendar skip.
+ */
+function gymMonthAdherence(sessions, completions, ref = new Date()) {
+  const byWeekday = new Map((sessions ?? []).map((s) => [s.weekday, s]));
+  const done = completions ?? {};
+  const year = ref.getFullYear();
+  const month = ref.getMonth();
+
+  let scheduled = 0;
+  let trained = 0;
+  for (let d = 1; d <= ref.getDate(); d++) {
+    const cursor = new Date(year, month, d);
+    const weekday = cursor.getDay() === 0 ? 7 : cursor.getDay();
+    const session = byWeekday.get(weekday);
+    if (!session) continue;
+    scheduled += 1;
+    const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const ticks = done[key] ?? [];
+    if (ticks.some((id) => session.exercises.some((e) => e.id === id))) trained += 1;
+  }
+  return {
+    trained,
+    scheduled,
+    percent: scheduled === 0 ? 0 : Math.round((trained / scheduled) * 100),
+  };
+}
+
+/**
+ * The mission a gym log syncs. Decision (2026-09-10): the gym-category mission
+ * whose name reads as a consistency goal ("... days a week"). If that is
+ * ambiguous — zero matches or several — the action refuses and asks for an
+ * explicit `missionId` rather than guessing.
+ */
+function resolveGymMission(missions, explicitId) {
+  if (explicitId) return findMission(missions ?? [], explicitId);
+  const gym = (missions ?? []).filter((m) => m.category === "gym" && !m.archived);
+  const adherence = gym.filter((m) => /\b(week|days?)\b/i.test(m.name));
+  const pick = adherence.length === 1 ? adherence[0] : gym.length === 1 ? gym[0] : null;
+  if (!pick) {
+    throw new ActionError(
+      gym.length === 0
+        ? "no gym-category mission to sync — pass missionId, or make one"
+        : `more than one gym mission — pass missionId. Candidates: ${gym
+            .map((m) => `"${m.name}" = ${m.id}`)
+            .join("; ")}`,
+    );
+  }
+  return pick;
+}
+
+/**
+ * Log a whole training session and sync the gym mission's progress.
+ *
+ * Marks every exercise on the day's session complete — idempotent, a mark and
+ * not a toggle, so a half-session already ticked from the phone is not
+ * unticked — then recomputes the gym mission's progress from
+ * `gymMonthAdherence` and writes it. One call for "went gym, did push".
+ */
+async function gymLogSession({ date, session: sessionGuard, missionId }) {
+  const key = dateArg(date, "date");
+  const weekday = isoWeekdayOf(key);
+
+  const [sessions, completionsBefore, missions] = await Promise.all([
+    readState("gym.sessions"),
+    readState("gym.completions"),
+    readState("missions.records"),
+  ]);
+
+  const session = (sessions ?? []).find((s) => s.weekday === weekday) ?? null;
+  if (!session) {
+    throw new ActionError(`no session scheduled on ${key} — that is a rest day`);
+  }
+  if (sessionGuard) {
+    const want = String(sessionGuard).trim().toLowerCase();
+    if (!session.name.toLowerCase().includes(want)) {
+      throw new ActionError(`${key} is ${session.name}, not "${sessionGuard}"`);
+    }
+  }
+
+  const ids = session.exercises.map((e) => e.id);
+  const had = new Set((completionsBefore ?? {})[key] ?? []);
+  const alreadyComplete = ids.every((id) => had.has(id));
+
+  if (!alreadyComplete) {
+    await withState("gym.completions", (current) => {
+      const prev = current ?? {};
+      return { ...prev, [key]: [...new Set([...(prev[key] ?? []), ...ids])] };
+    });
+  }
+
+  // Recompute from the fresh completions, then move the mission.
+  const completionsAfter = await readState("gym.completions");
+  const adherence = gymMonthAdherence(sessions, completionsAfter, new Date());
+  const target = resolveGymMission(missions, missionId);
+
+  let was = target.progress;
+  await withState("missions.records", (current) =>
+    (current ?? []).map((m) => {
+      if (m.id !== target.id) return m;
+      was = m.progress;
+      if (m.progress === adherence.percent) return m;
+      return withActivity(
+        { ...m, progress: adherence.percent },
+        `Progress synced from training — ${adherence.percent}% (${adherence.trained}/${adherence.scheduled} sessions this month)`,
+      );
+    }),
+  );
+
+  return {
+    date: key,
+    session: session.name,
+    exerciseCount: ids.length,
+    alreadyComplete,
+    mission: { id: target.id, name: target.name, progress: adherence.percent, was },
+    adherence,
+  };
+}
+
 // --- Gym session templates ---------------------------------------------------
 //
 // `gym.sessions` is the programme itself — which exercises, on which weekday.
@@ -2787,6 +2925,13 @@ const ACTIONS = {
     params: "date? (YYYY-MM-DD or \"today\"), exerciseId",
     handler: gymToggleExercise,
   },
+  gym_log_session: {
+    description:
+      "Log a whole training session in one step: mark every exercise on the day's session done (idempotent — won't untick a half-session), then move the gym mission's slider to your month-to-date training adherence (sessions trained / sessions scheduled since the 1st). Use this for \"went gym\" / \"did push day\"; use gym_toggle_exercise for a single named lift.",
+    params:
+      "date? (YYYY-MM-DD or \"today\"), session? (a name fragment like \"push\" — errors if it isn't that day's session), missionId? (defaults to the \"... days a week\" gym mission)",
+    handler: gymLogSession,
+  },
   gym_skip_day: {
     description: "Mark a gym day as scheduled but not trained. Clears any ticks on it.",
     params: "date? (YYYY-MM-DD or \"today\")",
@@ -2933,6 +3078,7 @@ const ACTION_GROUPS = {
   gym_update_exercise: "gym",
   gym_remove_exercise: "gym",
   gym_toggle_exercise: "gym",
+  gym_log_session: "gym",
   gym_skip_day: "gym",
   gym_unskip_day: "gym",
 
@@ -3194,6 +3340,16 @@ function summarise(name, params, result, before) {
     if (name === "mission_archive") return { title: "Mission archived", message: label };
     if (name === "mission_delete") return { title: "Mission deleted", message: label };
     return { title: `Mission ${verb}`, message: label };
+  }
+
+  if (name === "gym_log_session") {
+    const m = result?.mission ?? {};
+    const moved =
+      m.was !== undefined && m.was !== m.progress ? `${m.was}% → ${m.progress}%` : `${m.progress}%`;
+    return {
+      title: "Gym session logged",
+      message: `${result?.session ?? "Session"} — ${m.name ?? "mission"} ${moved}`,
+    };
   }
 
   if (name.startsWith("gym_")) {

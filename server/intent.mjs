@@ -88,6 +88,7 @@ export const EMITTED_ACTIONS = [
   "gym_skip_day",
   "gym_unskip_day",
   "gym_toggle_exercise",
+  "gym_log_session",
   "routine_toggle_task",
   "mission_set_progress",
   "mission_set_status",
@@ -571,44 +572,23 @@ function matchGymDone(text) {
   if (!date) return null;
 
   return {
-    action: "gym_toggle_exercise",
-    params: { date },
-    needs: {
-      from: "gym_day",
-      args: { date },
-      find: "gym_exercise",
-      // Every exercise on the day, not a named one — "I did push day" is a claim
-      // about the session, not about an exercise.
-      match: null,
-      each: true,
-      /*
-        Toggles, so anything already ticked must be left alone or this unticks
-        the half he did from his phone at the gym. The action is a toggle by
-        design (its own description says "untick by calling it again"), which
-        makes "skip what is done" the resolver's job, not the action's.
-      */
-      skipDone: true,
-      unique: false,
-      /*
-        The check that stops this being a wrong write.
-
-        Saying "I did push day" on a leg day means one of them is wrong, and
-        guessing which is not this file's business. The resolver compares this
-        against `session.name` and abandons if it is not in there.
-      */
-      expect: label ? stem(label) : null,
-      /*
-        No fallback, and it is not an oversight. This rule only fires on a
-        sentence that named TRAINING — "I did push day", "gym done" — so the
-        domain was said out loud and there is nothing left to decide. `also`
-        exists for the one phrasing that is genuinely domain-blind, which is
-        "tick off X" below.
-      */
-      also: null,
-    },
+    action: "gym_log_session",
+    /*
+      `session` is the name fragment he said ("push", "leg"), and the action
+      errors if that is not the session actually scheduled that day — the same
+      wrong-write guard `needs.expect` used to provide, now the action's own.
+    */
+    params: label ? { date, session: stem(label) } : { date },
+    /*
+      No `needs` block. `gym_log_session` resolves the day's session, marks
+      every exercise on it, and syncs the gym mission by itself — there is
+      nothing for a resolver to look up. This rule only ever fires on a
+      sentence that named TRAINING out loud, so the domain is settled too.
+    */
+    needs: null,
     why: label
-      ? `you said you did ${label} — ticking that session off`
-      : "you said you trained — ticking today's session off",
+      ? `you said you did ${label} — logging that session and moving the gym mission`
+      : "you said you trained — logging today's session and moving the gym mission",
   };
 }
 
@@ -1090,12 +1070,12 @@ const MUST_MATCH = [
   ["whats the time", "now"],
   ["what day is it", "now"],
   ["hey operator, tell me the date", "now"],
-  ["i did push day", "gym_toggle_exercise"],
-  ["did legs today", "gym_toggle_exercise"],
-  ["went gym", "gym_toggle_exercise"],
-  ["i trained today", "gym_toggle_exercise"],
-  ["smashed pull day", "gym_toggle_exercise"],
-  ["i did push day yesterday", "gym_toggle_exercise"],
+  ["i did push day", "gym_log_session"],
+  ["did legs today", "gym_log_session"],
+  ["went gym", "gym_log_session"],
+  ["i trained today", "gym_log_session"],
+  ["smashed pull day", "gym_log_session"],
+  ["i did push day yesterday", "gym_log_session"],
   ["skip today", "gym_skip_day"],
   ["rest day", "gym_skip_day"],
   ["im not training today", "gym_skip_day"],
@@ -1110,8 +1090,8 @@ const MUST_MATCH = [
   ["pause the music", "media_play_pause"],
   ["summon operator", "focus_operator"],
   ["show me the dashboard", "focus_operator"],
-  ["legs done", "gym_toggle_exercise"],
-  ["gym done", "gym_toggle_exercise"],
+  ["legs done", "gym_log_session"],
+  ["gym done", "gym_log_session"],
   ["i did my routine", "routine_toggle_task"],
   ["i skipped the gym", "gym_skip_day"],
   ["rest day tomorrow", "gym_skip_day"],
@@ -1121,8 +1101,8 @@ const MUST_MATCH = [
   // Reachable only since `not started` was carved out of the negation guard.
   ["mark the epyc mission as not started", "mission_set_status"],
   ["the darams mission is at 75 percent", "mission_set_progress"],
-  ["i finished my gym session", "gym_toggle_exercise"],
-  ["session done", "gym_toggle_exercise"],
+  ["i finished my gym session", "gym_log_session"],
+  ["session done", "gym_log_session"],
   // Whisper writes the sign as often as the word; the sign never once matched.
   ["set darams to 45%", "mission_set_progress"],
   /*
@@ -1260,14 +1240,14 @@ async function selfTest() {
 
   out.push("", "PARAMS");
   const yesterday = matchIntent("i did push day yesterday");
-  const yOk = yesterday?.params.date === dayKey(-1) && yesterday?.needs.expect === "push";
+  const yOk = yesterday?.params.date === dayKey(-1) && yesterday?.params.session === "push";
   if (!yOk) fail.push('"i did push day yesterday" got the wrong date or session guard');
-  out.push(line(yOk, `yesterday → ${yesterday?.params.date}, expect ${yesterday?.needs.expect}`));
+  out.push(line(yOk, `yesterday → ${yesterday?.params.date}, session ${yesterday?.params.session}`));
 
   const legs = matchIntent("did legs today");
-  const lOk = legs?.needs.expect === "leg";
+  const lOk = legs?.params.session === "leg";
   if (!lOk) fail.push('"did legs today" should guard on the stem "leg"');
-  out.push(line(lOk, `legs → expect ${legs?.needs.expect}`));
+  out.push(line(lOk, `legs → session ${legs?.params.session}`));
 
   const pct = matchIntent("move darams to seventy five percent");
   const pOk = pct?.params.progress === 75 && pct?.needs.match === "darams";
@@ -1332,11 +1312,12 @@ async function selfTest() {
   if (!swOk) fail.push("a routine sweep must not fall through to the gym");
   out.push(line(swOk, `sweeps → also=${sweepAlt} / ${wholeAlt}`));
 
-  // Nor the other direction: "I did push day" named training out loud.
-  const gymAlt = matchIntent("i did push day")?.needs.also;
-  const gOk = gymAlt === null;
-  if (!gOk) fail.push('"i did push day" named its domain and needs no fallback');
-  out.push(line(gOk, `gym session → also=${gymAlt}`));
+  // Nor the other direction: "I did push day" named training out loud, and
+  // gym_log_session resolves the session itself — so no needs block at all.
+  const gymNeeds = matchIntent("i did push day")?.needs;
+  const gOk = gymNeeds == null;
+  if (!gOk) fail.push('"i did push day" should emit gym_log_session with no needs block');
+  out.push(line(gOk, `gym session → needs=${gymNeeds}`));
 
   const ns = matchIntent("mark the epyc mission as not started");
   const nOk = ns?.params.status === "not_started" && ns?.needs.match === "epyc";
